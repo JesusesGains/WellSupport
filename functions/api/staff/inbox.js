@@ -22,7 +22,7 @@ export async function onRequestGet({ request, env }) {
         session
       ),
       restJson(
-        "/rest/v1/support_messages?select=id,conversation_id,sender_type,sender_user_id,sender_display_name,sender_avatar_url,body,created_at&order=created_at.desc&limit=1500",
+        "/rest/v1/support_messages?select=id,conversation_id,sender_type,sender_user_id,sender_display_name,sender_avatar_url,client_message_id,body,created_at&order=created_at.desc&limit=1500",
         session
       ),
       restJson(
