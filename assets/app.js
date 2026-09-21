@@ -878,6 +878,9 @@ function renderChatShell() {
         referrerpolicy="no-referrer-when-downgrade"
         aria-label="Approximate visitor city map"
       ></iframe>
+      <div class="visitor-map-center-pin" aria-hidden="true">
+        <span class="visitor-map-center-dot"></span>
+      </div>
       <div class="visitor-map-pin-label">
         <span class="visitor-map-pin" aria-hidden="true"></span>
         <strong id="visitor-map-city"></strong>
