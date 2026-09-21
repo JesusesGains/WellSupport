@@ -548,8 +548,24 @@ function renderWebEditor() {
   const panel = document.querySelector("#chat-panel");
   if (!panel) return;
 
-  const previewOrigin = "https://wellwebsite.pages.dev";
-  const productionOrigin = "https://www.wellcollegeglobal.com";
+  const environments = {
+    production: {
+      label: "Production",
+      branch: "main",
+      origin: "https://wellwebsite.pages.dev",
+      customOrigin: "https://www.wellcollegeglobal.com",
+      editable: false
+    },
+    beta: {
+      label: "Beta Preview",
+      branch: "beta-main",
+      origin: "https://beta-main.wellwebsite.pages.dev",
+      customOrigin: "https://beta-main.wellwebsite.pages.dev",
+      editable: true
+    }
+  };
+
+  let editorEnvironment = "production";
 
   panel.className = "chat-panel web-editor-panel";
   panel.innerHTML = `
@@ -558,11 +574,11 @@ function renderWebEditor() {
         <div>
           <div class="eyebrow"><i aria-hidden="true"></i> Website management</div>
           <h1>Web Editor</h1>
-          <p>Edit against the live Cloudflare Pages preview at wellwebsite.pages.dev, test responsive layouts, then send approved changes through beta-main before production.</p>
+          <p>Compare production with beta-main, make temporary edits against the beta preview, then promote approved beta-main changes to main.</p>
         </div>
         <a
           class="web-editor-open-site"
-          href="${productionOrigin}/"
+          href="https://www.wellcollegeglobal.com/"
           target="_blank"
           rel="noopener noreferrer"
         >
@@ -571,28 +587,47 @@ function renderWebEditor() {
         </a>
       </header>
 
+      <section class="editor-environment-switcher" aria-label="Website environment">
+        <button class="is-active" type="button" data-editor-environment="production">
+          <span class="editor-environment-status is-production"></span>
+          <span>
+            <strong>Production</strong>
+            <small>main · wellwebsite.pages.dev</small>
+          </span>
+          <b>Read only</b>
+        </button>
+        <button type="button" data-editor-environment="beta">
+          <span class="editor-environment-status is-beta"></span>
+          <span>
+            <strong>Beta Preview</strong>
+            <small>beta-main · beta-main.wellwebsite.pages.dev</small>
+          </span>
+          <b>Editable</b>
+        </button>
+      </section>
+
       <section class="editor-workflow" aria-label="Website publishing workflow">
         <article class="is-active">
           <span>01</span>
-          <div><strong>Draft</strong><small>Temporary changes in the real preview</small></div>
+          <div><strong>Production reference</strong><small>main · current approved site</small></div>
         </article>
         <i aria-hidden="true"></i>
         <article>
           <span>02</span>
-          <div><strong>Preview</strong><small>beta-main · Cloudflare preview</small></div>
+          <div><strong>Edit & review beta</strong><small>beta-main · Cloudflare branch preview</small></div>
         </article>
         <i aria-hidden="true"></i>
         <article>
           <span>03</span>
-          <div><strong>Production</strong><small>main · wellcollegeglobal.com</small></div>
+          <div><strong>Promote</strong><small>beta-main → main → production deploy</small></div>
         </article>
       </section>
 
       <section class="web-editor-grid">
         <aside class="editor-controls">
           <div class="editor-controls-head">
-            <span>Page</span>
-            <strong>Choose what to edit</strong>
+            <span id="editor-controls-mode">Production reference</span>
+            <strong>Choose what to inspect</strong>
           </div>
 
           <label class="editor-field">
@@ -608,53 +643,55 @@ function renderWebEditor() {
             </select>
           </label>
 
-          <div class="editor-section">
-            <span class="editor-section-label">Temporary content preview</span>
-            <label class="editor-field">
-              <span>Main heading</span>
-              <textarea id="web-editor-heading" rows="3" placeholder="Leave blank to keep the live heading…"></textarea>
-            </label>
-            <label class="editor-field">
-              <span>Lead copy</span>
-              <textarea id="web-editor-copy" rows="5" placeholder="Leave blank to keep the live page copy…"></textarea>
-            </label>
-          </div>
+          <fieldset id="web-editor-draft-controls" class="editor-draft-controls" disabled>
+            <div class="editor-section">
+              <span class="editor-section-label">Temporary content preview</span>
+              <label class="editor-field">
+                <span>Main heading</span>
+                <textarea id="web-editor-heading" rows="3" placeholder="Leave blank to keep the beta heading…"></textarea>
+              </label>
+              <label class="editor-field">
+                <span>Lead copy</span>
+                <textarea id="web-editor-copy" rows="5" placeholder="Leave blank to keep the beta page copy…"></textarea>
+              </label>
+            </div>
 
-          <div class="editor-section">
-            <span class="editor-section-label">Temporary appearance preview</span>
-            <label class="editor-field">
-              <span>Primary navy / accent</span>
-              <div class="editor-colour-row">
-                <input id="web-editor-accent" type="color" value="#304660" />
-                <input id="web-editor-accent-text" type="text" value="#304660" maxlength="7" />
-              </div>
-            </label>
-            <label class="editor-field">
-              <span>Heading typography</span>
-              <select id="web-editor-font">
-                <option>DM Serif Display</option>
-                <option>DM Sans</option>
-                <option>System Sans</option>
-              </select>
-            </label>
-          </div>
+            <div class="editor-section">
+              <span class="editor-section-label">Temporary appearance preview</span>
+              <label class="editor-field">
+                <span>Primary navy / accent</span>
+                <div class="editor-colour-row">
+                  <input id="web-editor-accent" type="color" value="#304660" />
+                  <input id="web-editor-accent-text" type="text" value="#304660" maxlength="7" />
+                </div>
+              </label>
+              <label class="editor-field">
+                <span>Heading typography</span>
+                <select id="web-editor-font">
+                  <option>DM Serif Display</option>
+                  <option>DM Sans</option>
+                  <option>System Sans</option>
+                </select>
+              </label>
+            </div>
+          </fieldset>
 
-          <div class="editor-draft-note">
-            <strong>Real site, temporary overrides</strong>
-            <span>The iframe is the actual wellwebsite.pages.dev deployment. Draft controls only change the embedded preview; they do not alter production or GitHub.</span>
+          <div id="editor-mode-note" class="editor-draft-note">
+            <strong>Production is read-only</strong>
+            <span>Use this mode to compare against the approved main branch. Switch to Beta Preview to make temporary editor changes.</span>
           </div>
 
           <div class="editor-draft-note is-devtools-note">
             <strong>Chrome DevTools</strong>
-            <span>Use the responsive controls here for everyday checks. For full DOM/network inspection, open the page in Chrome and use DevTools.</span>
+            <span>Use Desktop, Tablet and Mobile here for routine checks. Open the active page in Chrome for full DOM, network and performance inspection.</span>
           </div>
         </aside>
 
         <div class="editor-preview-shell">
           <div class="editor-preview-toolbar">
             <div>
-              <span class="editor-status-dot"></span>
-              <strong>Live Cloudflare preview</strong>
+              <span id="editor-preview-status-dot" class="editor-status-dot"></span>
+              <strong id="editor-preview-title">Production preview</strong>
               <small id="web-editor-preview-path">wellwebsite.pages.dev/</small>
             </div>
 
@@ -669,10 +706,10 @@ function renderWebEditor() {
               <button id="web-editor-inspect" type="button">Inspect in Chrome</button>
               <a
                 id="web-editor-open-page"
-                href="${productionOrigin}/"
+                href="https://wellwebsite.pages.dev/"
                 target="_blank"
                 rel="noopener noreferrer"
-              >Open page ↗</a>
+              >Open preview ↗</a>
             </div>
           </div>
 
@@ -681,13 +718,13 @@ function renderWebEditor() {
               <div class="editor-preview-browser-bar">
                 <i></i><i></i><i></i>
                 <span id="web-editor-browser-url">wellwebsite.pages.dev/</span>
-                <b>LIVE</b>
+                <b id="web-editor-environment-badge">MAIN</b>
               </div>
               <iframe
                 id="web-editor-frame"
                 class="editor-live-frame"
-                title="Well College Global live website preview"
-                src="${previewOrigin}/?wcgEditor=1"
+                title="Well College Global website preview"
+                src="https://wellwebsite.pages.dev/?wcgEditor=1"
                 loading="eager"
                 referrerpolicy="strict-origin-when-cross-origin"
               ></iframe>
@@ -696,13 +733,16 @@ function renderWebEditor() {
 
           <footer class="editor-publish-bar">
             <div>
-              <strong>Publishing workflow</strong>
-              <span>GitHub branch: <b>beta-main</b> → Cloudflare preview → <b>main</b></span>
+              <strong id="editor-publish-title">Production · main</strong>
+              <span id="editor-publish-copy">Read-only reference. Make changes in Beta Preview before promotion.</span>
             </div>
             <div class="editor-publish-actions">
-              <button class="is-secondary" type="button" id="web-editor-discard">Reset preview edits</button>
+              <button class="is-secondary" type="button" id="web-editor-discard" disabled>Reset preview edits</button>
               <button class="is-primary" type="button" id="web-editor-preview-submit" disabled>
-                Publish to beta-main
+                Production is read-only
+              </button>
+              <button class="is-promote" type="button" id="web-editor-promote" disabled>
+                Promote beta-main → main
               </button>
             </div>
           </footer>
@@ -717,15 +757,27 @@ function renderWebEditor() {
   const accent = document.querySelector("#web-editor-accent");
   const accentText = document.querySelector("#web-editor-accent-text");
   const font = document.querySelector("#web-editor-font");
+  const draftControls = document.querySelector("#web-editor-draft-controls");
   const frame = document.querySelector("#web-editor-frame");
   const browser = document.querySelector("#web-editor-browser");
   const openPage = document.querySelector("#web-editor-open-page");
   const previewPath = document.querySelector("#web-editor-preview-path");
   const browserUrl = document.querySelector("#web-editor-browser-url");
+  const environmentBadge = document.querySelector("#web-editor-environment-badge");
+  const previewTitle = document.querySelector("#editor-preview-title");
+  const controlsMode = document.querySelector("#editor-controls-mode");
+  const modeNote = document.querySelector("#editor-mode-note");
+  const discardButton = document.querySelector("#web-editor-discard");
+  const publishButton = document.querySelector("#web-editor-preview-submit");
+  const promoteButton = document.querySelector("#web-editor-promote");
+  const publishTitle = document.querySelector("#editor-publish-title");
+  const publishCopy = document.querySelector("#editor-publish-copy");
+
+  const activeEnvironment = () => environments[editorEnvironment];
 
   const cleanPageUrl = () => {
     const path = pageSelect?.value || "/";
-    return new URL(path, previewOrigin).toString();
+    return new URL(path, activeEnvironment().origin).toString();
   };
 
   const previewPageUrl = (cacheBust = false) => {
@@ -745,18 +797,40 @@ function renderWebEditor() {
   });
 
   const postDraft = () => {
+    const environment = activeEnvironment();
+    if (!environment.editable) return;
+
     frame?.contentWindow?.postMessage(
       {
         type: "WCG_EDITOR_PREVIEW",
         payload: draftPayload()
       },
-      previewOrigin
+      environment.origin
     );
+  };
+
+  const resetDraft = ({ notify = true } = {}) => {
+    if (heading) heading.value = "";
+    if (copy) copy.value = "";
+    if (accent) accent.value = "#304660";
+    if (accentText) accentText.value = "#304660";
+    if (font) font.value = "DM Serif Display";
+
+    const environment = activeEnvironment();
+    if (environment.editable) {
+      frame?.contentWindow?.postMessage(
+        { type: "WCG_EDITOR_PREVIEW_RESET" },
+        environment.origin
+      );
+    }
+
+    if (notify) showToast("Beta preview edits reset.");
   };
 
   const updatePage = ({ reload = true } = {}) => {
     const cleanUrl = cleanPageUrl();
-    const display = new URL(cleanUrl).hostname + new URL(cleanUrl).pathname;
+    const parsed = new URL(cleanUrl);
+    const display = parsed.hostname + parsed.pathname;
 
     if (openPage) openPage.href = cleanUrl;
     if (previewPath) previewPath.textContent = display;
@@ -766,6 +840,80 @@ function renderWebEditor() {
       frame.src = previewPageUrl();
     }
   };
+
+  const updateEnvironmentUI = ({ reload = true } = {}) => {
+    const environment = activeEnvironment();
+    const isBeta = editorEnvironment === "beta";
+
+    document.querySelectorAll("[data-editor-environment]").forEach((button) => {
+      button.classList.toggle(
+        "is-active",
+        button.dataset.editorEnvironment === editorEnvironment
+      );
+    });
+
+    if (draftControls) draftControls.disabled = !environment.editable;
+    if (discardButton) discardButton.disabled = !environment.editable;
+
+    if (previewTitle) {
+      previewTitle.textContent = isBeta
+        ? "Beta Preview · editable"
+        : "Production Preview · read only";
+    }
+
+    if (environmentBadge) {
+      environmentBadge.textContent = isBeta ? "BETA-MAIN" : "MAIN";
+      environmentBadge.classList.toggle("is-beta", isBeta);
+    }
+
+    if (controlsMode) {
+      controlsMode.textContent = isBeta ? "Beta editor" : "Production reference";
+    }
+
+    if (modeNote) {
+      modeNote.innerHTML = isBeta
+        ? "<strong>Editing beta-main</strong><span>Temporary controls modify only this embedded beta preview. Approved source changes should be committed to beta-main, reviewed here, then promoted to main.</span>"
+        : "<strong>Production is read-only</strong><span>Use this mode to compare against the approved main branch. Switch to Beta Preview to make temporary editor changes.</span>";
+    }
+
+    if (publishTitle) {
+      publishTitle.textContent = isBeta ? "Beta Preview · beta-main" : "Production · main";
+    }
+
+    if (publishCopy) {
+      publishCopy.textContent = isBeta
+        ? "Review the beta-main deployment here before promoting it to main."
+        : "Read-only reference. Make changes in Beta Preview before promotion.";
+    }
+
+    if (publishButton) {
+      publishButton.textContent = isBeta
+        ? "Publish edits to beta-main"
+        : "Production is read-only";
+      // GitHub writes remain disabled until the dashboard has a server-side GitHub credential.
+      publishButton.disabled = true;
+    }
+
+    if (promoteButton) {
+      // Promotion also requires the secure server-side GitHub connection.
+      promoteButton.disabled = true;
+    }
+
+    if (!isBeta) {
+      resetDraft({ notify: false });
+    }
+
+    updatePage({ reload });
+  };
+
+  document.querySelectorAll("[data-editor-environment]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const next = button.dataset.editorEnvironment;
+      if (!environments[next] || next === editorEnvironment) return;
+      editorEnvironment = next;
+      updateEnvironmentUI();
+    });
+  });
 
   pageSelect?.addEventListener("change", () => updatePage());
 
@@ -786,7 +934,9 @@ function renderWebEditor() {
   });
 
   frame?.addEventListener("load", () => {
-    window.setTimeout(postDraft, 80);
+    if (activeEnvironment().editable) {
+      window.setTimeout(postDraft, 80);
+    }
   });
 
   document.querySelectorAll("[data-editor-device]").forEach((button) => {
@@ -809,22 +959,17 @@ function renderWebEditor() {
     showToast("Open Chrome DevTools with ⌘⌥I on Mac, or Ctrl+Shift+I / F12 on Windows.");
   });
 
-  document.querySelector("#web-editor-discard")?.addEventListener("click", () => {
-    if (heading) heading.value = "";
-    if (copy) copy.value = "";
-    if (accent) accent.value = "#304660";
-    if (accentText) accentText.value = "#304660";
-    if (font) font.value = "DM Serif Display";
+  discardButton?.addEventListener("click", () => resetDraft());
 
-    frame?.contentWindow?.postMessage(
-      { type: "WCG_EDITOR_PREVIEW_RESET" },
-      previewOrigin
-    );
-
-    showToast("Preview edits reset to the Cloudflare Pages version.");
+  publishButton?.addEventListener("click", () => {
+    showToast("Connect a server-side GitHub credential before enabling beta-main publishing.", "error");
   });
 
-  updatePage({ reload: false });
+  promoteButton?.addEventListener("click", () => {
+    showToast("Connect a server-side GitHub credential before enabling beta-main → main promotion.", "error");
+  });
+
+  updateEnvironmentUI({ reload: false });
 }
 
 function notificationStatusLabel() {
