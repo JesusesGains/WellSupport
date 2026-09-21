@@ -1016,7 +1016,7 @@ function renderMessages() {
         message.sender_avatar_url || (message.sender_user_id === state.user?.id ? state.agent?.avatar_url : null),
         message.sender_display_name || (message.sender_user_id === state.user?.id ? state.agent?.display_name : "W")
       );
-      row.append(avatar, bubble);
+      row.append(bubble, avatar);
     } else {
       row.appendChild(bubble);
     }
