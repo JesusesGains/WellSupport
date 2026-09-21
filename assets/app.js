@@ -1567,11 +1567,17 @@ function renderChatShell() {
   const conversation = currentConversation();
   if (!panel || !conversation) return;
 
+  const owner = conversationOwner(conversation);
+  const mine = conversationIsMine(conversation);
+  const assignedToOther = Boolean(
+    conversation.joined_agent_id && !mine
+  );
+
   panel.className = "chat-panel";
   panel.innerHTML = `
     <header class="chat-header">
       <div class="chat-person">
-        <button id="mobile-back" class="mobile-back" type="button" aria-label="Back to inbox">
+        <button id="mobile-back" class="mobile-back" type="button" aria-label="Back to messages">
           ${backIcon()}
         </button>
         <span class="visitor-avatar">V</span>
@@ -1581,13 +1587,25 @@ function renderChatShell() {
         </div>
       </div>
       <div class="chat-actions">
-        <span class="status-chip is-open">Open</span>
-        <button id="close-chat-button" class="toolbar-button is-close-chat" type="button">
-          ${closeIcon()}
-          <span>Close chat</span>
-        </button>
+        <span id="chat-owner-chip" class="chat-owner-chip"></span>
+        ${mine ? `
+          <button id="close-chat-button" class="toolbar-button is-close-chat" type="button">
+            ${closeIcon()}
+            <span>Close chat</span>
+          </button>
+        ` : ""}
       </div>
     </header>
+
+    ${assignedToOther ? `
+      <div class="other-staff-banner">
+        <span id="other-staff-avatar" class="conversation-owner-avatar is-large"></span>
+        <div>
+          <strong id="other-staff-name"></strong>
+          <span>You can view this active chat, but only the assigned staff member can reply or close it.</span>
+        </div>
+      </div>
+    ` : ""}
 
     <div class="visitor-context-bar">
       <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -1629,6 +1647,27 @@ function renderChatShell() {
   document.querySelector("#visitor-context-meta").textContent =
     visitorContextMeta(conversation) || "Temporary support context unavailable";
 
+  const ownerChip = document.querySelector("#chat-owner-chip");
+  if (ownerChip) {
+    ownerChip.textContent = mine
+      ? "Your chat"
+      : assignedToOther
+        ? `${owner?.display_name || "Staff"} is handling`
+        : "Waiting";
+  }
+
+  if (assignedToOther) {
+    renderAvatarInto(
+      document.querySelector("#other-staff-avatar"),
+      owner?.avatar_url,
+      owner?.display_name || "W"
+    );
+    const ownerName = document.querySelector("#other-staff-name");
+    if (ownerName) {
+      ownerName.textContent = `${owner?.display_name || "Another staff member"} is handling this chat`;
+    }
+  }
+
   const mapUrl = visitorMapUrl(conversation);
   const mapWrap = document.querySelector("#visitor-map-wrap");
   const map = document.querySelector("#visitor-map");
@@ -1645,9 +1684,14 @@ function renderChatShell() {
     state.messages = [];
     document.querySelector("#dashboard")?.classList.remove("has-selection");
     renderConversationList();
+    renderDashboardChatEmpty();
   });
 
-  document.querySelector("#close-chat-button")?.addEventListener("click", deleteConversation);
+  document.querySelector("#close-chat-button")?.addEventListener(
+    "click",
+    deleteConversation
+  );
+
   renderComposer();
 }
 
@@ -1670,6 +1714,10 @@ async function loadMessages(conversationId, { silent = false } = {}) {
 
       const last = state.messages[state.messages.length - 1];
       if (last) state.lastMessages.set(conversationId, last);
+
+      if (document.visibilityState === "visible") {
+        await markConversationRead(conversationId);
+      }
     }
   } catch (error) {
     if (error.status !== 401 && error.status !== 403 && !silent) {
@@ -1777,6 +1825,26 @@ function renderComposer() {
   const conversation = currentConversation();
   if (!slot || !conversation) return;
 
+  if (!conversationIsMine(conversation)) {
+    const owner = conversationOwner(conversation);
+    slot.innerHTML = `
+      <div class="readonly-composer">
+        <span class="conversation-owner-avatar is-large" id="readonly-owner-avatar"></span>
+        <div>
+          <strong>${owner?.display_name || "Another staff member"} is handling this conversation</strong>
+          <span>Read-only view · messages stay live as the conversation continues.</span>
+        </div>
+      </div>
+    `;
+
+    renderAvatarInto(
+      document.querySelector("#readonly-owner-avatar"),
+      owner?.avatar_url,
+      owner?.display_name || "W"
+    );
+    return;
+  }
+
   slot.innerHTML = `
     <form id="composer-form" class="composer">
       <div class="composer-inner">
@@ -1826,7 +1894,13 @@ async function sendReply(event) {
   const body = String(input?.value || "").trim();
   const conversation = currentConversation();
 
-  if (!body || !conversation || conversation.status !== "open" || !state.user) return;
+  if (
+    !body ||
+    !conversation ||
+    conversation.status !== "open" ||
+    !state.user ||
+    !conversationIsMine(conversation)
+  ) return;
   if (body.length > MAX_MESSAGE_LENGTH) return;
 
   if (button) button.disabled = true;
@@ -1892,6 +1966,8 @@ async function deleteConversation() {
     state.conversations = state.conversations.filter((item) => item.id !== conversation.id);
     state.lastMessages.delete(conversation.id);
     state.unread.delete(conversation.id);
+    state.unreadCounts.delete(conversation.id);
+    state.readAt.delete(conversation.id);
     state.selectedId = null;
     state.messages = [];
 
@@ -2003,6 +2079,9 @@ async function signOut() {
   state.lastMessages = new Map();
   state.unread = new Set();
   state.unreadCounts = new Map();
+  state.agents = new Map();
+  state.readAt = new Map();
+  state.messageSection = "current";
   state.knownVisitorMessageIds = new Set();
   state.notificationsReady = false;
   state.analytics = null;
