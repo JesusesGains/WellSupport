@@ -15,7 +15,7 @@ Private staff dashboard for the Well College Global website support chat.
 - Sends staff replies as `sender_type = 'agent'` using the verified signed-in staff UUID.
 - Closing a chat permanently deletes that conversation and its cascade-deleted messages.
 - Shows temporary visitor city/region/country, IP, timezone and browser language above the thread while that metadata is available.
-- Marks the first staff open with “A staff member joined your conversation”.
+- Marks the first staff open with “<staff display name> has joined your chat”.
 - Visitor chats use ephemeral tokens rather than visitor Supabase Auth users.
 - Uses the same Well College Global visual tokens as the website support widget.
 - Contains no service-role/secret key.
@@ -27,7 +27,14 @@ Use:
 - Build command: `npm run build`
 - Build output directory: `dist`
 
-No Supabase key or staff Auth token is emitted into the browser build. The Pages Functions under `functions/api/staff/` are the backend-for-frontend security boundary and use the Supabase publishable project key only server-side together with the staff JWT. The publishable key is not a privileged secret; no service-role/secret key is used.
+No Supabase key or staff Auth token is emitted into the browser build. The Pages Functions under `functions/api/staff/` are the backend-for-frontend security boundary and read their Supabase configuration from Cloudflare environment variables.
+
+Configure the **WellSupport** Cloudflare Pages project with:
+
+- `SUPABASE_URL` — Text
+- `SUPABASE_PUBLISHABLE_KEY` — Text
+
+These values are available only to the server-side Pages Functions. The publishable key is not privileged; every data request still carries the verified staff JWT and remains constrained by RLS. No service-role/secret key is used.
 
 ## Staff access
 
@@ -71,7 +78,7 @@ The website and this dashboard point to the same **Well Website** Supabase proje
 
 ## Local preview
 
-Set the two environment variables, then run:
+Provide `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY` to the local Pages Functions environment, then run:
 
 ```bash
 npm run dev
