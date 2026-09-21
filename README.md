@@ -11,6 +11,9 @@ Private staff dashboard for the Well College Global website support chat.
 - Receives new website chats and messages through Supabase Realtime.
 - Sends staff replies as `sender_type = 'agent'` using the signed-in staff UUID.
 - Allows staff to close and reopen conversations.
+- Shows temporary visitor city/region/country, IP, timezone and browser language above the thread while that metadata is available.
+- Marks the first staff open with “A staff member joined your conversation”.
+- Visitor chats use ephemeral tokens rather than visitor Supabase Auth users.
 - Uses the same Well College Global visual tokens as the website support widget.
 - Contains no service-role/secret key.
 
