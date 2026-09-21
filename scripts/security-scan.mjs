@@ -86,12 +86,32 @@ async function sourceScan() {
       "frame-ancestors 'none'",
       "object-src 'none'",
       "X-Frame-Options: DENY",
-      "Strict-Transport-Security:"
+      "Strict-Transport-Security:",
+      "X-Robots-Tag: noindex",
+      "Content-Signal: search=no"
     ]) {
       if (!headers.includes(required)) failures.push(`public/_headers: missing ${required}`);
     }
     for (const forbidden of ["cdn.jsdelivr.net", "wss://*.supabase.co", "connect-src 'self' https://*.supabase.co"]) {
       if (headers.includes(forbidden)) failures.push(`public/_headers: browser policy still allows ${forbidden}`);
+    }
+  }
+
+  const robotsPath = resolve(root, "public/robots.txt");
+  if (!await exists(robotsPath)) {
+    failures.push("public/robots.txt: crawler deny-all file is missing");
+  } else {
+    const robots = await readFile(robotsPath, "utf8");
+    if (!/User-agent:\s*\*\s*\nDisallow:\s*\//i.test(robots)) {
+      failures.push("public/robots.txt: must disallow all crawlers");
+    }
+  }
+
+  const indexPath = resolve(root, "index.html");
+  if (await exists(indexPath)) {
+    const index = await readFile(indexPath, "utf8");
+    if (!/name=["']robots["'][^>]*noindex/i.test(index)) {
+      failures.push("index.html: noindex robots meta is required");
     }
   }
 
