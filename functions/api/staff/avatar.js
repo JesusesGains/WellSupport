@@ -6,11 +6,11 @@ import {
   uploadAvatar
 } from "./_utils.js";
 
-export async function onRequestPost({ request }) {
+export async function onRequestPost({ request, env }) {
   const blocked = assertSameOrigin(request);
   if (blocked) return blocked;
 
-  const session = await requireStaff(request);
+  const session = await requireStaff(env, request);
   if (session.response) return session.response;
 
   try {
@@ -32,11 +32,11 @@ export async function onRequestPost({ request }) {
   }
 }
 
-export async function onRequestDelete({ request }) {
+export async function onRequestDelete({ request, env }) {
   const blocked = assertSameOrigin(request);
   if (blocked) return blocked;
 
-  const session = await requireStaff(request);
+  const session = await requireStaff(env, request);
   if (session.response) return session.response;
 
   try {
