@@ -12,7 +12,7 @@
   Cross-Origin-Opener-Policy: same-origin
   Cross-Origin-Resource-Policy: same-origin
   Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=(), browsing-topics=()
-  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: https://*.supabase.co; connect-src 'self'; frame-src https://www.google.com https://maps.google.com https://www.wellcollegeglobal.com https://wellwebsite.pages.dev; object-src 'none'; media-src 'none'; worker-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; upgrade-insecure-requests
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: https://*.supabase.co; connect-src 'self'; frame-src https://www.google.com https://maps.google.com https://www.wellcollegeglobal.com https://wellwebsite.pages.dev https://beta-main.wellwebsite.pages.dev; object-src 'none'; media-src 'none'; worker-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; upgrade-insecure-requests
 
 /api/*
   Cache-Control: private, no-store, no-cache, max-age=0, must-revalidate
