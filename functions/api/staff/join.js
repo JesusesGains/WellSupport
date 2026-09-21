@@ -12,11 +12,11 @@ const FIELDS = [
   "joined_agent_id"
 ].join(",");
 
-export async function onRequestPost({ request }) {
+export async function onRequestPost({ request, env }) {
   const blocked = assertSameOrigin(request);
   if (blocked) return blocked;
 
-  const session = await requireStaff(request);
+  const session = await requireStaff(env, request);
   if (session.response) return session.response;
 
   const body = await request.json().catch(() => ({}));
