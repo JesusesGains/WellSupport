@@ -5,7 +5,7 @@ import {
   withCookies
 } from "./_utils.js";
 
-export async function onRequestPost({ request }) {
+export async function onRequestPost({ request, env }) {
   const blocked = assertSameOrigin(request);
   if (blocked) return blocked;
 
@@ -23,7 +23,7 @@ export async function onRequestPost({ request }) {
     return json({ error: "Email and password are required." }, 400);
   }
 
-  const result = await loginStaff(email, password);
+  const result = await loginStaff(env, email, password);
   if (result.response) return result.response;
 
   return withCookies(
