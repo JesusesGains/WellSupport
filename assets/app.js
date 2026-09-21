@@ -1099,6 +1099,19 @@ function renderDashboard() {
 
   refreshProfileUI();
 
+  document.querySelectorAll("[data-dashboard-view]").forEach((button) => {
+    button.addEventListener("click", () => {
+      setDashboardView(button.dataset.dashboardView);
+    });
+  });
+  document.querySelector("#notification-permission-button")?.addEventListener(
+    "click",
+    requestDesktopNotifications
+  );
+  updatePrimaryNavigation();
+  renderNotificationControl();
+  renderAnalyticsDashboard();
+
   document.querySelector("#profile-menu-button")?.addEventListener("click", toggleProfileMenu);
   document.querySelector("#account-details-button")?.addEventListener("click", openAccountDetails);
   document.querySelector("#profile-signout-button")?.addEventListener("click", signOut);
