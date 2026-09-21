@@ -21,11 +21,11 @@ Use:
 - Build command: `npm run build`
 - Build output directory: `dist`
 
-Add these build environment variables:
+The dashboard is preconfigured to the live **Well Website** Supabase project (`fmlrtcofnbqdotpvuaem`). These optional Cloudflare build variables can override the defaults:
 
 ```
-VITE_SUPPORT_SUPABASE_URL=https://YOUR_PROJECT_REF.supabase.co
-VITE_SUPPORT_SUPABASE_PUBLISHABLE_KEY=sb_publishable_REPLACE_ME
+VITE_SUPPORT_SUPABASE_URL=https://fmlrtcofnbqdotpvuaem.supabase.co
+VITE_SUPPORT_SUPABASE_PUBLISHABLE_KEY=sb_publishable_my0myBoo-Kdu4tMCOsdKiQ_l0uuIHpR
 ```
 
 The publishable key is expected to be public browser configuration. Never add a Supabase secret/service-role key to this repository or to browser-accessible Cloudflare variables.
@@ -68,7 +68,7 @@ Realtime must include:
 - `public.support_conversations`
 - `public.support_messages`
 
-The website and this dashboard must point to the **same dedicated Well College Global Supabase project**.
+The website and this dashboard point to the same **Well Website** Supabase project (`fmlrtcofnbqdotpvuaem`).
 
 ## Local preview
 
