@@ -22,7 +22,9 @@ const state = {
   realtimeStatus: "connecting",
   channel: null,
   loadingInbox: false,
-  loadingMessages: false
+  loadingMessages: false,
+  pendingAvatarFile: null,
+  removeAvatar: false
 };
 
 function configured() {
@@ -70,6 +72,200 @@ function initials(name) {
     .slice(0, 2)
     .map((part) => part[0]?.toUpperCase() || "")
     .join("") || "W";
+}
+
+function renderAvatarInto(element, avatarUrl, name) {
+  if (!element) return;
+  element.replaceChildren();
+
+  if (avatarUrl) {
+    const image = document.createElement("img");
+    image.src = avatarUrl;
+    image.alt = "";
+    image.referrerPolicy = "no-referrer";
+    element.appendChild(image);
+    element.classList.add("has-image");
+    return;
+  }
+
+  element.classList.remove("has-image");
+  element.textContent = initials(name);
+}
+
+function refreshProfileUI() {
+  const name = state.agent?.display_name || "Support staff";
+  const avatarUrl = state.agent?.avatar_url || null;
+
+  const topName = document.querySelector("#top-profile-name");
+  if (topName) topName.textContent = name;
+
+  const dropdownName = document.querySelector("#profile-dropdown-name");
+  if (dropdownName) dropdownName.textContent = name;
+
+  const dropdownEmail = document.querySelector("#profile-dropdown-email");
+  if (dropdownEmail) dropdownEmail.textContent = state.user?.email || "";
+
+  renderAvatarInto(document.querySelector("#top-profile-avatar"), avatarUrl, name);
+  renderAvatarInto(document.querySelector("#profile-dropdown-avatar"), avatarUrl, name);
+  renderAvatarInto(document.querySelector("#account-avatar-preview"), avatarUrl, name);
+}
+
+function closeProfileMenu() {
+  const menu = document.querySelector("#profile-dropdown");
+  const button = document.querySelector("#profile-menu-button");
+  if (menu) menu.hidden = true;
+  if (button) button.setAttribute("aria-expanded", "false");
+}
+
+function toggleProfileMenu(event) {
+  event?.stopPropagation();
+  const menu = document.querySelector("#profile-dropdown");
+  const button = document.querySelector("#profile-menu-button");
+  if (!menu || !button) return;
+
+  const willOpen = menu.hidden;
+  menu.hidden = !willOpen;
+  button.setAttribute("aria-expanded", String(willOpen));
+}
+
+function openAccountDetails() {
+  closeProfileMenu();
+  state.pendingAvatarFile = null;
+  state.removeAvatar = false;
+
+  const modal = document.querySelector("#account-modal");
+  const nameInput = document.querySelector("#account-display-name");
+  const emailInput = document.querySelector("#account-email");
+  const removeButton = document.querySelector("#remove-avatar-button");
+
+  if (nameInput) nameInput.value = state.agent?.display_name || "";
+  if (emailInput) emailInput.value = state.user?.email || "";
+  if (removeButton) removeButton.hidden = !state.agent?.avatar_url;
+
+  refreshProfileUI();
+  if (modal) {
+    modal.hidden = false;
+    requestAnimationFrame(() => nameInput?.focus());
+  }
+}
+
+function closeAccountDetails() {
+  state.pendingAvatarFile = null;
+  state.removeAvatar = false;
+  const modal = document.querySelector("#account-modal");
+  if (modal) modal.hidden = true;
+}
+
+function previewAvatarFile(file) {
+  const preview = document.querySelector("#account-avatar-preview");
+  if (!preview || !file) return;
+
+  const objectUrl = URL.createObjectURL(file);
+  preview.replaceChildren();
+
+  const image = document.createElement("img");
+  image.src = objectUrl;
+  image.alt = "Selected profile photo";
+  image.onload = () => URL.revokeObjectURL(objectUrl);
+
+  preview.appendChild(image);
+  preview.classList.add("has-image");
+}
+
+async function saveAccountDetails(event) {
+  event.preventDefault();
+
+  const nameInput = document.querySelector("#account-display-name");
+  const saveButton = document.querySelector("#account-save-button");
+  const displayName = String(nameInput?.value || "").trim();
+
+  if (!displayName || displayName.length > 120) {
+    showToast("Enter a staff display name between 1 and 120 characters.", "error");
+    return;
+  }
+
+  if (!state.user || !state.agent) return;
+
+  if (saveButton) {
+    saveButton.disabled = true;
+    saveButton.textContent = "Saving…";
+  }
+
+  try {
+    const client = await getClient();
+    let avatarUrl = state.agent.avatar_url || null;
+
+    if (state.removeAvatar) {
+      const { error: removeError } = await client.storage
+        .from("support-avatars")
+        .remove([`${state.user.id}/profile`]);
+
+      if (removeError && !String(removeError.message || "").toLowerCase().includes("not found")) {
+        throw removeError;
+      }
+
+      avatarUrl = null;
+    }
+
+    if (state.pendingAvatarFile) {
+      const file = state.pendingAvatarFile;
+      const allowedTypes = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
+
+      if (!allowedTypes.has(file.type)) {
+        throw new Error("Use a JPG, PNG, WebP, or GIF profile photo.");
+      }
+
+      if (file.size > 5 * 1024 * 1024) {
+        throw new Error("Profile photos must be 5 MB or smaller.");
+      }
+
+      const objectPath = `${state.user.id}/profile`;
+      const { error: uploadError } = await client.storage
+        .from("support-avatars")
+        .upload(objectPath, file, {
+          upsert: true,
+          contentType: file.type,
+          cacheControl: "3600"
+        });
+
+      if (uploadError) throw uploadError;
+
+      const { data: publicData } = client.storage
+        .from("support-avatars")
+        .getPublicUrl(objectPath);
+
+      avatarUrl = publicData?.publicUrl
+        ? `${publicData.publicUrl}?v=${Date.now()}`
+        : null;
+    }
+
+    const { data, error } = await client
+      .from("support_agents")
+      .update({
+        display_name: displayName,
+        avatar_url: avatarUrl
+      })
+      .eq("user_id", state.user.id)
+      .select("user_id,display_name,avatar_url,active")
+      .single();
+
+    if (error) throw error;
+
+    state.agent = data;
+    state.pendingAvatarFile = null;
+    state.removeAvatar = false;
+    refreshProfileUI();
+    closeAccountDetails();
+    showToast("Account details updated.");
+  } catch (error) {
+    showToast(error?.message || "Unable to update account details.", "error");
+  } finally {
+    const currentSave = document.querySelector("#account-save-button");
+    if (currentSave) {
+      currentSave.disabled = false;
+      currentSave.textContent = "Save changes";
+    }
+  }
 }
 
 function chatIcon() {
@@ -160,7 +356,7 @@ async function loadStaff(userId) {
   const client = await getClient();
   const { data, error } = await client
     .from("support_agents")
-    .select("user_id,display_name,active")
+    .select("user_id,display_name,avatar_url,active")
     .eq("user_id", userId)
     .eq("active", true)
     .maybeSingle();
@@ -281,6 +477,76 @@ async function handleLogin(event) {
 function renderDashboard() {
   app.innerHTML = `
     <main id="dashboard" class="dashboard">
+      <div class="staff-profile-shell">
+        <button
+          id="profile-menu-button"
+          class="staff-profile-button"
+          type="button"
+          aria-haspopup="menu"
+          aria-expanded="false"
+        >
+          <span id="top-profile-avatar" class="staff-profile-avatar"></span>
+          <span id="top-profile-name" class="staff-profile-name"></span>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 10 4 4 4-4"></path></svg>
+        </button>
+
+        <div id="profile-dropdown" class="profile-dropdown" role="menu" hidden>
+          <div class="profile-dropdown-head">
+            <span id="profile-dropdown-avatar" class="staff-profile-avatar is-large"></span>
+            <div>
+              <strong id="profile-dropdown-name"></strong>
+              <span id="profile-dropdown-email"></span>
+            </div>
+          </div>
+          <button id="account-details-button" class="profile-dropdown-action" type="button" role="menuitem">
+            Account details
+          </button>
+          <button id="profile-signout-button" class="profile-dropdown-action is-danger" type="button" role="menuitem">
+            Sign out
+          </button>
+        </div>
+      </div>
+
+      <div id="account-modal" class="account-modal" hidden>
+        <button id="account-modal-backdrop" class="account-modal-backdrop" type="button" aria-label="Close account details"></button>
+        <section class="account-card" role="dialog" aria-modal="true" aria-labelledby="account-title">
+          <div class="account-card-head">
+            <div>
+              <span class="account-eyebrow">Staff profile</span>
+              <h2 id="account-title">Account details</h2>
+            </div>
+            <button id="account-close-button" class="account-close-button" type="button" aria-label="Close account details">×</button>
+          </div>
+
+          <form id="account-form">
+            <div class="account-avatar-row">
+              <span id="account-avatar-preview" class="account-avatar-preview"></span>
+              <div class="account-avatar-actions">
+                <label class="account-photo-button" for="account-avatar-input">Change photo</label>
+                <input id="account-avatar-input" type="file" accept="image/jpeg,image/png,image/webp,image/gif" hidden />
+                <button id="remove-avatar-button" class="account-remove-photo" type="button">Remove photo</button>
+                <small>JPG, PNG, WebP or GIF · max 5 MB</small>
+              </div>
+            </div>
+
+            <label class="account-field" for="account-display-name">
+              <span>Display name</span>
+              <input id="account-display-name" type="text" maxlength="120" autocomplete="name" required />
+              <small>This is the name visitors see in support chat replies.</small>
+            </label>
+
+            <label class="account-field" for="account-email">
+              <span>Email</span>
+              <input id="account-email" type="email" disabled />
+            </label>
+
+            <div class="account-actions">
+              <button id="account-cancel-button" class="account-secondary-button" type="button">Cancel</button>
+              <button id="account-save-button" class="account-primary-button" type="submit">Save changes</button>
+            </div>
+          </form>
+        </section>
+      </div>
       <aside class="sidebar">
         <div class="sidebar-brand">
           <span class="brand-mark" aria-hidden="true">W</span>
@@ -303,17 +569,6 @@ function renderDashboard() {
         </div>
 
         <div class="sidebar-spacer"></div>
-
-        <div class="agent-card">
-          <div class="agent-row">
-            <span id="agent-avatar" class="agent-avatar">W</span>
-            <div class="agent-copy">
-              <strong id="agent-name">Support staff</strong>
-              <span id="agent-email">Authenticated</span>
-            </div>
-          </div>
-          <button id="signout-button" class="signout-button" type="button">Sign out</button>
-        </div>
       </aside>
 
       <section class="inbox-panel" aria-label="Support conversations">
@@ -352,11 +607,44 @@ function renderDashboard() {
     </main>
   `;
 
-  document.querySelector("#agent-name").textContent = state.agent?.display_name || "Support staff";
-  document.querySelector("#agent-email").textContent = state.user?.email || "Authenticated";
-  document.querySelector("#agent-avatar").textContent = initials(state.agent?.display_name);
+  refreshProfileUI();
 
-  document.querySelector("#signout-button")?.addEventListener("click", signOut);
+  document.querySelector("#profile-menu-button")?.addEventListener("click", toggleProfileMenu);
+  document.querySelector("#account-details-button")?.addEventListener("click", openAccountDetails);
+  document.querySelector("#profile-signout-button")?.addEventListener("click", signOut);
+  document.querySelector("#account-close-button")?.addEventListener("click", closeAccountDetails);
+  document.querySelector("#account-modal-backdrop")?.addEventListener("click", closeAccountDetails);
+  document.querySelector("#account-cancel-button")?.addEventListener("click", closeAccountDetails);
+  document.querySelector("#account-form")?.addEventListener("submit", saveAccountDetails);
+
+  document.querySelector("#account-avatar-input")?.addEventListener("change", (event) => {
+    const file = event.target.files?.[0] || null;
+    if (!file) return;
+    state.pendingAvatarFile = file;
+    state.removeAvatar = false;
+    previewAvatarFile(file);
+    const removeButton = document.querySelector("#remove-avatar-button");
+    if (removeButton) removeButton.hidden = false;
+  });
+
+  document.querySelector("#remove-avatar-button")?.addEventListener("click", () => {
+    state.pendingAvatarFile = null;
+    state.removeAvatar = true;
+    renderAvatarInto(
+      document.querySelector("#account-avatar-preview"),
+      null,
+      document.querySelector("#account-display-name")?.value || state.agent?.display_name
+    );
+    const input = document.querySelector("#account-avatar-input");
+    if (input) input.value = "";
+    const removeButton = document.querySelector("#remove-avatar-button");
+    if (removeButton) removeButton.hidden = true;
+  });
+
+  document.addEventListener("click", (event) => {
+    const shell = document.querySelector(".staff-profile-shell");
+    if (shell && !shell.contains(event.target)) closeProfileMenu();
+  }, { once: false });
   document.querySelector("#conversation-search")?.addEventListener("input", (event) => {
     state.search = event.target.value.trim().toLowerCase();
     renderConversationList();
@@ -394,7 +682,7 @@ async function loadInbox() {
         .limit(500),
       client
         .from("support_messages")
-        .select("id,conversation_id,sender_type,body,created_at")
+        .select("id,conversation_id,sender_type,sender_display_name,sender_avatar_url,body,created_at")
         .order("created_at", { ascending: false })
         .limit(1000)
     ]);
@@ -591,7 +879,7 @@ async function loadMessages(conversationId) {
     const client = await getClient();
     const { data, error } = await client
       .from("support_messages")
-      .select("id,conversation_id,sender_type,sender_user_id,body,created_at")
+      .select("id,conversation_id,sender_type,sender_user_id,sender_display_name,sender_avatar_url,body,created_at")
       .eq("conversation_id", conversationId)
       .order("created_at", { ascending: true })
       .limit(500);
@@ -658,7 +946,9 @@ function renderMessages() {
 
     const sender = document.createElement("strong");
     sender.textContent = kind === "agent"
-      ? (message.sender_user_id === state.user?.id ? "You" : "Well College Global")
+      ? (message.sender_user_id === state.user?.id
+          ? `You · ${message.sender_display_name || state.agent?.display_name || "Support"}`
+          : (message.sender_display_name || "Well College Global"))
       : kind === "visitor"
         ? visitorName(currentConversation())
         : "System";
@@ -674,7 +964,20 @@ function renderMessages() {
     body.textContent = message.body;
 
     bubble.append(meta, body);
-    row.appendChild(bubble);
+
+    if (kind === "agent") {
+      const avatar = document.createElement("span");
+      avatar.className = "message-agent-avatar";
+      renderAvatarInto(
+        avatar,
+        message.sender_avatar_url || (message.sender_user_id === state.user?.id ? state.agent?.avatar_url : null),
+        message.sender_display_name || (message.sender_user_id === state.user?.id ? state.agent?.display_name : "W")
+      );
+      row.append(avatar, bubble);
+    } else {
+      row.appendChild(bubble);
+    }
+
     viewport.appendChild(row);
   }
 
@@ -763,9 +1066,11 @@ async function sendReply(event) {
         conversation_id: conversation.id,
         sender_type: "agent",
         sender_user_id: state.user.id,
+        sender_display_name: state.agent?.display_name || "Well College Global",
+        sender_avatar_url: state.agent?.avatar_url || null,
         body
       })
-      .select("id,conversation_id,sender_type,sender_user_id,body,created_at")
+      .select("id,conversation_id,sender_type,sender_user_id,sender_display_name,sender_avatar_url,body,created_at")
       .single();
 
     if (error) throw error;
