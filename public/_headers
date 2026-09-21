@@ -2,14 +2,15 @@
   Cache-Control: private, no-store, no-cache, max-age=0, must-revalidate
   Pragma: no-cache
   Expires: 0
-  X-Robots-Tag: noindex, nofollow, noarchive, nosnippet, noimageindex
+  X-Robots-Tag: noindex, nofollow, noarchive, nosnippet, noimageindex, noai, noimageai
   Content-Signal: search=no, ai-train=no, ai-input=no, use=no
   X-Content-Type-Options: nosniff
   Referrer-Policy: no-referrer
-  X-Robots-Tag: noindex, nofollow, noarchive, nosnippet, noimageindex, noai, noimageai
   X-Frame-Options: DENY
+  X-Permitted-Cross-Domain-Policies: none
   Strict-Transport-Security: max-age=31536000; includeSubDomains
   Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Resource-Policy: same-origin
   Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=(), browsing-topics=()
   Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: https://*.supabase.co; connect-src 'self'; frame-src https://www.google.com https://maps.google.com; object-src 'none'; media-src 'none'; worker-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; upgrade-insecure-requests
 
@@ -17,7 +18,8 @@
   Cache-Control: private, no-store, no-cache, max-age=0, must-revalidate
   Pragma: no-cache
   Expires: 0
-  X-Robots-Tag: noindex, nofollow, noarchive, nosnippet, noimageindex
+  X-Robots-Tag: noindex, nofollow, noarchive, nosnippet, noimageindex, noai, noimageai
   Content-Signal: search=no, ai-train=no, ai-input=no, use=no
   X-Content-Type-Options: nosniff
   Referrer-Policy: no-referrer
+  X-Frame-Options: DENY
