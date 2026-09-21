@@ -120,8 +120,69 @@ function formatDay(value) {
   }).format(date);
 }
 
-function visitorName() {
-  return "Website visitor";
+const VISITOR_NAME_PREFIX = "[[WCG_VISITOR_NAME_V1:";
+
+function decodeVisitorMessage(message) {
+  const body = String(message?.body || "");
+  const fallbackName = String(message?.sender_display_name || "").trim();
+
+  if (
+    message?.sender_type !== "visitor" ||
+    !body.startsWith(VISITOR_NAME_PREFIX)
+  ) {
+    return { body, name: fallbackName };
+  }
+
+  const end = body.indexOf("]]");
+  if (end < VISITOR_NAME_PREFIX.length) {
+    return { body, name: fallbackName };
+  }
+
+  let encodedName = "";
+  try {
+    encodedName = decodeURIComponent(
+      body.slice(VISITOR_NAME_PREFIX.length, end)
+    );
+  } catch {
+    encodedName = "";
+  }
+
+  const name = String(fallbackName || encodedName)
+    .replace(/[\u0000-\u001f\u007f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 80);
+
+  return {
+    name,
+    body: body.slice(end + 2).replace(/^\n/, "")
+  };
+}
+
+function visitorName(conversation) {
+  const conversationId = conversation?.id;
+  if (!conversationId) return "Website visitor";
+
+  const namedMessage = [...state.messages]
+    .reverse()
+    .find((message) => {
+      if (
+        message?.conversation_id !== conversationId ||
+        message?.sender_type !== "visitor"
+      ) {
+        return false;
+      }
+
+      return Boolean(decodeVisitorMessage(message).name);
+    });
+
+  return namedMessage
+    ? decodeVisitorMessage(namedMessage).name
+    : "Website visitor";
+}
+
+function visibleMessageBody(message) {
+  return decodeVisitorMessage(message).body;
 }
 
 function visitorLocation(conversation) {
@@ -2193,7 +2254,7 @@ function renderConversationList() {
 
     const preview = document.createElement("div");
     preview.className = "conversation-preview";
-    preview.textContent = last?.body || "Conversation started";
+    preview.textContent = last ? visibleMessageBody(last) : "Conversation started";
 
     const meta = document.createElement("div");
     meta.className = "conversation-meta";
@@ -2719,7 +2780,7 @@ function renderMessages({ forceBottom = false } = {}) {
 
     const body = document.createElement("p");
     body.className = "message-body";
-    body.textContent = message.body;
+    body.textContent = visibleMessageBody(message);
 
     bubble.append(meta, body);
 
