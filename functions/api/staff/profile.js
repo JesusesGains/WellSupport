@@ -2,14 +2,15 @@ import {
   assertSameOrigin,
   requireStaff,
   restJson,
-  sessionResponse
+  sessionResponse,
+  supportAvatarPrefix
 } from "./_utils.js";
 
-export async function onRequestPost({ request }) {
+export async function onRequestPost({ request, env }) {
   const blocked = assertSameOrigin(request);
   if (blocked) return blocked;
 
-  const session = await requireStaff(request);
+  const session = await requireStaff(env, request);
   if (session.response) return session.response;
 
   const input = await request.json().catch(() => ({}));
@@ -28,16 +29,14 @@ export async function onRequestPost({ request }) {
   }
 
   const update = { display_name: displayName };
+
   if (Object.prototype.hasOwnProperty.call(input, "avatarUrl")) {
-    const avatarUrl = input.avatarUrl ? String(input.avatarUrl).slice(0, 2048) : null;
+    const avatarUrl = input.avatarUrl
+      ? String(input.avatarUrl).slice(0, 2048)
+      : null;
 
-    if (avatarUrl) {
-      const expectedPrefix =
-        `https://fmlrtcofnbqdotpvuaem.supabase.co/storage/v1/object/public/support-avatars/${session.user.id}/profile`;
-
-      if (!avatarUrl.startsWith(expectedPrefix)) {
-        return sessionResponse({ error: "Invalid profile photo URL." }, session, 400);
-      }
+    if (avatarUrl && !avatarUrl.startsWith(supportAvatarPrefix(session))) {
+      return sessionResponse({ error: "Invalid profile photo URL." }, session, 400);
     }
 
     update.avatar_url = avatarUrl;
