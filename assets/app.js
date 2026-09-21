@@ -2682,6 +2682,17 @@ function renderMessages({ forceBottom = false } = {}) {
 
     bubble.append(meta, body);
 
+    if (
+      kind === "agent" &&
+      message.sender_user_id === state.user?.id &&
+      !message._sendStatus
+    ) {
+      const delivery = document.createElement("div");
+      delivery.className = "message-delivery-status";
+      delivery.textContent = "Sent >";
+      bubble.appendChild(delivery);
+    }
+
     if (message._sendStatus === "failed") {
       const issue =
         message._sendError || "Message failed to send.";
