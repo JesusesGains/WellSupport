@@ -29,10 +29,41 @@ Use:
 
 No Supabase key or staff Auth token is emitted into the browser build. The Pages Functions under `functions/api/staff/` are the backend-for-frontend security boundary and read their Supabase configuration from Cloudflare environment variables.
 
+
+### Website analytics
+
+The dashboard uses **Cloudflare Web Analytics / RUM as the source of truth for traffic metrics**. The authenticated `/api/staff/analytics` Pages Function queries Cloudflare's GraphQL Analytics API server-side, so the Cloudflare analytics token never reaches browser JavaScript.
+
+Cloudflare supplies:
+
+- visits
+- page views
+- pages per visit
+- top pages
+- countries
+- referrers
+- devices
+- browsers
+- operating systems
+- daily traffic
+
+The existing first-party Supabase analytics table remains for engagement data Cloudflare does not represent as application events, including:
+
+- link/button clicks
+- page-exit engagement duration
+- UTM campaign attribution
+
+Cloudflare Web Analytics must be enabled for the production website so `rumPageloadEventsAdaptiveGroups` receives browser RUM events. The API filters to `wellcollegeglobal.com` (or `CLOUDFLARE_ANALYTICS_HOST`) and excludes rows Cloudflare classifies as bots. The 90-day dashboard range is queried in smaller windows and merged server-side.
+
+If the Cloudflare token/configuration is missing or Cloudflare is temporarily unavailable, the dashboard falls back to the existing first-party traffic summary rather than failing completely.
+
 Configure the **WellSupport** Cloudflare Pages project with:
 
 - `SUPABASE_URL` — Text
 - `SUPABASE_PUBLISHABLE_KEY` — Text
+- `CLOUDFLARE_ACCOUNT_ID` — Text; the Cloudflare account that owns the Well College Global Web Analytics site
+- `CLOUDFLARE_ANALYTICS_TOKEN` — **Secret**; a Cloudflare API token scoped to that account with **Account Analytics: Read**
+- `CLOUDFLARE_ANALYTICS_HOST` — Optional text; defaults to `wellcollegeglobal.com`
 - `WELLWEBSITE_GITHUB_TOKEN` — **Secret, production environment only**
 
 These values are available only to the server-side Pages Functions. The Supabase publishable key is not privileged; every data request still carries the verified staff JWT and remains constrained by RLS. No Supabase service-role/secret key is used.
