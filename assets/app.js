@@ -1,5 +1,6 @@
 const SDK_URL = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.116.0/+esm";
 const MAX_MESSAGE_LENGTH = 4000;
+const CONVERSATION_FIELDS = "id,status,page_path,created_at,updated_at,client_ip,visitor_city,visitor_region,visitor_country,visitor_country_code,visitor_timezone,browser_language,user_agent,staff_joined_at,joined_agent_id";
 
 const app = document.querySelector("#app");
 const DEFAULT_CONFIG = Object.freeze({
@@ -60,9 +61,26 @@ function formatDay(value) {
   }).format(date);
 }
 
-function visitorName(conversation) {
-  const id = String(conversation?.visitor_id || "");
-  return `Visitor ${id.slice(0, 6).toUpperCase() || "Unknown"}`;
+function visitorName() {
+  return "Website visitor";
+}
+
+function visitorLocation(conversation) {
+  const parts = [
+    conversation?.visitor_city,
+    conversation?.visitor_region,
+    conversation?.visitor_country || conversation?.visitor_country_code
+  ].filter(Boolean);
+
+  return parts.length ? parts.join(", ") : "Location unavailable";
+}
+
+function visitorContextMeta(conversation) {
+  return [
+    conversation?.client_ip ? `IP ${conversation.client_ip}` : null,
+    conversation?.visitor_timezone,
+    conversation?.browser_language
+  ].filter(Boolean).join(" · ");
 }
 
 function initials(name) {
@@ -677,7 +695,7 @@ async function loadInbox() {
     const [conversationResult, messageResult] = await Promise.all([
       client
         .from("support_conversations")
-        .select("id,visitor_id,status,page_path,created_at")
+        .select(CONVERSATION_FIELDS)
         .order("created_at", { ascending: false })
         .limit(500),
       client
@@ -721,8 +739,11 @@ function conversationMatches(conversation) {
   const last = state.lastMessages.get(conversation.id);
   return [
     conversation.id,
-    conversation.visitor_id,
     conversation.page_path,
+    conversation.client_ip,
+    conversation.visitor_city,
+    conversation.visitor_region,
+    conversation.visitor_country,
     last?.body
   ].some((value) => String(value || "").toLowerCase().includes(state.search));
 }
@@ -820,6 +841,47 @@ function currentConversation() {
   return state.conversations.find((conversation) => conversation.id === state.selectedId) || null;
 }
 
+async function markConversationJoined(id) {
+  const conversation = state.conversations.find((item) => item.id === id);
+  if (!conversation || conversation.status !== "open" || conversation.staff_joined_at || !state.user) return;
+
+  const client = await getClient();
+  const joinedAt = new Date().toISOString();
+
+  const { data: joinedConversation, error: joinError } = await client
+    .from("support_conversations")
+    .update({
+      staff_joined_at: joinedAt,
+      joined_agent_id: state.user.id,
+      updated_at: joinedAt
+    })
+    .eq("id", id)
+    .is("staff_joined_at", null)
+    .select(CONVERSATION_FIELDS)
+    .maybeSingle();
+
+  if (joinError) throw joinError;
+  if (!joinedConversation) return;
+
+  upsertConversation(joinedConversation);
+
+  const { data: systemMessage, error: messageError } = await client
+    .from("support_messages")
+    .insert({
+      conversation_id: id,
+      sender_type: "system",
+      sender_user_id: state.user.id,
+      sender_display_name: null,
+      sender_avatar_url: null,
+      body: "A staff member joined your conversation"
+    })
+    .select("id,conversation_id,sender_type,sender_user_id,sender_display_name,sender_avatar_url,body,created_at")
+    .single();
+
+  if (messageError) throw messageError;
+  appendMessage(systemMessage);
+}
+
 async function selectConversation(id) {
   state.selectedId = id;
   state.unread.delete(id);
@@ -827,6 +889,12 @@ async function selectConversation(id) {
   renderConversationList();
   renderChatShell();
   await loadMessages(id);
+
+  try {
+    await markConversationJoined(id);
+  } catch (error) {
+    showToast(error?.message || "Unable to mark the conversation as joined.", "error");
+  }
 }
 
 function renderChatShell() {
@@ -855,12 +923,25 @@ function renderChatShell() {
         </button>
       </div>
     </header>
+    <div class="visitor-context-bar">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M12 21s6-5.1 6-11a6 6 0 1 0-12 0c0 5.9 6 11 6 11Z"></path>
+        <circle cx="12" cy="10" r="2"></circle>
+      </svg>
+      <div>
+        <strong id="visitor-location"></strong>
+        <span id="visitor-context-meta"></span>
+      </div>
+    </div>
     <div id="messages" class="messages"></div>
     <div id="composer-slot"></div>
   `;
 
   document.querySelector("#chat-visitor-name").textContent = visitorName(conversation);
   document.querySelector("#chat-source-path").textContent = conversation.page_path || "Well College Global website";
+  document.querySelector("#visitor-location").textContent = visitorLocation(conversation);
+  document.querySelector("#visitor-context-meta").textContent =
+    visitorContextMeta(conversation) || "Temporary support context unavailable";
   document.querySelector("#mobile-back")?.addEventListener("click", () => {
     state.selectedId = null;
     state.messages = [];
@@ -1121,7 +1202,7 @@ async function toggleConversationStatus() {
       .from("support_conversations")
       .update({ status: nextStatus })
       .eq("id", conversation.id)
-      .select("id,visitor_id,status,page_path,created_at")
+      .select(CONVERSATION_FIELDS)
       .single();
 
     if (error) throw error;
