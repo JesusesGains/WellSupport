@@ -141,13 +141,23 @@ function initials(name) {
     .join("") || "W";
 }
 
+function safeStaffAvatarUrl(avatarUrl) {
+  const value = String(avatarUrl || "");
+  const prefix =
+    "https://fmlrtcofnbqdotpvuaem.supabase.co/storage/v1/object/public/support-avatars/";
+
+  return value.startsWith(prefix) ? value : "";
+}
+
 function renderAvatarInto(element, avatarUrl, name) {
   if (!element) return;
   element.replaceChildren();
 
-  if (avatarUrl) {
+  const safeAvatarUrl = safeStaffAvatarUrl(avatarUrl);
+
+  if (safeAvatarUrl) {
     const image = document.createElement("img");
-    image.src = avatarUrl;
+    image.src = safeAvatarUrl;
     image.alt = "";
     image.referrerPolicy = "no-referrer";
     element.appendChild(image);
