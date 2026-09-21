@@ -89,3 +89,17 @@ The development server builds the static site and serves it at `http://localhost
 - Dynamic message and visitor content is rendered with `textContent`, not injected as HTML.
 - CSP allows scripts only from the dashboard origin, denies framing of the dashboard, denies objects/media/workers, and limits browser network calls to same-origin.
 - Supabase RLS remains enabled as defense in depth even though the browser no longer talks directly to the Data API.
+
+
+## Search and crawler policy
+
+Well Support is an internal staff dashboard, not a marketing surface.
+
+- `robots.txt` denies all crawlers.
+- The page sends `noindex, nofollow, noarchive, nosnippet, noimageindex` directives.
+- Global responses send matching `X-Robots-Tag` headers.
+- `Content-Signal` opts out of search indexing, AI training, AI input, and reuse.
+- The build security scan fails if the deny-all crawler controls are removed.
+- No sitemap, canonical SEO metadata, structured SEO data, or public discovery metadata is published for this dashboard.
+
+These directives prevent compliant search/AI crawlers from indexing the dashboard. Authentication and server-side authorization remain the security boundary; robots directives are not treated as access control.
