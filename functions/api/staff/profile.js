@@ -25,7 +25,18 @@ export async function onRequestPost({ request }) {
 
   const update = { display_name: displayName };
   if (Object.prototype.hasOwnProperty.call(input, "avatarUrl")) {
-    update.avatar_url = input.avatarUrl ? String(input.avatarUrl).slice(0, 2048) : null;
+    const avatarUrl = input.avatarUrl ? String(input.avatarUrl).slice(0, 2048) : null;
+
+    if (avatarUrl) {
+      const expectedPrefix =
+        `https://fmlrtcofnbqdotpvuaem.supabase.co/storage/v1/object/public/support-avatars/${session.user.id}/profile`;
+
+      if (!avatarUrl.startsWith(expectedPrefix)) {
+        return sessionResponse({ error: "Invalid profile photo URL." }, session, 400);
+      }
+    }
+
+    update.avatar_url = avatarUrl;
   }
 
   try {
