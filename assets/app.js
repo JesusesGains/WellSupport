@@ -1705,12 +1705,6 @@ function renderChatShell() {
       </div>
       <div class="chat-actions">
         <span id="chat-owner-chip" class="chat-owner-chip"></span>
-        ${mine ? `
-          <button id="close-chat-button" class="toolbar-button is-close-chat" type="button">
-            ${closeIcon()}
-            <span>Close chat</span>
-          </button>
-        ` : ""}
       </div>
     </header>
 
@@ -1725,14 +1719,22 @@ function renderChatShell() {
     ` : ""}
 
     <div class="visitor-context-bar">
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <path d="M12 21s6-5.1 6-11a6 6 0 1 0-12 0c0 5.9 6 11 6 11Z"></path>
-        <circle cx="12" cy="10" r="2"></circle>
-      </svg>
-      <div>
-        <strong id="visitor-location"></strong>
-        <span id="visitor-context-meta"></span>
+      <div class="visitor-context-main">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 21s6-5.1 6-11a6 6 0 1 0-12 0c0 5.9 6 11 6 11Z"></path>
+          <circle cx="12" cy="10" r="2"></circle>
+        </svg>
+        <div>
+          <strong id="visitor-location"></strong>
+          <span id="visitor-context-meta"></span>
+        </div>
       </div>
+      ${mine ? `
+        <button id="close-chat-button" class="visitor-close-chat" type="button">
+          ${closeIcon()}
+          <span>Close chat</span>
+        </button>
+      ` : ""}
     </div>
 
     <div id="visitor-map-wrap" class="visitor-map-wrap" hidden>
@@ -1754,6 +1756,34 @@ function renderChatShell() {
 
     <div id="messages" class="messages"></div>
     <div id="composer-slot"></div>
+
+    ${mine ? `
+      <div id="close-chat-modal" class="confirm-modal" hidden>
+        <button
+          id="close-chat-modal-backdrop"
+          class="confirm-modal-backdrop"
+          type="button"
+          aria-label="Cancel closing chat"
+        ></button>
+        <section
+          class="confirm-card"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="close-chat-confirm-title"
+          aria-describedby="close-chat-confirm-copy"
+        >
+          <div class="confirm-icon">${closeIcon()}</div>
+          <h2 id="close-chat-confirm-title">Close this chat?</h2>
+          <p id="close-chat-confirm-copy">
+            This will end the visitor's support session and permanently delete this conversation from the support database.
+          </p>
+          <div class="confirm-actions">
+            <button id="cancel-close-chat" class="confirm-secondary" type="button">Cancel</button>
+            <button id="confirm-close-chat" class="confirm-danger" type="button">Close chat</button>
+          </div>
+        </section>
+      </div>
+    ` : ""}
   `;
 
   const location = visitorLocation(conversation);
@@ -1799,6 +1829,7 @@ function renderChatShell() {
   document.querySelector("#mobile-back")?.addEventListener("click", () => {
     state.selectedId = null;
     state.messages = [];
+    document.body.classList.remove("has-support-confirm-modal");
     document.querySelector("#dashboard")?.classList.remove("has-selection");
     renderConversationList();
     renderDashboardChatEmpty();
@@ -1806,7 +1837,25 @@ function renderChatShell() {
 
   document.querySelector("#close-chat-button")?.addEventListener(
     "click",
+    openCloseChatConfirm
+  );
+  document.querySelector("#close-chat-modal-backdrop")?.addEventListener(
+    "click",
+    closeCloseChatConfirm
+  );
+  document.querySelector("#cancel-close-chat")?.addEventListener(
+    "click",
+    closeCloseChatConfirm
+  );
+  document.querySelector("#confirm-close-chat")?.addEventListener(
+    "click",
     deleteConversation
+  );
+  document.querySelector("#close-chat-modal")?.addEventListener(
+    "keydown",
+    (event) => {
+      if (event.key === "Escape") closeCloseChatConfirm();
+    }
   );
 
   renderComposer();
@@ -2063,15 +2112,33 @@ function appendMessage(message) {
   renderConversationList();
 }
 
+function openCloseChatConfirm() {
+  const conversation = currentConversation();
+  if (!conversation || !conversationIsMine(conversation)) return;
+
+  const modal = document.querySelector("#close-chat-modal");
+  const confirmButton = document.querySelector("#confirm-close-chat");
+  if (!modal) return;
+
+  modal.hidden = false;
+  document.body.classList.add("has-support-confirm-modal");
+  requestAnimationFrame(() => confirmButton?.focus());
+}
+
+function closeCloseChatConfirm() {
+  const modal = document.querySelector("#close-chat-modal");
+  if (modal) modal.hidden = true;
+  document.body.classList.remove("has-support-confirm-modal");
+  document.querySelector("#close-chat-button")?.focus();
+}
 async function deleteConversation() {
   const conversation = currentConversation();
   if (!conversation) return;
 
-  const button = document.querySelector("#close-chat-button");
+  const button = document.querySelector("#confirm-close-chat");
   if (button) {
     button.disabled = true;
-    const label = button.querySelector("span");
-    if (label) label.textContent = "Closing…";
+    button.textContent = "Closing…";
   }
 
   try {
@@ -2095,11 +2162,10 @@ async function deleteConversation() {
   } catch (error) {
     showToast(error?.message || "Unable to close this chat.", "error");
 
-    const currentButton = document.querySelector("#close-chat-button");
+    const currentButton = document.querySelector("#confirm-close-chat");
     if (currentButton) {
       currentButton.disabled = false;
-      const label = currentButton.querySelector("span");
-      if (label) label.textContent = "Close chat";
+      currentButton.textContent = "Close chat";
     }
   }
 }
