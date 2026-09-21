@@ -170,6 +170,36 @@ async function staffAgent(accessToken, userId) {
   return Array.isArray(rows) ? rows[0] || null : null;
 }
 
+async function supportSessionIsActive(accessToken) {
+  const response = await supabaseFetch(
+    "/rest/v1/rpc/verify_support_session",
+    {
+      accessToken,
+      method: "POST",
+      body: {}
+    }
+  );
+
+  if (!response.ok) return false;
+  return (await readJson(response)) === true;
+}
+
+export async function revokeCurrentSession(request) {
+  const cookies = parseCookies(request);
+  const accessToken = cookies.get(ACCESS_COOKIE) || "";
+
+  if (!accessToken) return;
+
+  try {
+    await supabaseFetch("/auth/v1/logout?scope=local", {
+      accessToken,
+      method: "POST"
+    });
+  } catch {
+    // Cookies are cleared even if the upstream revoke request is unavailable.
+  }
+}
+
 export async function requireStaff(request) {
   const cookies = parseCookies(request);
   let accessToken = cookies.get(ACCESS_COOKIE) || "";
@@ -191,6 +221,15 @@ export async function requireStaff(request) {
     return {
       response: withCookies(
         json({ error: "Authentication required." }, 401),
+        clearSessionCookies()
+      )
+    };
+  }
+
+  if (!await supportSessionIsActive(accessToken)) {
+    return {
+      response: withCookies(
+        json({ error: "This staff session is no longer active." }, 401),
         clearSessionCookies()
       )
     };
