@@ -75,6 +75,12 @@ function visitorLocation(conversation) {
   return parts.length ? parts.join(", ") : "Location unavailable";
 }
 
+function visitorMapUrl(conversation) {
+  const location = visitorLocation(conversation);
+  if (!location || location === "Location unavailable") return "";
+  return `https://www.google.com/maps?q=${encodeURIComponent(location)}&z=10&output=embed`;
+}
+
 function visitorContextMeta(conversation) {
   return [
     conversation?.client_ip ? `IP ${conversation.client_ip}` : null,
@@ -606,7 +612,6 @@ function renderDashboard() {
           <div class="filter-row" role="group" aria-label="Conversation status">
             <button class="filter-button is-active" type="button" data-filter="open">Open</button>
             <button class="filter-button" type="button" data-filter="all">All</button>
-            <button class="filter-button" type="button" data-filter="closed">Closed</button>
           </div>
         </div>
 
@@ -865,15 +870,17 @@ async function markConversationJoined(id) {
 
   upsertConversation(joinedConversation);
 
+  const staffName = state.agent?.display_name || "Staff member";
+
   const { data: systemMessage, error: messageError } = await client
     .from("support_messages")
     .insert({
       conversation_id: id,
       sender_type: "system",
       sender_user_id: state.user.id,
-      sender_display_name: null,
-      sender_avatar_url: null,
-      body: "A staff member joined your conversation"
+      sender_display_name: staffName,
+      sender_avatar_url: state.agent?.avatar_url || null,
+      body: `${staffName} has joined your chat`
     })
     .select("id,conversation_id,sender_type,sender_user_id,sender_display_name,sender_avatar_url,body,created_at")
     .single();
@@ -902,7 +909,6 @@ function renderChatShell() {
   const conversation = currentConversation();
   if (!panel || !conversation) return;
 
-  const closed = conversation.status === "closed";
   panel.innerHTML = `
     <header class="chat-header">
       <div class="chat-person">
@@ -916,13 +922,14 @@ function renderChatShell() {
         </div>
       </div>
       <div class="chat-actions">
-        <span class="status-chip is-${conversation.status}">${closed ? "Closed" : "Open"}</span>
-        <button id="status-button" class="toolbar-button ${closed ? "is-reopen" : ""}" type="button">
-          ${closed ? reopenIcon() : closeIcon()}
-          <span>${closed ? "Reopen" : "Close"}</span>
+        <span class="status-chip is-open">Open</span>
+        <button id="close-chat-button" class="toolbar-button is-close-chat" type="button">
+          ${closeIcon()}
+          <span>Close chat</span>
         </button>
       </div>
     </header>
+
     <div class="visitor-context-bar">
       <svg viewBox="0 0 24 24" aria-hidden="true">
         <path d="M12 21s6-5.1 6-11a6 6 0 1 0-12 0c0 5.9 6 11 6 11Z"></path>
@@ -933,22 +940,52 @@ function renderChatShell() {
         <span id="visitor-context-meta"></span>
       </div>
     </div>
+
+    <div id="visitor-map-wrap" class="visitor-map-wrap" hidden>
+      <iframe
+        id="visitor-map"
+        title="Visitor approximate city"
+        loading="lazy"
+        referrerpolicy="no-referrer-when-downgrade"
+        aria-label="Approximate visitor city map"
+      ></iframe>
+      <div class="visitor-map-pin-label">
+        <span class="visitor-map-pin" aria-hidden="true"></span>
+        <strong id="visitor-map-city"></strong>
+      </div>
+    </div>
+
     <div id="messages" class="messages"></div>
     <div id="composer-slot"></div>
   `;
 
+  const location = visitorLocation(conversation);
   document.querySelector("#chat-visitor-name").textContent = visitorName(conversation);
-  document.querySelector("#chat-source-path").textContent = conversation.page_path || "Well College Global website";
-  document.querySelector("#visitor-location").textContent = visitorLocation(conversation);
+  document.querySelector("#chat-source-path").textContent =
+    conversation.page_path || "Well College Global website";
+  document.querySelector("#visitor-location").textContent = location;
   document.querySelector("#visitor-context-meta").textContent =
     visitorContextMeta(conversation) || "Temporary support context unavailable";
+
+  const mapUrl = visitorMapUrl(conversation);
+  const mapWrap = document.querySelector("#visitor-map-wrap");
+  const map = document.querySelector("#visitor-map");
+  const mapCity = document.querySelector("#visitor-map-city");
+
+  if (mapUrl && mapWrap && map) {
+    map.src = mapUrl;
+    mapWrap.hidden = false;
+    if (mapCity) mapCity.textContent = location;
+  }
+
   document.querySelector("#mobile-back")?.addEventListener("click", () => {
     state.selectedId = null;
     state.messages = [];
     document.querySelector("#dashboard")?.classList.remove("has-selection");
     renderConversationList();
   });
-  document.querySelector("#status-button")?.addEventListener("click", toggleConversationStatus);
+
+  document.querySelector("#close-chat-button")?.addEventListener("click", deleteConversation);
   renderComposer();
 }
 
@@ -1072,19 +1109,6 @@ function renderComposer() {
   const conversation = currentConversation();
   if (!slot || !conversation) return;
 
-  if (conversation.status === "closed") {
-    slot.innerHTML = `
-      <div class="composer">
-        <div class="closed-banner">
-          <span>This conversation is closed. Reopen it to send another reply.</span>
-          <button id="reopen-inline" type="button">Reopen</button>
-        </div>
-      </div>
-    `;
-    document.querySelector("#reopen-inline")?.addEventListener("click", toggleConversationStatus);
-    return;
-  }
-
   slot.innerHTML = `
     <form id="composer-form" class="composer">
       <div class="composer-inner">
@@ -1188,33 +1212,45 @@ function appendMessage(message) {
   renderConversationList();
 }
 
-async function toggleConversationStatus() {
+async function deleteConversation() {
   const conversation = currentConversation();
   if (!conversation) return;
 
-  const nextStatus = conversation.status === "open" ? "closed" : "open";
-  const button = document.querySelector("#status-button");
-  if (button) button.disabled = true;
+  const button = document.querySelector("#close-chat-button");
+  if (button) {
+    button.disabled = true;
+    const label = button.querySelector("span");
+    if (label) label.textContent = "Closing…";
+  }
 
   try {
     const client = await getClient();
-    const { data, error } = await client
+    const { error } = await client
       .from("support_conversations")
-      .update({ status: nextStatus })
-      .eq("id", conversation.id)
-      .select(CONVERSATION_FIELDS)
-      .single();
+      .delete()
+      .eq("id", conversation.id);
 
     if (error) throw error;
-    upsertConversation(data);
-    renderChatShell();
-    renderMessages();
-    showToast(nextStatus === "closed" ? "Conversation closed." : "Conversation reopened.");
+
+    state.conversations = state.conversations.filter((item) => item.id !== conversation.id);
+    state.lastMessages.delete(conversation.id);
+    state.unread.delete(conversation.id);
+    state.selectedId = null;
+    state.messages = [];
+
+    document.querySelector("#dashboard")?.classList.remove("has-selection");
+    renderConversationList();
+    renderDashboardChatEmpty();
+    showToast("Chat closed and deleted.");
   } catch (error) {
-    showToast(error?.message || "Unable to update conversation.", "error");
-  } finally {
-    const currentButton = document.querySelector("#status-button");
-    if (currentButton) currentButton.disabled = false;
+    showToast(error?.message || "Unable to close this chat.", "error");
+
+    const currentButton = document.querySelector("#close-chat-button");
+    if (currentButton) {
+      currentButton.disabled = false;
+      const label = currentButton.querySelector("span");
+      if (label) label.textContent = "Close chat";
+    }
   }
 }
 

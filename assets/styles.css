@@ -1067,7 +1067,9 @@ textarea {
   display: grid;
   min-width: 0;
   min-height: 0;
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  height: 100%;
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+  overflow: hidden;
   background: var(--wcg-bg);
 }
 
@@ -1276,7 +1278,7 @@ textarea {
 .messages {
   min-height: 0;
   overflow: auto;
-  padding: 24px clamp(18px, 4vw, 54px) 30px;
+  padding: 20px 20px 28px;
   background:
     linear-gradient(rgba(249,249,249,.96), rgba(249,249,249,.96)),
     radial-gradient(circle at 18% 8%, rgba(66, 81, 76, .09), transparent 34%);
@@ -1333,7 +1335,7 @@ textarea {
 
 .message-bubble {
   width: fit-content;
-  max-width: min(72%, 680px);
+  max-width: min(82%, 860px);
   padding: 11px 13px 10px;
   border-radius: 17px;
   animation: message-in 180ms ease both;
@@ -1392,7 +1394,7 @@ textarea {
 }
 
 .composer {
-  padding: 12px clamp(16px, 3vw, 32px) 14px;
+  padding: 12px 18px 14px;
   border-top: 1px solid var(--wcg-line);
   background: #fff;
 }
@@ -1402,8 +1404,9 @@ textarea {
   grid-template-columns: minmax(0, 1fr) 42px;
   gap: 9px;
   align-items: end;
-  max-width: 900px;
-  margin: 0 auto;
+  width: 100%;
+  max-width: none;
+  margin: 0;
   padding: 7px 7px 7px 13px;
   border: 1px solid var(--wcg-line-strong);
   border-radius: 17px;
@@ -1461,8 +1464,9 @@ textarea {
   display: flex;
   justify-content: space-between;
   gap: 12px;
-  max-width: 900px;
-  margin: 7px auto 0;
+  width: 100%;
+  max-width: none;
+  margin: 7px 0 0;
   color: #a0a0a0;
   font-size: .56rem;
 }
@@ -1784,5 +1788,120 @@ textarea {
 @media (max-width: 760px) {
   .visitor-context-bar {
     padding: 9px 14px;
+  }
+}
+
+/* Full-width live support workspace */
+.message-row.is-visitor .message-bubble {
+  color: var(--wcg-text);
+  background: #ffffff;
+  border: 1px solid var(--wcg-line);
+}
+
+.message-row.is-visitor .message-body {
+  color: var(--wcg-text);
+}
+
+.message-row.is-agent .message-bubble {
+  color: #ffffff;
+  background: var(--wcg-navy);
+  border: 1px solid rgba(48, 70, 96, .18);
+}
+
+.message-row.is-agent .message-body {
+  color: #ffffff;
+}
+
+.toolbar-button.is-close-chat {
+  color: #855a52;
+  border-color: rgba(155, 103, 91, .16);
+  background: rgba(255,255,255,.94);
+}
+
+.toolbar-button.is-close-chat:hover:not(:disabled) {
+  color: #74483f;
+  border-color: rgba(155, 103, 91, .26);
+  background: rgba(155, 103, 91, .06);
+}
+
+.visitor-map-wrap {
+  position: relative;
+  min-height: 132px;
+  overflow: hidden;
+  border-bottom: 1px solid var(--wcg-line);
+  background: #e9edeb;
+}
+
+.visitor-map-wrap[hidden] {
+  display: none;
+}
+
+.visitor-map-wrap iframe {
+  display: block;
+  width: 100%;
+  height: 132px;
+  border: 0;
+  filter: saturate(.72) contrast(.96);
+}
+
+.visitor-map-pin-label {
+  position: absolute;
+  left: 16px;
+  bottom: 12px;
+  display: inline-flex;
+  max-width: calc(100% - 32px);
+  align-items: center;
+  gap: 7px;
+  padding: 7px 10px;
+  border: 1px solid rgba(48,70,96,.12);
+  border-radius: 999px;
+  color: var(--wcg-navy);
+  background: rgba(255,255,255,.94);
+  box-shadow: 0 8px 24px rgba(48,70,96,.12);
+  backdrop-filter: blur(12px);
+  font-size: .64rem;
+}
+
+.visitor-map-pin {
+  position: relative;
+  width: 10px;
+  height: 10px;
+  flex: 0 0 auto;
+  border-radius: 50% 50% 50% 0;
+  background: var(--wcg-forest);
+  transform: rotate(-45deg);
+}
+
+.visitor-map-pin::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #fff;
+}
+
+.visitor-map-pin-label strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 760px) {
+  .visitor-map-wrap,
+  .visitor-map-wrap iframe {
+    height: 112px;
+    min-height: 112px;
+  }
+
+  .messages {
+    padding: 16px 12px 22px;
+  }
+
+  .composer {
+    padding-right: 10px;
+    padding-left: 10px;
   }
 }
