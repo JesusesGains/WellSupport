@@ -30,6 +30,9 @@ function browserCredentialFailures(name, source, failures) {
   if (/\bsb_secret_[A-Za-z0-9_-]{20,}\b/.test(source)) {
     failures.push(`${name}: Supabase secret key found in browser assets`);
   }
+  if (/\bCLOUDFLARE_(?:ANALYTICS|API)_TOKEN\s*[:=]\s*["'][^"'\n]{20,}["']/.test(source)) {
+    failures.push(`${name}: Cloudflare analytics/API token found in browser assets`);
+  }
   if (/\beyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\b/.test(source)) {
     failures.push(`${name}: JWT-like credential found in browser assets`);
   }
@@ -71,6 +74,9 @@ async function sourceScan() {
     }
     if (/\bSUPABASE_SERVICE_ROLE_KEY\s*[:=]\s*["'][^"'\n]{20,}["']/.test(source)) {
       failures.push(`${name}: Supabase service-role credential detected`);
+    }
+    if (/\bCLOUDFLARE_(?:ANALYTICS|API)_TOKEN\s*[:=]\s*["'][^"'\n]{20,}["']/.test(source)) {
+      failures.push(`${name}: Cloudflare analytics/API token detected; use a Cloudflare secret`);
     }
     if (/\b(?:github_pat_[A-Za-z0-9_]{40,}|ghp_[A-Za-z0-9]{30,})\b/.test(source)) {
       failures.push(`${name}: GitHub token detected; use Cloudflare WELLWEBSITE_GITHUB_TOKEN secret instead`);
