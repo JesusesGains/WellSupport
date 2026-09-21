@@ -435,7 +435,7 @@ function mergeSummaries(days, custom, cloudflare, cloudflareError) {
     days,
     generatedAt: new Date().toISOString(),
     trafficSource: cloudflare ? "cloudflare" : "first_party_fallback",
-    cloudflareConfigured: Boolean(cloudflareConfig(arguments[4] || {})),
+    cloudflareConfigured: false,
     cloudflareError: cloudflareError || null,
     metrics: {
       visits: Number(traffic.metrics?.visits || 0),
