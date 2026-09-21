@@ -15,9 +15,13 @@ export async function onRequestPost({ request }) {
   const input = await request.json().catch(() => ({}));
   const displayName = String(input.displayName || "").trim();
 
-  if (!displayName || displayName.length > 120) {
+  if (
+    !displayName ||
+    displayName.length > 120 ||
+    /[\u0000-\u001F\u007F]/.test(displayName)
+  ) {
     return sessionResponse(
-      { error: "Display name must be between 1 and 120 characters." },
+      { error: "Display name must be a single line between 1 and 120 characters." },
       session,
       400
     );
