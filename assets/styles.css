@@ -4222,3 +4222,84 @@ body.has-support-confirm-modal {
     flex: 1 1 0;
   }
 }
+
+
+/* Optimistic staff send state */
+.message-row.is-agent .message-bubble {
+  position: relative;
+}
+
+.message-row.is-sending .message-bubble {
+  opacity: .86;
+}
+
+.message-send-failure {
+  position: absolute;
+  right: -9px;
+  bottom: -9px;
+  display: grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  padding: 0;
+  border: 2px solid #fff;
+  border-radius: 999px;
+  color: #fff;
+  background: #c8584e;
+  box-shadow: 0 4px 12px rgba(181, 70, 60, .24);
+  font-size: .7rem;
+  font-weight: 900;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.message-send-failure:hover,
+.message-send-failure:focus-visible {
+  background: #ae493f;
+}
+
+.message-send-failure::after {
+  content: attr(data-error);
+  position: absolute;
+  z-index: 20;
+  right: 0;
+  bottom: calc(100% + 8px);
+  width: max-content;
+  max-width: 220px;
+  padding: 7px 9px;
+  border: 1px solid rgba(48,70,96,.12);
+  border-radius: 9px;
+  color: #fff;
+  background: #243443;
+  box-shadow: 0 8px 24px rgba(24,35,46,.2);
+  font-size: .58rem;
+  font-weight: 700;
+  line-height: 1.35;
+  white-space: normal;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(3px);
+  transition:
+    opacity 120ms ease,
+    transform 120ms ease;
+}
+
+.message-send-failure:hover::after,
+.message-send-failure:focus-visible::after {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.message-row.is-failed .message-bubble {
+  box-shadow: 0 0 0 1px rgba(200,88,78,.18);
+}
+
+.message-row.is-failed .message-meta time {
+  color: rgba(255,255,255,.7);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .message-send-failure::after {
+    transition: none;
+  }
+}
