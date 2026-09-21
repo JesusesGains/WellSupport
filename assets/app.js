@@ -19,7 +19,15 @@ const state = {
   pollTimer: null,
   messagePollTimer: null,
   pollBusy: false,
-  messagePollBusy: false
+  messagePollBusy: false,
+  currentView: "dashboard",
+  analytics: null,
+  analyticsDays: 30,
+  analyticsLoading: false,
+  analyticsTimer: null,
+  unreadCounts: new Map(),
+  knownVisitorMessageIds: new Set(),
+  notificationsReady: false
 };
 
 function configured() {
@@ -443,6 +451,383 @@ async function handleLogin(event) {
   }
 }
 
+function dashboardIcon() {
+  return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h6v6H4zM14 4h6v4h-6zM14 12h6v8h-6zM4 14h6v6H4z"></path></svg>`;
+}
+
+function notificationsIcon() {
+  return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"></path><path d="M10 21h4"></path></svg>`;
+}
+
+function totalUnreadMessages() {
+  let total = 0;
+  for (const count of state.unreadCounts.values()) total += Number(count || 0);
+  return total;
+}
+
+function renderMessageBadge() {
+  const badge = document.querySelector("#messages-nav-badge");
+  if (!badge) return;
+
+  const count = totalUnreadMessages();
+  badge.textContent = count > 99 ? "99+" : String(count);
+  badge.hidden = count < 1;
+}
+
+function updatePrimaryNavigation() {
+  document.querySelectorAll("[data-dashboard-view]").forEach((button) => {
+    button.classList.toggle(
+      "is-active",
+      button.dataset.dashboardView === state.currentView
+    );
+  });
+  renderMessageBadge();
+}
+
+function setDashboardView(view) {
+  state.currentView = view === "messages" ? "messages" : "dashboard";
+  updatePrimaryNavigation();
+
+  if (state.currentView === "dashboard") {
+    document.querySelector("#dashboard")?.classList.remove("has-selection");
+    renderAnalyticsDashboard();
+    if (!state.analytics && !state.analyticsLoading) loadAnalytics();
+    return;
+  }
+
+  if (state.selectedId) {
+    document.querySelector("#dashboard")?.classList.add("has-selection");
+    renderChatShell();
+    renderMessages();
+  } else {
+    document.querySelector("#dashboard")?.classList.remove("has-selection");
+    renderDashboardChatEmpty();
+  }
+}
+
+function notificationStatusLabel() {
+  if (!("Notification" in window)) return "Desktop alerts unavailable";
+  if (Notification.permission === "granted") return "Desktop alerts on";
+  if (Notification.permission === "denied") return "Desktop alerts blocked";
+  return "Enable desktop alerts";
+}
+
+function renderNotificationControl() {
+  const button = document.querySelector("#notification-permission-button");
+  if (!button) return;
+
+  button.querySelector("span").textContent = notificationStatusLabel();
+  button.disabled = !("Notification" in window) || Notification.permission === "denied";
+  button.classList.toggle(
+    "is-enabled",
+    "Notification" in window && Notification.permission === "granted"
+  );
+}
+
+async function requestDesktopNotifications() {
+  if (!("Notification" in window)) {
+    showToast("Desktop notifications are not available in this browser.", "error");
+    return;
+  }
+
+  if (Notification.permission === "default") {
+    await Notification.requestPermission();
+  }
+
+  renderNotificationControl();
+
+  if (Notification.permission === "granted") {
+    showToast("Desktop chat notifications enabled.");
+  } else if (Notification.permission === "denied") {
+    showToast("Desktop notifications are blocked in browser settings.", "error");
+  }
+}
+
+function showDesktopChatNotification(title, body, conversationId) {
+  if (!("Notification" in window) || Notification.permission !== "granted") return;
+
+  const notification = new Notification(title, {
+    body: String(body || "New website message").slice(0, 180),
+    tag: `well-support-${conversationId}`,
+    renotify: true,
+    icon: "/favicon.ico"
+  });
+
+  notification.onclick = () => {
+    window.focus();
+    notification.close();
+    if (conversationId) selectConversation(conversationId);
+  };
+}
+
+function formatNumber(value) {
+  return new Intl.NumberFormat().format(Number(value || 0));
+}
+
+function formatDuration(value) {
+  const totalSeconds = Math.max(0, Math.round(Number(value || 0) / 1000));
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}m ${seconds}s`;
+}
+
+function analyticsRow(container, primary, secondary, value) {
+  const row = document.createElement("div");
+  row.className = "analytics-list-row";
+
+  const copy = document.createElement("div");
+  copy.className = "analytics-list-copy";
+
+  const strong = document.createElement("strong");
+  strong.textContent = primary || "Unknown";
+  copy.appendChild(strong);
+
+  if (secondary) {
+    const small = document.createElement("span");
+    small.textContent = secondary;
+    copy.appendChild(small);
+  }
+
+  const metric = document.createElement("b");
+  metric.textContent = String(value ?? "0");
+
+  row.append(copy, metric);
+  container.appendChild(row);
+}
+
+function renderAnalyticsList(id, rows, mapper) {
+  const container = document.querySelector(id);
+  if (!container) return;
+  container.replaceChildren();
+
+  if (!rows?.length) {
+    const empty = document.createElement("div");
+    empty.className = "analytics-empty";
+    empty.textContent = "No data yet.";
+    container.appendChild(empty);
+    return;
+  }
+
+  rows.forEach((row) => {
+    const item = mapper(row);
+    analyticsRow(container, item.primary, item.secondary, item.value);
+  });
+}
+
+function renderTrafficBars(rows) {
+  const container = document.querySelector("#analytics-traffic-bars");
+  if (!container) return;
+  container.replaceChildren();
+
+  if (!rows?.length) {
+    const empty = document.createElement("div");
+    empty.className = "analytics-empty";
+    empty.textContent = "Traffic will appear here once visits are recorded.";
+    container.appendChild(empty);
+    return;
+  }
+
+  const max = Math.max(...rows.map((row) => Number(row.views || 0)), 1);
+
+  rows.forEach((row) => {
+    const item = document.createElement("div");
+    item.className = "traffic-bar-item";
+
+    const bar = document.createElement("div");
+    bar.className = "traffic-bar-track";
+
+    const fill = document.createElement("span");
+    fill.style.height = `${Math.max(6, Math.round((Number(row.views || 0) / max) * 100))}%`;
+    bar.appendChild(fill);
+
+    const label = document.createElement("small");
+    const date = new Date(`${row.date}T00:00:00`);
+    label.textContent = Number.isNaN(date.getTime())
+      ? row.date
+      : new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(date);
+
+    const value = document.createElement("b");
+    value.textContent = formatNumber(row.views);
+
+    item.append(value, bar, label);
+    container.appendChild(item);
+  });
+}
+
+function renderAnalyticsDashboard() {
+  const panel = document.querySelector("#chat-panel");
+  if (!panel) return;
+
+  panel.className = "chat-panel analytics-panel";
+  panel.innerHTML = `
+    <div class="analytics-view">
+      <header class="analytics-header">
+        <div>
+          <div class="eyebrow"><i aria-hidden="true"></i> Website analytics</div>
+          <h1>Dashboard</h1>
+          <p>First-party, cookieless traffic and engagement from Well College Global.</p>
+        </div>
+        <div class="analytics-range" role="group" aria-label="Analytics date range">
+          <button type="button" data-analytics-days="7">7d</button>
+          <button type="button" data-analytics-days="30">30d</button>
+          <button type="button" data-analytics-days="90">90d</button>
+        </div>
+      </header>
+
+      <div id="analytics-loading" class="analytics-loading" hidden>Refreshing analytics…</div>
+
+      <section class="analytics-metrics" aria-label="Website metrics">
+        <article><span>Visitors</span><strong id="metric-visitors">0</strong><small>unique tab sessions</small></article>
+        <article><span>Page views</span><strong id="metric-pageviews">0</strong><small>public page loads</small></article>
+        <article><span>Clicks</span><strong id="metric-clicks">0</strong><small>links and controls</small></article>
+        <article><span>Avg. visit</span><strong id="metric-duration">0s</strong><small>until page exit</small></article>
+      </section>
+
+      <section class="analytics-grid">
+        <article class="analytics-card is-wide">
+          <div class="analytics-card-head">
+            <div><span>Traffic</span><h2>Page views over time</h2></div>
+          </div>
+          <div id="analytics-traffic-bars" class="traffic-bars"></div>
+        </article>
+
+        <article class="analytics-card">
+          <div class="analytics-card-head"><div><span>Content</span><h2>Top pages</h2></div></div>
+          <div id="analytics-top-pages" class="analytics-list"></div>
+        </article>
+
+        <article class="analytics-card">
+          <div class="analytics-card-head"><div><span>Engagement</span><h2>Top clicks</h2></div></div>
+          <div id="analytics-top-clicks" class="analytics-list"></div>
+        </article>
+
+        <article class="analytics-card">
+          <div class="analytics-card-head"><div><span>Journey</span><h2>Where visitors leave</h2></div></div>
+          <div id="analytics-exit-pages" class="analytics-list"></div>
+        </article>
+
+        <article class="analytics-card">
+          <div class="analytics-card-head"><div><span>Audience</span><h2>Top locations</h2></div></div>
+          <div id="analytics-locations" class="analytics-list"></div>
+        </article>
+
+        <article class="analytics-card">
+          <div class="analytics-card-head"><div><span>Acquisition</span><h2>Referrers</h2></div></div>
+          <div id="analytics-referrers" class="analytics-list"></div>
+        </article>
+
+        <article class="analytics-card">
+          <div class="analytics-card-head"><div><span>Devices</span><h2>Visitor devices</h2></div></div>
+          <div id="analytics-devices" class="analytics-list"></div>
+        </article>
+
+        <article class="analytics-card is-wide privacy-card">
+          <div class="analytics-card-head"><div><span>Privacy</span><h2>Tracking & storage inventory</h2></div></div>
+          <div class="privacy-grid">
+            <div><strong>Analytics cookies</strong><span>None</span></div>
+            <div><strong>Analytics session</strong><span>Random sessionStorage ID, cleared with the browser tab</span></div>
+            <div><strong>Raw IP stored</strong><span>No</span></div>
+            <div><strong>Approx. location</strong><span>City, region and country from Cloudflare</span></div>
+            <div><strong>Privacy signals</strong><span>Global Privacy Control and Do Not Track are respected</span></div>
+            <div><strong>Retention</strong><span>Analytics events are deleted after 90 days</span></div>
+            <div><strong>Support chat</strong><span>Tab-scoped sessionStorage until the tab closes or staff closes the chat</span></div>
+            <div><strong>Staff dashboard</strong><span>Secure HttpOnly SameSite=Strict authentication cookies</span></div>
+          </div>
+        </article>
+      </section>
+    </div>
+  `;
+
+  document.querySelectorAll("[data-analytics-days]").forEach((button) => {
+    const days = Number(button.dataset.analyticsDays);
+    button.classList.toggle("is-active", days === state.analyticsDays);
+    button.addEventListener("click", () => {
+      if (days === state.analyticsDays) return;
+      state.analyticsDays = days;
+      document.querySelectorAll("[data-analytics-days]").forEach((item) => {
+        item.classList.toggle("is-active", Number(item.dataset.analyticsDays) === days);
+      });
+      loadAnalytics();
+    });
+  });
+
+  paintAnalytics();
+}
+
+function paintAnalytics() {
+  if (state.currentView !== "dashboard") return;
+
+  const loading = document.querySelector("#analytics-loading");
+  if (loading) loading.hidden = !state.analyticsLoading;
+
+  const summary = state.analytics;
+  if (!summary) return;
+
+  const metrics = summary.metrics || {};
+  const metricValues = {
+    "#metric-visitors": formatNumber(metrics.visitors),
+    "#metric-pageviews": formatNumber(metrics.pageViews),
+    "#metric-clicks": formatNumber(metrics.clicks),
+    "#metric-duration": formatDuration(metrics.avgDurationMs)
+  };
+
+  Object.entries(metricValues).forEach(([selector, value]) => {
+    const element = document.querySelector(selector);
+    if (element) element.textContent = value;
+  });
+
+  renderTrafficBars(summary.daily || []);
+  renderAnalyticsList("#analytics-top-pages", summary.topPages, (row) => ({
+    primary: row.path,
+    secondary: "Page views",
+    value: formatNumber(row.views)
+  }));
+  renderAnalyticsList("#analytics-top-clicks", summary.topClicks, (row) => ({
+    primary: row.label,
+    secondary: row.href || row.kind || "",
+    value: formatNumber(row.clicks)
+  }));
+  renderAnalyticsList("#analytics-exit-pages", summary.exitPages, (row) => ({
+    primary: row.path,
+    secondary: `Avg. ${formatDuration(row.avgDurationMs)}`,
+    value: formatNumber(row.exits)
+  }));
+  renderAnalyticsList("#analytics-locations", summary.locations, (row) => ({
+    primary: [row.city, row.region].filter(Boolean).join(", "),
+    secondary: row.country,
+    value: formatNumber(row.visitors)
+  }));
+  renderAnalyticsList("#analytics-referrers", summary.referrers, (row) => ({
+    primary: row.host,
+    secondary: "Referring visitors",
+    value: formatNumber(row.visitors)
+  }));
+  renderAnalyticsList("#analytics-devices", summary.devices, (row) => ({
+    primary: String(row.device || "unknown").replace(/^./, (letter) => letter.toUpperCase()),
+    secondary: "Visitors",
+    value: formatNumber(row.visitors)
+  }));
+}
+
+async function loadAnalytics({ silent = false } = {}) {
+  if (state.analyticsLoading) return;
+  state.analyticsLoading = true;
+  if (!silent) paintAnalytics();
+
+  try {
+    const result = await apiRequest(`/analytics?days=${state.analyticsDays}`);
+    state.analytics = result.summary || null;
+  } catch (error) {
+    if (error.status !== 401 && error.status !== 403 && !silent) {
+      showToast(error?.message || "Unable to load website analytics.", "error");
+    }
+  } finally {
+    state.analyticsLoading = false;
+    paintAnalytics();
+  }
+}
+
 function renderDashboard() {
   app.innerHTML = `
     <main id="dashboard" class="dashboard">
@@ -520,17 +905,27 @@ function renderDashboard() {
         <div class="sidebar-brand">
           <span class="brand-mark" aria-hidden="true">W</span>
           <div class="sidebar-brand-copy">
-            <strong>Well Support</strong>
-            <span>Live assistance</span>
+            <strong>Well College Global</strong>
+            <span>Dashboard</span>
           </div>
         </div>
 
-        <nav class="nav-group" aria-label="Support navigation">
-          <button class="nav-button is-active" type="button">
+        <nav class="nav-group" aria-label="Dashboard navigation">
+          <button class="nav-button is-active" type="button" data-dashboard-view="dashboard">
+            ${dashboardIcon()}
+            <span>Dashboard</span>
+          </button>
+          <button class="nav-button" type="button" data-dashboard-view="messages">
             ${inboxIcon()}
-            <span>Inbox</span>
+            <span>Messages</span>
+            <b id="messages-nav-badge" class="nav-badge" hidden>0</b>
           </button>
         </nav>
+
+        <button id="notification-permission-button" class="sidebar-notification-button" type="button">
+          ${notificationsIcon()}
+          <span>Enable desktop alerts</span>
+        </button>
 
         <div class="sidebar-live">
           <i id="sidebar-live-dot" class="live-dot is-connecting" aria-hidden="true"></i>
@@ -542,9 +937,9 @@ function renderDashboard() {
 
       <section class="inbox-panel" aria-label="Support conversations">
         <header class="inbox-header">
-          <div class="eyebrow"><i aria-hidden="true"></i> Website support</div>
+          <div class="eyebrow"><i aria-hidden="true"></i> Website conversations</div>
           <div class="inbox-title-row">
-            <h1>Inbox</h1>
+            <h1>Messages</h1>
             <span id="open-count" class="open-count">0</span>
           </div>
         </header>
@@ -632,7 +1027,7 @@ function renderDashboard() {
 }
 
 async function initialiseDashboard() {
-  await loadInbox();
+  await Promise.all([loadInbox(), loadAnalytics()]);
   subscribeRealtime();
 }
 
@@ -648,24 +1043,62 @@ async function loadInbox({ silent = false } = {}) {
   try {
     const result = await apiRequest("/inbox");
     const previousIds = new Set(state.conversations.map((item) => item.id));
+    const incomingMessages = result.messages || [];
+    const newVisitorMessages = state.notificationsReady
+      ? incomingMessages.filter(
+          (message) =>
+            message.sender_type === "visitor" &&
+            !state.knownVisitorMessageIds.has(message.id)
+        )
+      : [];
 
     state.conversations = result.conversations || [];
     state.lastMessages = new Map();
 
-    for (const message of result.messages || []) {
+    for (const message of incomingMessages) {
       if (!state.lastMessages.has(message.conversation_id)) {
         state.lastMessages.set(message.conversation_id, message);
       }
 
-      if (
-        silent &&
-        message.sender_type === "visitor" &&
-        !previousIds.has(message.conversation_id) &&
-        state.selectedId !== message.conversation_id
-      ) {
-        state.unread.add(message.conversation_id);
+      if (message.sender_type === "visitor") {
+        state.knownVisitorMessageIds.add(message.id);
       }
     }
+
+    if (!state.notificationsReady) {
+      state.notificationsReady = true;
+    } else if (silent && newVisitorMessages.length) {
+      const grouped = new Map();
+
+      for (const message of newVisitorMessages) {
+        const id = message.conversation_id;
+        if (
+          state.currentView === "messages" &&
+          state.selectedId === id &&
+          document.visibilityState === "visible"
+        ) {
+          continue;
+        }
+
+        state.unread.add(id);
+        state.unreadCounts.set(id, (state.unreadCounts.get(id) || 0) + 1);
+
+        if (!grouped.has(id)) grouped.set(id, []);
+        grouped.get(id).push(message);
+      }
+
+      for (const [conversationId, messages] of grouped) {
+        const newest = messages[0];
+        const isNewChat = !previousIds.has(conversationId);
+        showDesktopChatNotification(
+          isNewChat ? "New website chat" : "New support message",
+          newest?.body || "A visitor sent a message.",
+          conversationId
+        );
+      }
+    }
+
+    renderMessageBadge();
 
     if (state.selectedId && !state.conversations.some((item) => item.id === state.selectedId)) {
       state.selectedId = null;
@@ -821,6 +1254,9 @@ async function markConversationJoined(id) {
 async function selectConversation(id) {
   state.selectedId = id;
   state.unread.delete(id);
+  state.unreadCounts.delete(id);
+  state.currentView = "messages";
+  updatePrimaryNavigation();
   document.querySelector("#dashboard")?.classList.add("has-selection");
   renderConversationList();
   renderChatShell();
@@ -1206,6 +1642,11 @@ function subscribeRealtime() {
   };
 
   state.pollTimer = window.setTimeout(pollInbox, 700);
+  state.analyticsTimer = window.setInterval(() => {
+    if (state.user && state.currentView === "dashboard") {
+      loadAnalytics({ silent: true });
+    }
+  }, 30000);
 }
 
 function renderDashboardChatEmpty() {
@@ -1243,8 +1684,10 @@ function renderRealtimeStatus() {
 function cleanupRealtime() {
   if (state.pollTimer) window.clearTimeout(state.pollTimer);
   if (state.messagePollTimer) window.clearTimeout(state.messagePollTimer);
+  if (state.analyticsTimer) window.clearInterval(state.analyticsTimer);
   state.pollTimer = null;
   state.messagePollTimer = null;
+  state.analyticsTimer = null;
   state.pollBusy = false;
   state.messagePollBusy = false;
 }
@@ -1264,6 +1707,11 @@ async function signOut() {
   state.selectedId = null;
   state.lastMessages = new Map();
   state.unread = new Set();
+  state.unreadCounts = new Map();
+  state.knownVisitorMessageIds = new Set();
+  state.notificationsReady = false;
+  state.analytics = null;
+  state.currentView = "dashboard";
   renderLogin();
 }
 
