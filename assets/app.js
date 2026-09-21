@@ -187,10 +187,6 @@ async function verifyCurrentStaff() {
 }
 
 function renderLogin(message = "") {
-  const setup = configured()
-    ? ""
-    : `<div class="setup-note">Add the Well College Global Supabase URL and publishable key to the Cloudflare Pages build environment before staff can sign in.</div>`;
-
   app.innerHTML = `
     <main class="auth-shell">
       <section class="auth-card" aria-labelledby="staff-sign-in-title">
@@ -203,7 +199,6 @@ function renderLogin(message = "") {
         </div>
         <h1 id="staff-sign-in-title">Staff sign in</h1>
         <p>Access live website conversations and reply to learners in real time.</p>
-        ${setup}
         <div id="auth-error" class="auth-error" role="status" ${message ? "" : "hidden"}></div>
         <form id="login-form" class="auth-form" autocomplete="on">
           <div class="field">
@@ -216,7 +211,6 @@ function renderLogin(message = "") {
           </div>
           <button id="login-submit" class="auth-submit" type="submit" ${configured() ? "" : "disabled"}>Sign in</button>
         </form>
-        <p class="auth-footnote">No signup is available here. Access is limited to approved staff accounts in the Well College Global support project.</p>
       </section>
     </main>
   `;
