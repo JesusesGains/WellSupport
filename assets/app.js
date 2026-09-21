@@ -457,6 +457,10 @@ function dashboardIcon() {
   return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h6v6H4zM14 4h6v4h-6zM14 12h6v8h-6zM4 14h6v6H4z"></path></svg>`;
 }
 
+function editorIcon() {
+  return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19.5V4.5A1.5 1.5 0 0 1 5.5 3h8.8L20 8.7v10.8A1.5 1.5 0 0 1 18.5 21h-13A1.5 1.5 0 0 1 4 19.5Z"></path><path d="M14 3v6h6"></path><path d="m8 16 5.8-5.8 2 2L10 18H8v-2Z"></path></svg>`;
+}
+
 function notificationsIcon() {
   return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"></path><path d="M10 21h4"></path></svg>`;
 }
@@ -503,17 +507,28 @@ function updatePrimaryNavigation() {
 }
 
 function setDashboardView(view) {
-  state.currentView = view === "messages" ? "messages" : "dashboard";
+  const resolvedView = ["dashboard", "messages", "editor"].includes(view)
+    ? view
+    : "dashboard";
+
+  state.currentView = resolvedView;
   updatePrimaryNavigation();
 
   const dashboard = document.querySelector("#dashboard");
   dashboard?.classList.toggle("is-dashboard", state.currentView === "dashboard");
   dashboard?.classList.toggle("is-messages", state.currentView === "messages");
+  dashboard?.classList.toggle("is-editor", state.currentView === "editor");
 
   if (state.currentView === "dashboard") {
     dashboard?.classList.remove("has-selection");
     renderAnalyticsDashboard();
     if (!state.analytics && !state.analyticsLoading) loadAnalytics();
+    return;
+  }
+
+  if (state.currentView === "editor") {
+    dashboard?.classList.remove("has-selection");
+    renderWebEditor();
     return;
   }
 
@@ -527,6 +542,232 @@ function setDashboardView(view) {
     dashboard?.classList.remove("has-selection");
     renderDashboardChatEmpty();
   }
+}
+
+function renderWebEditor() {
+  const panel = document.querySelector("#chat-panel");
+  if (!panel) return;
+
+  panel.className = "chat-panel web-editor-panel";
+  panel.innerHTML = `
+    <div class="web-editor-view">
+      <header class="web-editor-header">
+        <div>
+          <div class="eyebrow"><i aria-hidden="true"></i> Website management</div>
+          <h1>Web Editor</h1>
+          <p>Edit Well College Global content and appearance, review changes on the preview branch, then promote approved work to production.</p>
+        </div>
+        <a
+          class="web-editor-open-site"
+          href="https://www.wellcollegeglobal.com/"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Open live site
+          <span aria-hidden="true">↗</span>
+        </a>
+      </header>
+
+      <section class="editor-workflow" aria-label="Website publishing workflow">
+        <article class="is-active">
+          <span>01</span>
+          <div><strong>Draft</strong><small>Prepare content and design changes</small></div>
+        </article>
+        <i aria-hidden="true"></i>
+        <article>
+          <span>02</span>
+          <div><strong>Preview</strong><small>beta-main · Cloudflare preview</small></div>
+        </article>
+        <i aria-hidden="true"></i>
+        <article>
+          <span>03</span>
+          <div><strong>Production</strong><small>main · wellcollegeglobal.com</small></div>
+        </article>
+      </section>
+
+      <section class="web-editor-grid">
+        <aside class="editor-controls">
+          <div class="editor-controls-head">
+            <span>Page</span>
+            <strong>Choose what to edit</strong>
+          </div>
+
+          <label class="editor-field">
+            <span>Website page</span>
+            <select id="web-editor-page">
+              <option value="/">Home</option>
+              <option value="/qualifications.html">Qualifications</option>
+              <option value="/short-courses.html">Short Courses</option>
+              <option value="/about.html">About</option>
+              <option value="/testimonials.html">Testimonials</option>
+              <option value="/faqs.html">FAQs</option>
+              <option value="/contact.html">Contact</option>
+            </select>
+          </label>
+
+          <div class="editor-section">
+            <span class="editor-section-label">Content</span>
+            <label class="editor-field">
+              <span>Heading draft</span>
+              <textarea id="web-editor-heading" rows="3" placeholder="Draft revised heading text…"></textarea>
+            </label>
+            <label class="editor-field">
+              <span>Body copy draft</span>
+              <textarea id="web-editor-copy" rows="5" placeholder="Draft revised supporting copy…"></textarea>
+            </label>
+          </div>
+
+          <div class="editor-section">
+            <span class="editor-section-label">Appearance</span>
+            <label class="editor-field">
+              <span>Accent colour</span>
+              <div class="editor-colour-row">
+                <input id="web-editor-accent" type="color" value="#304660" />
+                <input id="web-editor-accent-text" type="text" value="#304660" maxlength="7" />
+              </div>
+            </label>
+            <label class="editor-field">
+              <span>Typography</span>
+              <select id="web-editor-font">
+                <option>DM Serif Display</option>
+                <option>DM Sans</option>
+                <option>System Sans</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="editor-draft-note">
+            <strong>Draft workspace</strong>
+            <span>Changes here stay inside the staff dashboard until the GitHub publish connection is enabled.</span>
+          </div>
+        </aside>
+
+        <div class="editor-preview-shell">
+          <div class="editor-preview-toolbar">
+            <div>
+              <span class="editor-status-dot"></span>
+              <strong>Preview workspace</strong>
+              <small id="web-editor-preview-path">wellcollegeglobal.com/</small>
+            </div>
+            <div class="editor-preview-actions">
+              <button id="web-editor-refresh" type="button">Refresh</button>
+              <a
+                id="web-editor-open-page"
+                href="https://www.wellcollegeglobal.com/"
+                target="_blank"
+                rel="noopener noreferrer"
+              >Open page ↗</a>
+            </div>
+          </div>
+
+          <div class="editor-preview-placeholder">
+            <div class="editor-preview-browser">
+              <div class="editor-preview-browser-bar">
+                <i></i><i></i><i></i>
+                <span id="web-editor-browser-url">wellcollegeglobal.com/</span>
+              </div>
+              <div class="editor-preview-canvas">
+                <span>Live website preview</span>
+                <h2 id="web-editor-preview-heading">Well College Global</h2>
+                <p id="web-editor-preview-copy">Use the editor controls to prepare page copy and appearance changes before publishing to beta-main.</p>
+                <button type="button">Preview CTA</button>
+              </div>
+            </div>
+          </div>
+
+          <footer class="editor-publish-bar">
+            <div>
+              <strong>Publishing workflow</strong>
+              <span>GitHub branch: <b>beta-main</b> → Cloudflare preview → <b>main</b></span>
+            </div>
+            <div class="editor-publish-actions">
+              <button class="is-secondary" type="button" id="web-editor-discard">Discard draft</button>
+              <button class="is-primary" type="button" id="web-editor-preview-submit" disabled>
+                Publish to beta-main
+              </button>
+            </div>
+          </footer>
+        </div>
+      </section>
+    </div>
+  `;
+
+  const pageSelect = document.querySelector("#web-editor-page");
+  const heading = document.querySelector("#web-editor-heading");
+  const copy = document.querySelector("#web-editor-copy");
+  const accent = document.querySelector("#web-editor-accent");
+  const accentText = document.querySelector("#web-editor-accent-text");
+  const font = document.querySelector("#web-editor-font");
+  const previewHeading = document.querySelector("#web-editor-preview-heading");
+  const previewCopy = document.querySelector("#web-editor-preview-copy");
+  const previewCanvas = document.querySelector(".editor-preview-canvas");
+  const openPage = document.querySelector("#web-editor-open-page");
+  const previewPath = document.querySelector("#web-editor-preview-path");
+  const browserUrl = document.querySelector("#web-editor-browser-url");
+
+  const updatePage = () => {
+    const path = pageSelect?.value || "/";
+    const url = `https://www.wellcollegeglobal.com${path === "/" ? "/" : path}`;
+    if (openPage) openPage.href = url;
+    const display = `wellcollegeglobal.com${path}`;
+    if (previewPath) previewPath.textContent = display;
+    if (browserUrl) browserUrl.textContent = display;
+  };
+
+  const updatePreview = () => {
+    if (previewHeading && heading?.value.trim()) {
+      previewHeading.textContent = heading.value.trim();
+    } else if (previewHeading) {
+      previewHeading.textContent = "Well College Global";
+    }
+
+    if (previewCopy && copy?.value.trim()) {
+      previewCopy.textContent = copy.value.trim();
+    } else if (previewCopy) {
+      previewCopy.textContent =
+        "Use the editor controls to prepare page copy and appearance changes before publishing to beta-main.";
+    }
+
+    const colour = /^#[0-9a-f]{6}$/i.test(accentText?.value || "")
+      ? accentText.value
+      : accent?.value || "#304660";
+
+    if (previewCanvas) {
+      previewCanvas.style.setProperty("--editor-accent", colour);
+      previewCanvas.dataset.font = font?.value || "DM Serif Display";
+    }
+  };
+
+  pageSelect?.addEventListener("change", updatePage);
+  heading?.addEventListener("input", updatePreview);
+  copy?.addEventListener("input", updatePreview);
+  font?.addEventListener("change", updatePreview);
+
+  accent?.addEventListener("input", () => {
+    if (accentText) accentText.value = accent.value;
+    updatePreview();
+  });
+
+  accentText?.addEventListener("input", () => {
+    if (/^#[0-9a-f]{6}$/i.test(accentText.value) && accent) {
+      accent.value = accentText.value;
+    }
+    updatePreview();
+  });
+
+  document.querySelector("#web-editor-refresh")?.addEventListener("click", updatePreview);
+  document.querySelector("#web-editor-discard")?.addEventListener("click", () => {
+    if (heading) heading.value = "";
+    if (copy) copy.value = "";
+    if (accent) accent.value = "#304660";
+    if (accentText) accentText.value = "#304660";
+    if (font) font.value = "DM Serif Display";
+    updatePreview();
+    showToast("Web Editor draft cleared.");
+  });
+
+  updatePage();
+  updatePreview();
 }
 
 function notificationStatusLabel() {
@@ -1030,6 +1271,10 @@ function renderDashboard() {
             ${inboxIcon()}
             <span>Messages</span>
             <b id="messages-nav-badge" class="nav-badge" hidden>0</b>
+          </button>
+          <button class="nav-button" type="button" data-dashboard-view="editor">
+            ${editorIcon()}
+            <span>Web Editor</span>
           </button>
         </nav>
 
