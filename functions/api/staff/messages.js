@@ -1,12 +1,11 @@
 import {
-  json,
   requireStaff,
   restJson,
   sessionResponse
 } from "./_utils.js";
 
-export async function onRequestGet({ request }) {
-  const session = await requireStaff(request);
+export async function onRequestGet({ request, env }) {
+  const session = await requireStaff(env, request);
   if (session.response) return session.response;
 
   const url = new URL(request.url);
