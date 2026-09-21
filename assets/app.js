@@ -2155,6 +2155,7 @@ async function deleteConversation() {
     state.selectedId = null;
     state.messages = [];
 
+    document.body.classList.remove("has-support-confirm-modal");
     document.querySelector("#dashboard")?.classList.remove("has-selection");
     renderConversationList();
     renderDashboardChatEmpty();
