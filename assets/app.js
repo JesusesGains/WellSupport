@@ -1090,7 +1090,14 @@ async function loadInbox({ silent = false } = {}) {
       : [];
 
     state.conversations = result.conversations || [];
+    state.agents = new Map(
+      (result.agents || []).map((agent) => [agent.user_id, agent])
+    );
+    state.readAt = new Map(
+      (result.reads || []).map((row) => [row.conversation_id, row.last_read_at])
+    );
     state.lastMessages = new Map();
+    state.unreadCounts = new Map();
 
     for (const message of incomingMessages) {
       if (!state.lastMessages.has(message.conversation_id)) {
@@ -1099,6 +1106,25 @@ async function loadInbox({ silent = false } = {}) {
 
       if (message.sender_type === "visitor") {
         state.knownVisitorMessageIds.add(message.id);
+
+        const readAt = state.readAt.get(message.conversation_id);
+        const unread =
+          !readAt ||
+          new Date(message.created_at).getTime() > new Date(readAt).getTime();
+
+        if (unread) {
+          state.unread.add(message.conversation_id);
+          state.unreadCounts.set(
+            message.conversation_id,
+            (state.unreadCounts.get(message.conversation_id) || 0) + 1
+          );
+        }
+      }
+    }
+
+    for (const conversation of state.conversations) {
+      if (!state.unreadCounts.get(conversation.id)) {
+        state.unread.delete(conversation.id);
       }
     }
 
@@ -1117,9 +1143,6 @@ async function loadInbox({ silent = false } = {}) {
           continue;
         }
 
-        state.unread.add(id);
-        state.unreadCounts.set(id, (state.unreadCounts.get(id) || 0) + 1);
-
         if (!grouped.has(id)) grouped.set(id, []);
         grouped.get(id).push(message);
       }
@@ -1137,10 +1160,14 @@ async function loadInbox({ silent = false } = {}) {
 
     renderMessageBadge();
 
-    if (state.selectedId && !state.conversations.some((item) => item.id === state.selectedId)) {
+    if (
+      state.selectedId &&
+      !state.conversations.some((item) => item.id === state.selectedId)
+    ) {
       state.selectedId = null;
       state.messages = [];
       document.querySelector("#dashboard")?.classList.remove("has-selection");
+
       if (state.currentView === "messages") {
         renderDashboardChatEmpty();
       } else {
@@ -1152,7 +1179,9 @@ async function loadInbox({ silent = false } = {}) {
   } catch (error) {
     if (error.status !== 401 && error.status !== 403) {
       state.realtimeStatus = "error";
-      if (!silent) showToast(error?.message || "Unable to load support inbox.", "error");
+      if (!silent) {
+        showToast(error?.message || "Unable to load support inbox.", "error");
+      }
     }
   } finally {
     state.pollBusy = false;
@@ -1164,17 +1193,48 @@ async function loadInbox({ silent = false } = {}) {
 
 function sortedConversations() {
   return [...state.conversations].sort((a, b) => {
-    const aDate = new Date(state.lastMessages.get(a.id)?.created_at || a.created_at).getTime() || 0;
-    const bDate = new Date(state.lastMessages.get(b.id)?.created_at || b.created_at).getTime() || 0;
+    const aDate = new Date(
+      state.lastMessages.get(a.id)?.created_at || a.updated_at || a.created_at
+    ).getTime() || 0;
+    const bDate = new Date(
+      state.lastMessages.get(b.id)?.created_at || b.updated_at || b.created_at
+    ).getTime() || 0;
     return bDate - aDate;
   });
 }
 
-function conversationMatches(conversation) {
-  if (state.filter !== "all" && conversation.status !== state.filter) return false;
+function conversationOwner(conversation) {
+  if (!conversation?.joined_agent_id) return null;
+  return state.agents.get(conversation.joined_agent_id) || null;
+}
+
+function conversationIsMine(conversation) {
+  return Boolean(
+    conversation?.joined_agent_id &&
+    conversation.joined_agent_id === state.user?.id
+  );
+}
+
+function conversationMatchesSection(conversation) {
+  if (conversation.status !== "open") return false;
+
+  if (state.messageSection === "waiting") {
+    return !conversation.joined_agent_id;
+  }
+
+  if (state.messageSection === "all") {
+    return Boolean(conversation.joined_agent_id);
+  }
+
+  return conversationIsMine(conversation);
+}
+
+function conversationMatchesSearch(conversation) {
   if (!state.search) return true;
 
   const last = state.lastMessages.get(conversation.id);
+  const owner = conversationOwner(conversation);
+
   return [
     conversation.id,
     conversation.page_path,
@@ -1182,17 +1242,79 @@ function conversationMatches(conversation) {
     conversation.visitor_city,
     conversation.visitor_region,
     conversation.visitor_country,
+    owner?.display_name,
     last?.body
-  ].some((value) => String(value || "").toLowerCase().includes(state.search));
+  ].some((value) =>
+    String(value || "").toLowerCase().includes(state.search)
+  );
+}
+
+function renderAllChatsAvatars() {
+  const container = document.querySelector("#all-chats-avatars");
+  if (!container) return;
+  container.replaceChildren();
+
+  const assignedIds = [
+    ...new Set(
+      state.conversations
+        .filter((conversation) =>
+          conversation.status === "open" && conversation.joined_agent_id
+        )
+        .map((conversation) => conversation.joined_agent_id)
+    )
+  ].slice(0, 3);
+
+  for (const userId of assignedIds) {
+    const agent = state.agents.get(userId);
+    const avatar = document.createElement("span");
+    avatar.className = "queue-avatar";
+    renderAvatarInto(avatar, agent?.avatar_url, agent?.display_name || "W");
+    container.appendChild(avatar);
+  }
+
+  if (!assignedIds.length) {
+    const empty = document.createElement("span");
+    empty.className = "queue-avatar is-empty";
+    empty.textContent = "0";
+    container.appendChild(empty);
+  }
 }
 
 function renderConversationList() {
   const list = document.querySelector("#conversation-list");
   if (!list) return;
 
-  const openCount = state.conversations.filter((conversation) => conversation.status === "open").length;
-  const count = document.querySelector("#open-count");
-  if (count) count.textContent = String(openCount);
+  const current = state.conversations.filter(
+    (conversation) =>
+      conversation.status === "open" && conversationIsMine(conversation)
+  );
+  const waiting = state.conversations.filter(
+    (conversation) =>
+      conversation.status === "open" && !conversation.joined_agent_id
+  );
+  const assigned = state.conversations.filter(
+    (conversation) =>
+      conversation.status === "open" && conversation.joined_agent_id
+  );
+
+  const openCount = document.querySelector("#open-count");
+  const currentCount = document.querySelector("#current-count");
+  const waitingCount = document.querySelector("#waiting-count");
+  const allCount = document.querySelector("#all-chats-count");
+
+  if (openCount) openCount.textContent = String(current.length + waiting.length);
+  if (currentCount) currentCount.textContent = String(current.length);
+  if (waitingCount) waitingCount.textContent = String(waiting.length);
+  if (allCount) allCount.textContent = String(assigned.length);
+
+  document.querySelectorAll("[data-message-section]").forEach((item) => {
+    item.classList.toggle(
+      "is-active",
+      item.dataset.messageSection === state.messageSection
+    );
+  });
+
+  renderAllChatsAvatars();
 
   if (state.loadingInbox) {
     list.innerHTML = `
@@ -1208,42 +1330,71 @@ function renderConversationList() {
     return;
   }
 
-  const matches = sortedConversations().filter(conversationMatches);
+  const matches = sortedConversations()
+    .filter(conversationMatchesSection)
+    .filter(conversationMatchesSearch);
+
   list.replaceChildren();
 
   if (!matches.length) {
     const empty = document.createElement("div");
     empty.className = "list-empty";
-    empty.textContent = state.search
-      ? "No conversations match your search."
-      : state.filter === "open"
-        ? "No open conversations."
-        : "No conversations to show.";
+
+    if (state.search) {
+      empty.textContent = "No conversations match your search.";
+    } else if (state.messageSection === "waiting") {
+      empty.textContent = "No visitors are waiting for a staff member.";
+    } else if (state.messageSection === "all") {
+      empty.textContent = "No staff are handling chats right now.";
+    } else {
+      empty.textContent = "You do not have any current chats.";
+    }
+
     list.appendChild(empty);
     return;
   }
 
   for (const conversation of matches) {
     const last = state.lastMessages.get(conversation.id);
+    const owner = conversationOwner(conversation);
+    const unreadCount = state.unreadCounts.get(conversation.id) || 0;
+    const isUnread = unreadCount > 0;
+
     const button = document.createElement("button");
     button.type = "button";
     button.className = "conversation-item";
     button.classList.toggle("is-selected", state.selectedId === conversation.id);
+    button.classList.toggle("is-unread", isUnread);
+    button.classList.toggle(
+      "is-other-staff",
+      Boolean(conversation.joined_agent_id && !conversationIsMine(conversation))
+    );
     button.dataset.conversationId = conversation.id;
 
     const top = document.createElement("div");
     top.className = "conversation-top";
 
+    const nameWrap = document.createElement("span");
+    nameWrap.className = "conversation-name-wrap";
+
+    if (isUnread) {
+      const unread = document.createElement("span");
+      unread.className = "unread-dot is-inline";
+      unread.setAttribute("aria-label", "Unread message");
+      nameWrap.appendChild(unread);
+    }
+
     const name = document.createElement("span");
     name.className = "conversation-name";
     name.textContent = visitorName(conversation);
+    nameWrap.appendChild(name);
 
     const time = document.createElement("time");
     time.className = "conversation-time";
     time.dateTime = last?.created_at || conversation.created_at;
     time.textContent = formatTime(last?.created_at || conversation.created_at);
 
-    top.append(name, time);
+    top.append(nameWrap, time);
 
     const preview = document.createElement("div");
     preview.className = "conversation-preview";
@@ -1255,59 +1406,160 @@ function renderConversationList() {
     const path = document.createElement("span");
     path.className = "conversation-path";
     path.textContent = conversation.page_path || "Website";
+    meta.appendChild(path);
 
-    const chip = document.createElement("span");
-    chip.className = `status-chip is-${conversation.status}`;
-    chip.textContent = conversation.status === "open" ? "Open" : "Closed";
+    if (conversation.joined_agent_id) {
+      const ownerPill = document.createElement("span");
+      ownerPill.className = "conversation-owner";
 
-    meta.append(path, chip);
-    button.append(top, preview, meta);
+      const avatar = document.createElement("span");
+      avatar.className = "conversation-owner-avatar";
+      renderAvatarInto(
+        avatar,
+        owner?.avatar_url,
+        owner?.display_name || (conversationIsMine(conversation) ? state.agent?.display_name : "W")
+      );
 
-    if (state.unread.has(conversation.id)) {
-      const unread = document.createElement("span");
-      unread.className = "unread-dot";
-      unread.setAttribute("aria-label", "Unread message");
-      button.appendChild(unread);
+      const ownerName = document.createElement("span");
+      ownerName.textContent = conversationIsMine(conversation)
+        ? "You"
+        : owner?.display_name || "Staff";
+
+      ownerPill.append(avatar, ownerName);
+      meta.appendChild(ownerPill);
+    } else {
+      const chip = document.createElement("span");
+      chip.className = "status-chip is-waiting";
+      chip.textContent = "Waiting";
+      meta.appendChild(chip);
     }
 
+    button.append(top, preview, meta);
     button.addEventListener("click", () => selectConversation(conversation.id));
     list.appendChild(button);
   }
 }
 
 function currentConversation() {
-  return state.conversations.find((conversation) => conversation.id === state.selectedId) || null;
+  return state.conversations.find(
+    (conversation) => conversation.id === state.selectedId
+  ) || null;
 }
 
 async function markConversationJoined(id) {
   const conversation = state.conversations.find((item) => item.id === id);
-  if (!conversation || conversation.status !== "open" || conversation.staff_joined_at || !state.user) return;
+
+  if (
+    !conversation ||
+    conversation.status !== "open" ||
+    conversation.joined_agent_id ||
+    !state.user
+  ) {
+    return conversation || null;
+  }
 
   const result = await apiRequest("/join", {
     method: "POST",
     body: { conversationId: id }
   });
 
-  if (result.conversation) upsertConversation(result.conversation);
-  if (result.message) appendMessage(result.message);
+  if (result.conversation) {
+    upsertConversation(result.conversation);
+  }
+
+  if (result.message) {
+    appendMessage(result.message);
+  }
+
+  return result.conversation || null;
+}
+
+async function markConversationRead(id, { force = false } = {}) {
+  if (!id || !state.user) return;
+
+  const messages = state.selectedId === id ? state.messages : [];
+  const latestVisitor = [...messages]
+    .reverse()
+    .find((message) => message.sender_type === "visitor");
+
+  const previousRead = state.readAt.get(id);
+  if (
+    !force &&
+    latestVisitor &&
+    previousRead &&
+    new Date(previousRead).getTime() >=
+      new Date(latestVisitor.created_at).getTime()
+  ) {
+    return;
+  }
+
+  try {
+    const result = await apiRequest("/read", {
+      method: "POST",
+      body: { conversationId: id }
+    });
+
+    const readAt = result.read?.last_read_at || new Date().toISOString();
+    state.readAt.set(id, readAt);
+    state.unread.delete(id);
+    state.unreadCounts.delete(id);
+    renderMessageBadge();
+    renderConversationList();
+  } catch {
+    // Read state should never interrupt the conversation experience.
+  }
 }
 
 async function selectConversation(id) {
-  state.selectedId = id;
-  state.unread.delete(id);
-  state.unreadCounts.delete(id);
+  let conversation = state.conversations.find((item) => item.id === id);
+  if (!conversation) return;
+
   state.currentView = "messages";
+  const dashboard = document.querySelector("#dashboard");
+  dashboard?.classList.remove("is-dashboard");
+  dashboard?.classList.add("is-messages");
   updatePrimaryNavigation();
-  document.querySelector("#dashboard")?.classList.add("has-selection");
+
+  if (!conversation.joined_agent_id && conversation.status === "open") {
+    try {
+      const claimed = await markConversationJoined(id);
+
+      if (claimed) {
+        conversation = claimed;
+        state.messageSection = "current";
+      } else {
+        await loadInbox({ silent: true });
+        conversation = state.conversations.find((item) => item.id === id);
+
+        if (conversation?.joined_agent_id && !conversationIsMine(conversation)) {
+          state.messageSection = "all";
+          showToast("Another staff member picked up this chat.");
+        }
+      }
+    } catch (error) {
+      await loadInbox({ silent: true });
+
+      conversation = state.conversations.find((item) => item.id === id);
+      if (!conversation) {
+        showToast("This chat is no longer available.", "error");
+        return;
+      }
+
+      if (conversation.joined_agent_id && !conversationIsMine(conversation)) {
+        state.messageSection = "all";
+        showToast("Another staff member picked up this chat.");
+      } else {
+        showToast(error?.message || "Unable to pick up this chat.", "error");
+      }
+    }
+  }
+
+  state.selectedId = id;
+  dashboard?.classList.add("has-selection");
   renderConversationList();
   renderChatShell();
   await loadMessages(id);
-
-  try {
-    await markConversationJoined(id);
-  } catch (error) {
-    showToast(error?.message || "Unable to mark the conversation as joined.", "error");
-  }
+  await markConversationRead(id, { force: true });
 }
 
 function renderChatShell() {
