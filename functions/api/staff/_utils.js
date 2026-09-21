@@ -2,8 +2,10 @@ const ACCESS_COOKIE = "__Host-well_support_access";
 const REFRESH_COOKIE = "__Host-well_support_refresh";
 
 function supabaseConfig(env) {
-  const url = String(env?.SUPABASE_URL || "").replace(/\/$/, "");
-  const publishableKey = String(env?.SUPABASE_PUBLISHABLE_KEY || "");
+  const url = String(env?.SUPABASE_URL || env?.url || "").replace(/\/$/, "");
+  const publishableKey = String(
+    env?.SUPABASE_PUBLISHABLE_KEY || env?.publishableKey || ""
+  );
 
   if (!url || !publishableKey) {
     const error = new Error("Well Support backend is not configured.");
