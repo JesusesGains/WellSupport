@@ -3725,3 +3725,136 @@ body.has-support-confirm-modal {
     padding: 34px 24px;
   }
 }
+
+
+/* Real website iframe preview + DevTools-like responsive controls */
+.editor-device-toolbar {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid var(--wcg-line);
+  border-radius: 10px;
+  background: #f8f9f8;
+}
+
+.editor-device-toolbar button {
+  min-height: 28px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 7px;
+  color: #8d9491;
+  background: transparent;
+  font-size: .56rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.editor-device-toolbar button:hover {
+  color: var(--wcg-navy);
+  background: rgba(48,70,96,.05);
+}
+
+.editor-device-toolbar button.is-active {
+  color: #fff;
+  background: var(--wcg-navy);
+}
+
+.editor-preview-placeholder {
+  align-items: start;
+  justify-items: center;
+  background:
+    linear-gradient(rgba(48,70,96,.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(48,70,96,.025) 1px, transparent 1px),
+    #f5f7f6;
+  background-size: 24px 24px;
+}
+
+.editor-preview-browser {
+  width: min(100%, 1180px);
+  min-height: 0;
+  height: min(78vh, 860px);
+  transition:
+    width 220ms ease,
+    height 220ms ease;
+}
+
+.editor-preview-browser[data-device="tablet"] {
+  width: min(100%, 820px);
+  height: min(82vh, 980px);
+}
+
+.editor-preview-browser[data-device="mobile"] {
+  width: min(100%, 390px);
+  height: min(82vh, 844px);
+}
+
+.editor-preview-browser-bar {
+  position: relative;
+}
+
+.editor-preview-browser-bar b {
+  margin-left: auto;
+  padding: 4px 6px;
+  border-radius: 999px;
+  color: #567267;
+  background: rgba(86,114,103,.09);
+  font-size: .49rem;
+  font-weight: 900;
+  letter-spacing: .08em;
+}
+
+.editor-live-frame {
+  display: block;
+  width: 100%;
+  height: calc(100% - 42px);
+  border: 0;
+  background: #fff;
+}
+
+.editor-draft-note.is-devtools-note {
+  border-color: rgba(48,70,96,.12);
+  background:
+    linear-gradient(135deg, rgba(48,70,96,.055), rgba(255,255,255,.68));
+}
+
+.editor-draft-note.is-devtools-note strong::before {
+  content: "</> ";
+  color: #8d9691;
+  font-family: "DM Sans", system-ui, sans-serif;
+  font-weight: 900;
+}
+
+@media (max-width: 1180px) {
+  .editor-preview-toolbar {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .editor-device-toolbar {
+    order: 3;
+    width: 100%;
+  }
+
+  .editor-device-toolbar button {
+    flex: 1 1 0;
+  }
+}
+
+@media (max-width: 760px) {
+  .editor-preview-browser,
+  .editor-preview-browser[data-device="tablet"],
+  .editor-preview-browser[data-device="mobile"] {
+    width: 100%;
+    height: min(74vh, 720px);
+  }
+
+  .editor-preview-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .editor-preview-actions #web-editor-open-page {
+    grid-column: 1 / -1;
+  }
+}
