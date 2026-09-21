@@ -463,7 +463,23 @@ function notificationsIcon() {
 
 function totalUnreadMessages() {
   let total = 0;
-  for (const count of state.unreadCounts.values()) total += Number(count || 0);
+
+  for (const [conversationId, count] of state.unreadCounts.entries()) {
+    const conversation = state.conversations.find(
+      (item) => item.id === conversationId
+    );
+
+    if (
+      conversation &&
+      (
+        !conversation.joined_agent_id ||
+        conversation.joined_agent_id === state.user?.id
+      )
+    ) {
+      total += Number(count || 0);
+    }
+  }
+
   return total;
 }
 
@@ -1225,6 +1241,17 @@ async function loadInbox({ silent = false } = {}) {
       }
 
       for (const [conversationId, messages] of grouped) {
+        const conversation = state.conversations.find(
+          (item) => item.id === conversationId
+        );
+
+        if (
+          conversation?.joined_agent_id &&
+          conversation.joined_agent_id !== state.user?.id
+        ) {
+          continue;
+        }
+
         const newest = messages[0];
         const isNewChat = !previousIds.has(conversationId);
         showDesktopChatNotification(
