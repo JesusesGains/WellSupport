@@ -663,6 +663,73 @@ function renderTrafficBars(rows) {
   });
 }
 
+function renderRankBars(id, rows, {
+  labelKey,
+  valueKey,
+  secondary
+}) {
+  const container = document.querySelector(id);
+  if (!container) return;
+  container.replaceChildren();
+
+  if (!rows?.length) {
+    const empty = document.createElement("div");
+    empty.className = "analytics-empty";
+    empty.textContent = "No data yet.";
+    container.appendChild(empty);
+    return;
+  }
+
+  const max = Math.max(
+    ...rows.map((row) => Number(row?.[valueKey] || 0)),
+    1
+  );
+
+  rows.forEach((row, index) => {
+    const value = Number(row?.[valueKey] || 0);
+    const item = document.createElement("div");
+    item.className = "rank-bar-item";
+
+    const head = document.createElement("div");
+    head.className = "rank-bar-head";
+
+    const label = document.createElement("div");
+    label.className = "rank-bar-label";
+
+    const number = document.createElement("span");
+    number.textContent = String(index + 1).padStart(2, "0");
+
+    const copy = document.createElement("div");
+    const strong = document.createElement("strong");
+    strong.textContent = row?.[labelKey] || "Unknown";
+    copy.appendChild(strong);
+
+    const secondaryValue = secondary?.(row);
+    if (secondaryValue) {
+      const small = document.createElement("small");
+      small.textContent = secondaryValue;
+      copy.appendChild(small);
+    }
+
+    label.append(number, copy);
+
+    const metric = document.createElement("b");
+    metric.textContent = formatNumber(value);
+
+    head.append(label, metric);
+
+    const track = document.createElement("div");
+    track.className = "rank-bar-track";
+
+    const fill = document.createElement("span");
+    fill.style.width = `${Math.max(3, Math.round((value / max) * 100))}%`;
+    track.appendChild(fill);
+
+    item.append(head, track);
+    container.appendChild(item);
+  });
+}
+
 function renderAnalyticsDashboard() {
   const panel = document.querySelector("#chat-panel");
   if (!panel) return;
@@ -686,13 +753,28 @@ function renderAnalyticsDashboard() {
       <div id="analytics-loading" class="analytics-loading" hidden>Refreshing analytics…</div>
 
       <section class="analytics-metrics" aria-label="Website metrics">
-        <article><span>Visitors</span><strong id="metric-visitors">0</strong><small>unique tab sessions</small></article>
+        <article><span>Unique visitors</span><strong id="metric-visitors">0</strong><small>unique tab sessions</small></article>
         <article><span>Page views</span><strong id="metric-pageviews">0</strong><small>public page loads</small></article>
-        <article><span>Clicks</span><strong id="metric-clicks">0</strong><small>links and controls</small></article>
+        <article class="is-page-metric"><span>Most viewed page</span><strong id="metric-most-viewed">—</strong><small id="metric-most-viewed-count">No views yet</small></article>
+        <article><span>Total clicks</span><strong id="metric-clicks">0</strong><small>links and controls</small></article>
         <article><span>Avg. visit</span><strong id="metric-duration">0s</strong><small>until page exit</small></article>
       </section>
 
       <section class="analytics-grid">
+        <article class="analytics-card is-wide">
+          <div class="analytics-card-head">
+            <div><span>Content</span><h2>Most viewed pages</h2></div>
+          </div>
+          <div id="analytics-top-pages" class="rank-bars"></div>
+        </article>
+
+        <article class="analytics-card is-wide">
+          <div class="analytics-card-head">
+            <div><span>Click off</span><h2>Where visitors leave</h2></div>
+          </div>
+          <div id="analytics-exit-pages" class="rank-bars"></div>
+        </article>
+
         <article class="analytics-card is-wide">
           <div class="analytics-card-head">
             <div><span>Traffic</span><h2>Page views over time</h2></div>
@@ -701,18 +783,8 @@ function renderAnalyticsDashboard() {
         </article>
 
         <article class="analytics-card">
-          <div class="analytics-card-head"><div><span>Content</span><h2>Top pages</h2></div></div>
-          <div id="analytics-top-pages" class="analytics-list"></div>
-        </article>
-
-        <article class="analytics-card">
           <div class="analytics-card-head"><div><span>Engagement</span><h2>Top clicks</h2></div></div>
           <div id="analytics-top-clicks" class="analytics-list"></div>
-        </article>
-
-        <article class="analytics-card">
-          <div class="analytics-card-head"><div><span>Journey</span><h2>Where visitors leave</h2></div></div>
-          <div id="analytics-exit-pages" class="analytics-list"></div>
         </article>
 
         <article class="analytics-card">
@@ -778,9 +850,14 @@ function paintAnalytics() {
   if (!summary) return;
 
   const metrics = summary.metrics || {};
+  const topPage = summary.topPages?.[0] || null;
   const metricValues = {
     "#metric-visitors": formatNumber(metrics.visitors),
     "#metric-pageviews": formatNumber(metrics.pageViews),
+    "#metric-most-viewed": topPage?.path || "—",
+    "#metric-most-viewed-count": topPage
+      ? `${formatNumber(topPage.views)} views`
+      : "No views yet",
     "#metric-clicks": formatNumber(metrics.clicks),
     "#metric-duration": formatDuration(metrics.avgDurationMs)
   };
@@ -790,21 +867,21 @@ function paintAnalytics() {
     if (element) element.textContent = value;
   });
 
+  renderRankBars("#analytics-top-pages", summary.topPages || [], {
+    labelKey: "path",
+    valueKey: "views",
+    secondary: () => "Page views"
+  });
+  renderRankBars("#analytics-exit-pages", summary.exitPages || [], {
+    labelKey: "path",
+    valueKey: "exits",
+    secondary: (row) => `Avg. ${formatDuration(row.avgDurationMs)} before exit`
+  });
   renderTrafficBars(summary.daily || []);
-  renderAnalyticsList("#analytics-top-pages", summary.topPages, (row) => ({
-    primary: row.path,
-    secondary: "Page views",
-    value: formatNumber(row.views)
-  }));
   renderAnalyticsList("#analytics-top-clicks", summary.topClicks, (row) => ({
     primary: row.label,
     secondary: row.href || row.kind || "",
     value: formatNumber(row.clicks)
-  }));
-  renderAnalyticsList("#analytics-exit-pages", summary.exitPages, (row) => ({
-    primary: row.path,
-    secondary: `Avg. ${formatDuration(row.avgDurationMs)}`,
-    value: formatNumber(row.exits)
   }));
   renderAnalyticsList("#analytics-locations", summary.locations, (row) => ({
     primary: [row.city, row.region].filter(Boolean).join(", "),
