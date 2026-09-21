@@ -2498,6 +2498,49 @@ function renderChatShell() {
   renderComposer();
 }
 
+function messageListSignature(messages) {
+  return (messages || []).map((message) => [
+    message.id || "",
+    message.client_message_id || message._clientMessageId || "",
+    message.sender_type || "",
+    message.body || "",
+    message.created_at || "",
+    message._sendStatus || "",
+    message._sendError || ""
+  ].join("\u001f")).join("\u001e");
+}
+
+function mergeServerMessages(serverMessages, conversationId) {
+  const server = Array.isArray(serverMessages) ? serverMessages : [];
+  const serverIds = new Set(server.map((message) => message.id).filter(Boolean));
+  const serverClientIds = new Set(
+    server
+      .map((message) => message.client_message_id)
+      .filter(Boolean)
+  );
+
+  const locals = state.messages.filter((message) => {
+    if (message.conversation_id !== conversationId || !message._local) {
+      return false;
+    }
+
+    if (message.id && serverIds.has(message.id)) return false;
+
+    const clientId =
+      message.client_message_id || message._clientMessageId || null;
+
+    if (clientId && serverClientIds.has(clientId)) return false;
+
+    return ["sending", "failed"].includes(message._sendStatus);
+  });
+
+  return [...server, ...locals].sort((a, b) => {
+    const left = new Date(a.created_at || 0).getTime() || 0;
+    const right = new Date(b.created_at || 0).getTime() || 0;
+    return left - right;
+  });
+}
+
 async function loadMessages(conversationId, { silent = false } = {}) {
   if (!conversationId || state.messagePollBusy) return;
   state.messagePollBusy = true;
@@ -2507,16 +2550,29 @@ async function loadMessages(conversationId, { silent = false } = {}) {
     renderMessages();
   }
 
+  let changed = false;
+
   try {
     const result = await apiRequest(
       `/messages?conversationId=${encodeURIComponent(conversationId)}`
     );
 
     if (state.selectedId === conversationId) {
-      state.messages = result.messages || [];
+      const merged = mergeServerMessages(
+        result.messages || [],
+        conversationId
+      );
 
-      const last = state.messages[state.messages.length - 1];
-      if (last) state.lastMessages.set(conversationId, last);
+      changed =
+        messageListSignature(merged) !==
+        messageListSignature(state.messages);
+
+      if (changed) {
+        state.messages = merged;
+
+        const last = state.messages[state.messages.length - 1];
+        if (last) state.lastMessages.set(conversationId, last);
+      }
 
       if (document.visibilityState === "visible") {
         await markConversationRead(conversationId);
@@ -2528,14 +2584,28 @@ async function loadMessages(conversationId, { silent = false } = {}) {
     }
   } finally {
     state.messagePollBusy = false;
+    const wasLoading = state.loadingMessages;
     state.loadingMessages = false;
-    if (state.selectedId === conversationId) renderMessages();
+
+    if (
+      state.selectedId === conversationId &&
+      (wasLoading || changed)
+    ) {
+      renderMessages();
+    }
   }
 }
 
-function renderMessages() {
+function renderMessages({ forceBottom = false } = {}) {
   const viewport = document.querySelector("#messages");
   if (!viewport) return;
+
+  const distanceFromBottom =
+    viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
+  const shouldStickToBottom =
+    forceBottom ||
+    viewport.scrollHeight <= viewport.clientHeight ||
+    distanceFromBottom < 120;
 
   viewport.replaceChildren();
 
@@ -2573,7 +2643,14 @@ function renderMessages() {
       : message.sender_type === "system"
         ? "system"
         : "visitor";
+
     row.className = `message-row is-${kind}`;
+    if (message._sendStatus === "sending") {
+      row.classList.add("is-sending");
+    }
+    if (message._sendStatus === "failed") {
+      row.classList.add("is-failed");
+    }
 
     const bubble = document.createElement("article");
     bubble.className = "message-bubble";
@@ -2592,7 +2669,10 @@ function renderMessages() {
 
     const time = document.createElement("time");
     time.dateTime = message.created_at;
-    time.textContent = formatTime(message.created_at);
+    time.textContent =
+      message._sendStatus === "sending"
+        ? "Sending…"
+        : formatTime(message.created_at);
 
     meta.append(sender, time);
 
@@ -2602,13 +2682,37 @@ function renderMessages() {
 
     bubble.append(meta, body);
 
+    if (message._sendStatus === "failed") {
+      const issue =
+        message._sendError || "Message failed to send.";
+
+      const failure = document.createElement("button");
+      failure.type = "button";
+      failure.className = "message-send-failure";
+      failure.textContent = "!";
+      failure.title = issue;
+      failure.dataset.error = issue;
+      failure.setAttribute(
+        "aria-label",
+        `Message failed: ${issue}. Click to retry.`
+      );
+      failure.addEventListener("click", () => retryStaffMessage(message));
+      bubble.appendChild(failure);
+    }
+
     if (kind === "agent") {
       const avatar = document.createElement("span");
       avatar.className = "message-agent-avatar";
       renderAvatarInto(
         avatar,
-        message.sender_avatar_url || (message.sender_user_id === state.user?.id ? state.agent?.avatar_url : null),
-        message.sender_display_name || (message.sender_user_id === state.user?.id ? state.agent?.display_name : "W")
+        message.sender_avatar_url ||
+          (message.sender_user_id === state.user?.id
+            ? state.agent?.avatar_url
+            : null),
+        message.sender_display_name ||
+          (message.sender_user_id === state.user?.id
+            ? state.agent?.display_name
+            : "W")
       );
       row.append(bubble, avatar);
     } else {
@@ -2618,9 +2722,11 @@ function renderMessages() {
     viewport.appendChild(row);
   }
 
-  requestAnimationFrame(() => {
-    viewport.scrollTop = viewport.scrollHeight;
-  });
+  if (shouldStickToBottom) {
+    requestAnimationFrame(() => {
+      viewport.scrollTop = viewport.scrollHeight;
+    });
+  }
 }
 
 function renderComposer() {
@@ -2689,7 +2795,128 @@ function renderComposer() {
   form?.addEventListener("submit", sendReply);
 }
 
-async function sendReply(event) {
+function staffSendFailureCopy(error) {
+  if (navigator.onLine === false) return "No connection";
+
+  if (error?.name === "AbortError") return "Request timed out";
+  if (!error?.status && /fetch|network|failed/i.test(String(error?.message || ""))) {
+    return "No connection";
+  }
+
+  if (error?.status === 401) return "Session expired";
+  if (error?.status === 403) return "You no longer have access to this chat";
+  if (error?.status === 409) return "This chat is no longer available";
+  if (error?.status === 429) return "Too many requests";
+  if (error?.status >= 500) return "Support service unavailable";
+
+  return String(error?.message || "Unable to send message").slice(0, 180);
+}
+
+function optimisticStaffMessage(conversation, body, clientMessageId) {
+  return {
+    id: `local:${clientMessageId}`,
+    conversation_id: conversation.id,
+    sender_type: "agent",
+    sender_user_id: state.user.id,
+    sender_display_name:
+      state.agent?.display_name || "Well College Global Support",
+    sender_avatar_url: state.agent?.avatar_url || null,
+    client_message_id: clientMessageId,
+    body,
+    created_at: new Date().toISOString(),
+    _clientMessageId: clientMessageId,
+    _local: true,
+    _sendStatus: "sending",
+    _sendError: ""
+  };
+}
+
+function replaceOptimisticStaffMessage(clientMessageId, serverMessage) {
+  const index = state.messages.findIndex((message) =>
+    (
+      message.client_message_id ||
+      message._clientMessageId
+    ) === clientMessageId
+  );
+
+  if (index >= 0) {
+    state.messages[index] = serverMessage;
+  } else if (
+    serverMessage?.id &&
+    !state.messages.some((message) => message.id === serverMessage.id)
+  ) {
+    state.messages.push(serverMessage);
+  }
+
+  if (serverMessage) {
+    state.lastMessages.set(serverMessage.conversation_id, serverMessage);
+  }
+
+  renderMessages({ forceBottom: true });
+  renderConversationList();
+}
+
+function markOptimisticStaffMessageFailed(clientMessageId, error) {
+  const message = state.messages.find((item) =>
+    (
+      item.client_message_id ||
+      item._clientMessageId
+    ) === clientMessageId
+  );
+
+  if (!message) return;
+
+  message._local = true;
+  message._sendStatus = "failed";
+  message._sendError = staffSendFailureCopy(error);
+
+  renderMessages({ forceBottom: true });
+}
+
+async function deliverStaffMessage(message) {
+  const clientMessageId =
+    message.client_message_id || message._clientMessageId;
+
+  try {
+    const result = await apiRequest("/send", {
+      method: "POST",
+      body: {
+        conversationId: message.conversation_id,
+        clientMessageId,
+        body: message.body
+      }
+    });
+
+    if (result.message) {
+      replaceOptimisticStaffMessage(
+        clientMessageId,
+        result.message
+      );
+    }
+  } catch (error) {
+    markOptimisticStaffMessageFailed(clientMessageId, error);
+  }
+}
+
+function retryStaffMessage(message) {
+  const conversation = currentConversation();
+  if (
+    !message ||
+    message._sendStatus !== "failed" ||
+    !conversation ||
+    conversation.id !== message.conversation_id ||
+    !conversationIsMine(conversation)
+  ) {
+    return;
+  }
+
+  message._sendStatus = "sending";
+  message._sendError = "";
+  renderMessages({ forceBottom: true });
+  deliverStaffMessage(message);
+}
+
+function sendReply(event) {
   event.preventDefault();
 
   const input = document.querySelector("#message-input");
@@ -2704,42 +2931,61 @@ async function sendReply(event) {
     !state.user ||
     !conversationIsMine(conversation)
   ) return;
+
   if (body.length > MAX_MESSAGE_LENGTH) return;
+
+  const clientMessageId = crypto.randomUUID();
+  const optimistic = optimisticStaffMessage(
+    conversation,
+    body,
+    clientMessageId
+  );
+
+  state.messages.push(optimistic);
+  state.lastMessages.set(conversation.id, optimistic);
+
+  if (input) {
+    input.value = "";
+    input.style.height = "auto";
+  }
 
   if (button) button.disabled = true;
 
-  try {
-    const result = await apiRequest("/send", {
-      method: "POST",
-      body: {
-        conversationId: conversation.id,
-        body
-      }
-    });
+  renderMessages({ forceBottom: true });
+  renderConversationList();
+  input?.focus();
 
-    if (result.message) appendMessage(result.message);
-
-    if (input) {
-      input.value = "";
-      input.style.height = "auto";
-    }
-  } catch (error) {
-    showToast(error?.message || "Unable to send reply.", "error");
-  } finally {
-    if (button) button.disabled = !String(input?.value || "").trim();
-    input?.focus();
-  }
+  deliverStaffMessage(optimistic);
 }
 
 function appendMessage(message) {
   if (!message?.id) return;
+
+  const clientMessageId = message.client_message_id || null;
+
+  if (clientMessageId) {
+    const optimisticIndex = state.messages.findIndex((item) =>
+      (
+        item.client_message_id ||
+        item._clientMessageId
+      ) === clientMessageId
+    );
+
+    if (optimisticIndex >= 0) {
+      state.messages[optimisticIndex] = message;
+      state.lastMessages.set(message.conversation_id, message);
+      renderMessages({ forceBottom: true });
+      renderConversationList();
+      return;
+    }
+  }
 
   state.lastMessages.set(message.conversation_id, message);
 
   if (state.selectedId === message.conversation_id) {
     if (!state.messages.some((item) => item.id === message.id)) {
       state.messages.push(message);
-      renderMessages();
+      renderMessages({ forceBottom: true });
     }
     state.unread.delete(message.conversation_id);
   } else if (message.sender_type === "visitor") {
