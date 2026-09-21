@@ -1,5 +1,4 @@
 import {
-  json,
   requireStaff,
   restJson,
   sessionResponse
@@ -12,8 +11,8 @@ const FIELDS = [
   "joined_agent_id"
 ].join(",");
 
-export async function onRequestGet({ request }) {
-  const session = await requireStaff(request);
+export async function onRequestGet({ request, env }) {
+  const session = await requireStaff(env, request);
   if (session.response) return session.response;
 
   try {
