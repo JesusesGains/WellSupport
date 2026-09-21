@@ -2114,6 +2114,17 @@ textarea {
   font-size: .64rem;
 }
 
+.analytics-source {
+  margin: -6px 0 14px;
+  color: #77827d;
+  font-size: .62rem;
+  font-weight: 650;
+}
+
+.analytics-source.is-warning {
+  color: #9a6a2f;
+}
+
 .analytics-metrics {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
