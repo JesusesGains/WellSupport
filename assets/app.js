@@ -722,6 +722,11 @@ function renderAnalyticsDashboard() {
           <div id="analytics-devices" class="analytics-list"></div>
         </article>
 
+        <article class="analytics-card">
+          <div class="analytics-card-head"><div><span>Campaigns</span><h2>UTM traffic</h2></div></div>
+          <div id="analytics-campaigns" class="analytics-list"></div>
+        </article>
+
         <article class="analytics-card is-wide privacy-card">
           <div class="analytics-card-head"><div><span>Privacy</span><h2>Tracking & storage inventory</h2></div></div>
           <div class="privacy-grid">
@@ -806,6 +811,11 @@ function paintAnalytics() {
   renderAnalyticsList("#analytics-devices", summary.devices, (row) => ({
     primary: String(row.device || "unknown").replace(/^./, (letter) => letter.toUpperCase()),
     secondary: "Visitors",
+    value: formatNumber(row.visitors)
+  }));
+  renderAnalyticsList("#analytics-campaigns", summary.campaigns, (row) => ({
+    primary: row.campaign || row.source || "Campaign",
+    secondary: [row.source, row.medium].filter(Boolean).join(" · "),
     value: formatNumber(row.visitors)
   }));
 }
@@ -1104,7 +1114,11 @@ async function loadInbox({ silent = false } = {}) {
       state.selectedId = null;
       state.messages = [];
       document.querySelector("#dashboard")?.classList.remove("has-selection");
-      renderDashboardChatEmpty();
+      if (state.currentView === "messages") {
+        renderDashboardChatEmpty();
+      } else {
+        renderAnalyticsDashboard();
+      }
     }
 
     state.realtimeStatus = "live";
