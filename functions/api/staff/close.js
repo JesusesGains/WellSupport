@@ -20,14 +20,22 @@ export async function onRequestPost({ request, env }) {
   }
 
   try {
-    await restJson(
-      `/rest/v1/support_conversations?id=eq.${encodeURIComponent(conversationId)}`,
+    const rows = await restJson(
+      `/rest/v1/support_conversations?id=eq.${encodeURIComponent(conversationId)}&joined_agent_id=eq.${encodeURIComponent(session.user.id)}&select=id`,
       session,
       {
         method: "DELETE",
-        headers: { Prefer: "return=minimal" }
+        headers: { Prefer: "return=representation" }
       }
     );
+
+    if (!Array.isArray(rows) || !rows.length) {
+      return sessionResponse(
+        { error: "Only the staff member handling this chat can close it." },
+        session,
+        409
+      );
+    }
 
     return sessionResponse({ ok: true }, session);
   } catch (error) {
