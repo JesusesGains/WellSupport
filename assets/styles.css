@@ -1385,6 +1385,15 @@ textarea {
   color: #fff;
 }
 
+.message-delivery-status {
+  margin-top: 6px;
+  color: rgba(255,255,255,.58);
+  font-size: .55rem;
+  font-weight: 700;
+  line-height: 1.2;
+  text-align: right;
+}
+
 .messages-loading {
   display: grid;
   height: 100%;
