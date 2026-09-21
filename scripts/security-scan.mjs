@@ -63,6 +63,12 @@ async function sourceScan() {
     if (/\bsb_secret_[A-Za-z0-9_-]{20,}\b/.test(source)) {
       failures.push(`${name}: Supabase secret key detected`);
     }
+    if (/\bsb_publishable_[A-Za-z0-9_-]{20,}\b/.test(source)) {
+      failures.push(`${name}: Supabase publishable key must come from Cloudflare env`);
+    }
+    if (/https:\/\/[a-z0-9]+\.supabase\.co/.test(source) && name.startsWith("functions/")) {
+      failures.push(`${name}: Supabase project URL must come from Cloudflare env`);
+    }
     if (/\bSUPABASE_SERVICE_ROLE_KEY\s*[:=]\s*["'][^"'\n]{20,}["']/.test(source)) {
       failures.push(`${name}: Supabase service-role credential detected`);
     }
