@@ -9,7 +9,9 @@ const state = {
   messages: [],
   selectedId: null,
   unread: new Set(),
-  filter: "open",
+  messageSection: "current",
+  agents: new Map(),
+  readAt: new Map(),
   search: "",
   realtimeStatus: "connecting",
   loadingInbox: false,
@@ -488,19 +490,25 @@ function setDashboardView(view) {
   state.currentView = view === "messages" ? "messages" : "dashboard";
   updatePrimaryNavigation();
 
+  const dashboard = document.querySelector("#dashboard");
+  dashboard?.classList.toggle("is-dashboard", state.currentView === "dashboard");
+  dashboard?.classList.toggle("is-messages", state.currentView === "messages");
+
   if (state.currentView === "dashboard") {
-    document.querySelector("#dashboard")?.classList.remove("has-selection");
+    dashboard?.classList.remove("has-selection");
     renderAnalyticsDashboard();
     if (!state.analytics && !state.analyticsLoading) loadAnalytics();
     return;
   }
 
+  renderConversationList();
+
   if (state.selectedId) {
-    document.querySelector("#dashboard")?.classList.add("has-selection");
+    dashboard?.classList.add("has-selection");
     renderChatShell();
     renderMessages();
   } else {
-    document.querySelector("#dashboard")?.classList.remove("has-selection");
+    dashboard?.classList.remove("has-selection");
     renderDashboardChatEmpty();
   }
 }
@@ -840,7 +848,7 @@ async function loadAnalytics({ silent = false } = {}) {
 
 function renderDashboard() {
   app.innerHTML = `
-    <main id="dashboard" class="dashboard">
+    <main id="dashboard" class="dashboard is-dashboard">
       <div class="staff-profile-shell">
         <button
           id="profile-menu-button"
@@ -955,14 +963,30 @@ function renderDashboard() {
         </header>
 
         <div class="inbox-tools">
+          <button class="all-chats-entry" type="button" data-message-section="all">
+            <span id="all-chats-avatars" class="all-chats-avatars" aria-hidden="true"></span>
+            <span class="all-chats-copy">
+              <strong>All chats</strong>
+              <small>Active chats across staff</small>
+            </span>
+            <b id="all-chats-count" class="section-count">0</b>
+          </button>
+
+          <div class="message-section-tabs" role="group" aria-label="Message queues">
+            <button class="message-section-button is-active" type="button" data-message-section="current">
+              <span>Current</span>
+              <b id="current-count">0</b>
+            </button>
+            <button class="message-section-button" type="button" data-message-section="waiting">
+              <span>Waiting</span>
+              <b id="waiting-count">0</b>
+            </button>
+          </div>
+
           <label class="search-wrap">
             ${searchIcon()}
             <input id="conversation-search" type="search" placeholder="Search conversations" autocomplete="off" />
           </label>
-          <div class="filter-row" role="group" aria-label="Conversation status">
-            <button class="filter-button is-active" type="button" data-filter="open">Open</button>
-            <button class="filter-button" type="button" data-filter="all">All</button>
-          </div>
         </div>
 
         <div id="conversation-list" class="conversation-list"></div>
@@ -1023,11 +1047,14 @@ function renderDashboard() {
     renderConversationList();
   });
 
-  document.querySelectorAll(".filter-button").forEach((button) => {
+  document.querySelectorAll("[data-message-section]").forEach((button) => {
     button.addEventListener("click", () => {
-      state.filter = button.dataset.filter || "open";
-      document.querySelectorAll(".filter-button").forEach((item) => {
-        item.classList.toggle("is-active", item === button);
+      state.messageSection = button.dataset.messageSection || "current";
+      document.querySelectorAll("[data-message-section]").forEach((item) => {
+        item.classList.toggle(
+          "is-active",
+          item.dataset.messageSection === state.messageSection
+        );
       });
       renderConversationList();
     });
