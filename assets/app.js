@@ -548,6 +548,8 @@ function renderWebEditor() {
   const panel = document.querySelector("#chat-panel");
   if (!panel) return;
 
+  const liveOrigin = "https://www.wellcollegeglobal.com";
+
   panel.className = "chat-panel web-editor-panel";
   panel.innerHTML = `
     <div class="web-editor-view">
@@ -555,11 +557,11 @@ function renderWebEditor() {
         <div>
           <div class="eyebrow"><i aria-hidden="true"></i> Website management</div>
           <h1>Web Editor</h1>
-          <p>Edit Well College Global content and appearance, review changes on the preview branch, then promote approved work to production.</p>
+          <p>Edit against the real Well College Global website, test responsive layouts, then send approved changes through beta-main before production.</p>
         </div>
         <a
           class="web-editor-open-site"
-          href="https://www.wellcollegeglobal.com/"
+          href="${liveOrigin}/"
           target="_blank"
           rel="noopener noreferrer"
         >
@@ -571,7 +573,7 @@ function renderWebEditor() {
       <section class="editor-workflow" aria-label="Website publishing workflow">
         <article class="is-active">
           <span>01</span>
-          <div><strong>Draft</strong><small>Prepare content and design changes</small></div>
+          <div><strong>Draft</strong><small>Temporary changes in the real preview</small></div>
         </article>
         <i aria-hidden="true"></i>
         <article>
@@ -606,28 +608,28 @@ function renderWebEditor() {
           </label>
 
           <div class="editor-section">
-            <span class="editor-section-label">Content</span>
+            <span class="editor-section-label">Temporary content preview</span>
             <label class="editor-field">
-              <span>Heading draft</span>
-              <textarea id="web-editor-heading" rows="3" placeholder="Draft revised heading text…"></textarea>
+              <span>Main heading</span>
+              <textarea id="web-editor-heading" rows="3" placeholder="Leave blank to keep the live heading…"></textarea>
             </label>
             <label class="editor-field">
-              <span>Body copy draft</span>
-              <textarea id="web-editor-copy" rows="5" placeholder="Draft revised supporting copy…"></textarea>
+              <span>Lead copy</span>
+              <textarea id="web-editor-copy" rows="5" placeholder="Leave blank to keep the live page copy…"></textarea>
             </label>
           </div>
 
           <div class="editor-section">
-            <span class="editor-section-label">Appearance</span>
+            <span class="editor-section-label">Temporary appearance preview</span>
             <label class="editor-field">
-              <span>Accent colour</span>
+              <span>Primary navy / accent</span>
               <div class="editor-colour-row">
                 <input id="web-editor-accent" type="color" value="#304660" />
                 <input id="web-editor-accent-text" type="text" value="#304660" maxlength="7" />
               </div>
             </label>
             <label class="editor-field">
-              <span>Typography</span>
+              <span>Heading typography</span>
               <select id="web-editor-font">
                 <option>DM Serif Display</option>
                 <option>DM Sans</option>
@@ -637,8 +639,13 @@ function renderWebEditor() {
           </div>
 
           <div class="editor-draft-note">
-            <strong>Draft workspace</strong>
-            <span>Changes here stay inside the staff dashboard until the GitHub publish connection is enabled.</span>
+            <strong>Real site, temporary overrides</strong>
+            <span>The iframe is the actual production page. Draft controls only change the embedded preview; they do not alter production or GitHub.</span>
+          </div>
+
+          <div class="editor-draft-note is-devtools-note">
+            <strong>Chrome DevTools</strong>
+            <span>Use the responsive controls here for everyday checks. For full DOM/network inspection, open the page in Chrome and use DevTools.</span>
           </div>
         </aside>
 
@@ -646,14 +653,22 @@ function renderWebEditor() {
           <div class="editor-preview-toolbar">
             <div>
               <span class="editor-status-dot"></span>
-              <strong>Preview workspace</strong>
+              <strong>Live production preview</strong>
               <small id="web-editor-preview-path">wellcollegeglobal.com/</small>
             </div>
+
+            <div class="editor-device-toolbar" role="group" aria-label="Preview device size">
+              <button class="is-active" type="button" data-editor-device="desktop">Desktop</button>
+              <button type="button" data-editor-device="tablet">Tablet</button>
+              <button type="button" data-editor-device="mobile">Mobile</button>
+            </div>
+
             <div class="editor-preview-actions">
               <button id="web-editor-refresh" type="button">Refresh</button>
+              <button id="web-editor-inspect" type="button">Inspect in Chrome</button>
               <a
                 id="web-editor-open-page"
-                href="https://www.wellcollegeglobal.com/"
+                href="${liveOrigin}/"
                 target="_blank"
                 rel="noopener noreferrer"
               >Open page ↗</a>
@@ -661,17 +676,20 @@ function renderWebEditor() {
           </div>
 
           <div class="editor-preview-placeholder">
-            <div class="editor-preview-browser">
+            <div id="web-editor-browser" class="editor-preview-browser" data-device="desktop">
               <div class="editor-preview-browser-bar">
                 <i></i><i></i><i></i>
                 <span id="web-editor-browser-url">wellcollegeglobal.com/</span>
+                <b>LIVE</b>
               </div>
-              <div class="editor-preview-canvas">
-                <span>Live website preview</span>
-                <h2 id="web-editor-preview-heading">Well College Global</h2>
-                <p id="web-editor-preview-copy">Use the editor controls to prepare page copy and appearance changes before publishing to beta-main.</p>
-                <button type="button">Preview CTA</button>
-              </div>
+              <iframe
+                id="web-editor-frame"
+                class="editor-live-frame"
+                title="Well College Global live website preview"
+                src="${liveOrigin}/?wcgEditor=1"
+                loading="eager"
+                referrerpolicy="strict-origin-when-cross-origin"
+              ></iframe>
             </div>
           </div>
 
@@ -681,7 +699,7 @@ function renderWebEditor() {
               <span>GitHub branch: <b>beta-main</b> → Cloudflare preview → <b>main</b></span>
             </div>
             <div class="editor-publish-actions">
-              <button class="is-secondary" type="button" id="web-editor-discard">Discard draft</button>
+              <button class="is-secondary" type="button" id="web-editor-discard">Reset preview edits</button>
               <button class="is-primary" type="button" id="web-editor-preview-submit" disabled>
                 Publish to beta-main
               </button>
@@ -698,76 +716,114 @@ function renderWebEditor() {
   const accent = document.querySelector("#web-editor-accent");
   const accentText = document.querySelector("#web-editor-accent-text");
   const font = document.querySelector("#web-editor-font");
-  const previewHeading = document.querySelector("#web-editor-preview-heading");
-  const previewCopy = document.querySelector("#web-editor-preview-copy");
-  const previewCanvas = document.querySelector(".editor-preview-canvas");
+  const frame = document.querySelector("#web-editor-frame");
+  const browser = document.querySelector("#web-editor-browser");
   const openPage = document.querySelector("#web-editor-open-page");
   const previewPath = document.querySelector("#web-editor-preview-path");
   const browserUrl = document.querySelector("#web-editor-browser-url");
 
-  const updatePage = () => {
+  const cleanPageUrl = () => {
     const path = pageSelect?.value || "/";
-    const url = `https://www.wellcollegeglobal.com${path === "/" ? "/" : path}`;
-    if (openPage) openPage.href = url;
-    const display = `wellcollegeglobal.com${path}`;
+    return new URL(path, liveOrigin).toString();
+  };
+
+  const previewPageUrl = (cacheBust = false) => {
+    const url = new URL(cleanPageUrl());
+    url.searchParams.set("wcgEditor", "1");
+    if (cacheBust) url.searchParams.set("_preview", String(Date.now()));
+    return url.toString();
+  };
+
+  const draftPayload = () => ({
+    heading: heading?.value || "",
+    copy: copy?.value || "",
+    accent: /^#[0-9a-f]{6}$/i.test(accentText?.value || "")
+      ? accentText.value
+      : accent?.value || "#304660",
+    font: font?.value || "DM Serif Display"
+  });
+
+  const postDraft = () => {
+    frame?.contentWindow?.postMessage(
+      {
+        type: "WCG_EDITOR_PREVIEW",
+        payload: draftPayload()
+      },
+      liveOrigin
+    );
+  };
+
+  const updatePage = ({ reload = true } = {}) => {
+    const cleanUrl = cleanPageUrl();
+    const display = new URL(cleanUrl).hostname + new URL(cleanUrl).pathname;
+
+    if (openPage) openPage.href = cleanUrl;
     if (previewPath) previewPath.textContent = display;
     if (browserUrl) browserUrl.textContent = display;
-  };
 
-  const updatePreview = () => {
-    if (previewHeading && heading?.value.trim()) {
-      previewHeading.textContent = heading.value.trim();
-    } else if (previewHeading) {
-      previewHeading.textContent = "Well College Global";
-    }
-
-    if (previewCopy && copy?.value.trim()) {
-      previewCopy.textContent = copy.value.trim();
-    } else if (previewCopy) {
-      previewCopy.textContent =
-        "Use the editor controls to prepare page copy and appearance changes before publishing to beta-main.";
-    }
-
-    const colour = /^#[0-9a-f]{6}$/i.test(accentText?.value || "")
-      ? accentText.value
-      : accent?.value || "#304660";
-
-    if (previewCanvas) {
-      previewCanvas.style.setProperty("--editor-accent", colour);
-      previewCanvas.dataset.font = font?.value || "DM Serif Display";
+    if (reload && frame) {
+      frame.src = previewPageUrl();
     }
   };
 
-  pageSelect?.addEventListener("change", updatePage);
-  heading?.addEventListener("input", updatePreview);
-  copy?.addEventListener("input", updatePreview);
-  font?.addEventListener("change", updatePreview);
+  pageSelect?.addEventListener("change", () => updatePage());
+
+  heading?.addEventListener("input", postDraft);
+  copy?.addEventListener("input", postDraft);
+  font?.addEventListener("change", postDraft);
 
   accent?.addEventListener("input", () => {
     if (accentText) accentText.value = accent.value;
-    updatePreview();
+    postDraft();
   });
 
   accentText?.addEventListener("input", () => {
     if (/^#[0-9a-f]{6}$/i.test(accentText.value) && accent) {
       accent.value = accentText.value;
+      postDraft();
     }
-    updatePreview();
   });
 
-  document.querySelector("#web-editor-refresh")?.addEventListener("click", updatePreview);
+  frame?.addEventListener("load", () => {
+    window.setTimeout(postDraft, 80);
+  });
+
+  document.querySelectorAll("[data-editor-device]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const device = button.dataset.editorDevice || "desktop";
+      if (browser) browser.dataset.device = device;
+
+      document.querySelectorAll("[data-editor-device]").forEach((item) => {
+        item.classList.toggle("is-active", item === button);
+      });
+    });
+  });
+
+  document.querySelector("#web-editor-refresh")?.addEventListener("click", () => {
+    if (frame) frame.src = previewPageUrl(true);
+  });
+
+  document.querySelector("#web-editor-inspect")?.addEventListener("click", () => {
+    window.open(cleanPageUrl(), "_blank", "noopener,noreferrer");
+    showToast("Open Chrome DevTools with ⌘⌥I on Mac, or Ctrl+Shift+I / F12 on Windows.");
+  });
+
   document.querySelector("#web-editor-discard")?.addEventListener("click", () => {
     if (heading) heading.value = "";
     if (copy) copy.value = "";
     if (accent) accent.value = "#304660";
     if (accentText) accentText.value = "#304660";
     if (font) font.value = "DM Serif Display";
-    updatePreview();
-    showToast("Web Editor draft cleared.");
+
+    frame?.contentWindow?.postMessage(
+      { type: "WCG_EDITOR_PREVIEW_RESET" },
+      liveOrigin
+    );
+
+    showToast("Preview edits reset to the live website.");
   });
 
-  updatePage();
-  updatePreview();
+  updatePage({ reload: false });
 }
 
 function notificationStatusLabel() {
