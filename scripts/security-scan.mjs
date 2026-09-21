@@ -72,6 +72,9 @@ async function sourceScan() {
     if (/\bSUPABASE_SERVICE_ROLE_KEY\s*[:=]\s*["'][^"'\n]{20,}["']/.test(source)) {
       failures.push(`${name}: Supabase service-role credential detected`);
     }
+    if (/\b(?:github_pat_[A-Za-z0-9_]{40,}|ghp_[A-Za-z0-9]{30,})\b/.test(source)) {
+      failures.push(`${name}: GitHub token detected; use Cloudflare WELLWEBSITE_GITHUB_TOKEN secret instead`);
+    }
 
     if (
       (name === "index.html" || name.startsWith("assets/") || name.startsWith("public/")) &&
