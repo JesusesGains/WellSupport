@@ -22,6 +22,7 @@ const state = {
   messagePollTimer: null,
   pollBusy: false,
   messagePollBusy: false,
+  pollFailures: 0,
   currentView: "dashboard",
   analytics: null,
   analyticsDays: 30,
@@ -1924,10 +1925,14 @@ async function loadInbox({ silent = false } = {}) {
       }
     }
 
+    state.pollFailures = 0;
     state.realtimeStatus = "live";
   } catch (error) {
     if (error.status !== 401 && error.status !== 403) {
-      state.realtimeStatus = "error";
+      state.pollFailures += 1;
+      state.realtimeStatus =
+        state.pollFailures >= 3 ? "error" : "connecting";
+
       if (!silent) {
         showToast(error?.message || "Unable to load support inbox.", "error");
       }
@@ -2813,21 +2818,41 @@ function upsertConversation(conversation) {
 
 function subscribeRealtime() {
   cleanupRealtime();
+  state.pollFailures = 0;
   state.realtimeStatus = "connecting";
   renderRealtimeStatus();
 
   const pollInbox = async () => {
     if (!state.user) return;
+
     await loadInbox({ silent: true });
 
     if (state.selectedId) {
       await loadMessages(state.selectedId, { silent: true });
     }
 
-    state.pollTimer = window.setTimeout(pollInbox, 1400);
+    const backoff = Math.min(
+      1600 * Math.pow(1.7, Math.max(0, state.pollFailures)),
+      8000
+    );
+    const delay =
+      document.visibilityState === "hidden"
+        ? Math.max(Math.round(backoff), 5000)
+        : Math.round(backoff);
+
+    state.pollTimer = window.setTimeout(pollInbox, delay);
   };
 
-  state.pollTimer = window.setTimeout(pollInbox, 700);
+  const handleVisibility = () => {
+    if (!state.user || document.visibilityState !== "visible") return;
+    if (state.pollTimer) window.clearTimeout(state.pollTimer);
+    state.pollTimer = window.setTimeout(pollInbox, 120);
+  };
+
+  document.addEventListener("visibilitychange", handleVisibility);
+  state.dashboardVisibilityHandler = handleVisibility;
+  state.pollTimer = window.setTimeout(pollInbox, 500);
+
   state.analyticsTimer = window.setInterval(() => {
     if (state.user && state.currentView === "dashboard") {
       loadAnalytics({ silent: true });
@@ -2872,11 +2897,19 @@ function cleanupRealtime() {
   if (state.pollTimer) window.clearTimeout(state.pollTimer);
   if (state.messagePollTimer) window.clearTimeout(state.messagePollTimer);
   if (state.analyticsTimer) window.clearInterval(state.analyticsTimer);
+  if (state.dashboardVisibilityHandler) {
+    document.removeEventListener(
+      "visibilitychange",
+      state.dashboardVisibilityHandler
+    );
+  }
+  state.dashboardVisibilityHandler = null;
   state.pollTimer = null;
   state.messagePollTimer = null;
   state.analyticsTimer = null;
   state.pollBusy = false;
   state.messagePollBusy = false;
+  state.pollFailures = 0;
 }
 
 async function signOut() {
