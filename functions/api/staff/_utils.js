@@ -9,6 +9,9 @@ export function json(data, status = 200, extraHeaders = {}) {
     "Content-Type": "application/json; charset=utf-8",
     "Cache-Control": "no-store, max-age=0",
     "X-Content-Type-Options": "nosniff",
+    "X-Robots-Tag": "noindex, nofollow, noarchive, nosnippet, noimageindex, noai, noimageai",
+    "Content-Signal": "search=no, ai-train=no, ai-input=no, use=no",
+    "Referrer-Policy": "no-referrer",
     ...extraHeaders
   });
 
@@ -186,17 +189,23 @@ async function supportSessionIsActive(accessToken) {
 
 export async function revokeCurrentSession(request) {
   const cookies = parseCookies(request);
-  const accessToken = cookies.get(ACCESS_COOKIE) || "";
-
-  if (!accessToken) return;
+  let accessToken = cookies.get(ACCESS_COOKIE) || "";
+  const refreshToken = cookies.get(REFRESH_COOKIE) || "";
 
   try {
-    await supabaseFetch("/auth/v1/logout?scope=local", {
-      accessToken,
-      method: "POST"
-    });
+    if (!await authUser(accessToken) && refreshToken) {
+      const refreshed = await refreshSession(refreshToken);
+      accessToken = refreshed?.access_token || accessToken;
+    }
+
+    if (accessToken) {
+      await supabaseFetch("/auth/v1/logout?scope=local", {
+        accessToken,
+        method: "POST"
+      });
+    }
   } catch {
-    // Cookies are cleared even if the upstream revoke request is unavailable.
+    // Local cookies are cleared regardless; database RLS also checks auth.sessions.
   }
 }
 
@@ -258,15 +267,20 @@ export async function loginStaff(email, password) {
   const payload = await readJson(response);
 
   if (!response.ok || !payload?.access_token || !payload?.user) {
+    const rateLimited = response.status === 429;
     return {
       response: json(
-        { error: payload?.msg || payload?.message || "Invalid email or password." },
-        response.status === 429 ? 429 : 401
+        { error: rateLimited ? "Too many sign-in attempts. Try again later." : "Invalid email or password." },
+        rateLimited ? 429 : 401
       )
     };
   }
 
   if (payload.user.is_anonymous) {
+    await supabaseFetch("/auth/v1/logout?scope=local", {
+      accessToken: payload.access_token,
+      method: "POST"
+    }).catch(() => {});
     return {
       response: json({ error: "This account is not permitted to access support." }, 403)
     };
@@ -275,8 +289,22 @@ export async function loginStaff(email, password) {
   const agent = await staffAgent(payload.access_token, payload.user.id);
 
   if (!agent?.active) {
+    await supabaseFetch("/auth/v1/logout?scope=local", {
+      accessToken: payload.access_token,
+      method: "POST"
+    }).catch(() => {});
     return {
       response: json({ error: "This account does not have Well Support access." }, 403)
+    };
+  }
+
+  if (!await supportSessionIsActive(payload.access_token)) {
+    await supabaseFetch("/auth/v1/logout?scope=local", {
+      accessToken: payload.access_token,
+      method: "POST"
+    }).catch(() => {});
+    return {
+      response: json({ error: "This staff session could not be verified." }, 401)
     };
   }
 
@@ -309,15 +337,46 @@ export function sessionResponse(data, session, status = 200) {
   return withCookies(json(data, status), session?.cookieHeaders || []);
 }
 
+function validImageSignature(bytes, mimeType) {
+  const data = new Uint8Array(bytes);
+
+  if (mimeType === "image/jpeg") {
+    return data.length >= 3 &&
+      data[0] === 0xff &&
+      data[1] === 0xd8 &&
+      data[2] === 0xff;
+  }
+
+  if (mimeType === "image/png") {
+    const signature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+    return data.length >= signature.length &&
+      signature.every((byte, index) => data[index] === byte);
+  }
+
+  if (mimeType === "image/webp") {
+    return data.length >= 12 &&
+      String.fromCharCode(...data.slice(0, 4)) === "RIFF" &&
+      String.fromCharCode(...data.slice(8, 12)) === "WEBP";
+  }
+
+  return false;
+}
+
 export async function uploadAvatar(session, file) {
   if (!file) throw new Error("Profile photo is missing.");
 
-  const allowed = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
-  if (!allowed.has(file.type)) throw new Error("Use a JPG, PNG, WebP, or GIF profile photo.");
-  if (file.size > 5 * 1024 * 1024) throw new Error("Profile photos must be 5 MB or smaller.");
+  const allowed = new Set(["image/jpeg", "image/png", "image/webp"]);
+  if (!allowed.has(file.type)) throw new Error("Use a JPG, PNG, or WebP profile photo.");
+  if (file.size <= 0 || file.size > 5 * 1024 * 1024) {
+    throw new Error("Profile photos must be 5 MB or smaller.");
+  }
 
   const path = `${session.user.id}/profile`;
   const bytes = await file.arrayBuffer();
+
+  if (!validImageSignature(bytes, file.type)) {
+    throw new Error("The selected file is not a valid image.");
+  }
 
   const response = await supabaseFetch(
     `/storage/v1/object/support-avatars/${encodeURIComponent(session.user.id)}/profile`,
