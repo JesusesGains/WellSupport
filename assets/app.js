@@ -29,7 +29,12 @@ const state = {
   analyticsTimer: null,
   unreadCounts: new Map(),
   knownVisitorMessageIds: new Set(),
-  notificationsReady: false
+  notificationsReady: false,
+  editorStatus: null,
+  editorMode: "beta",
+  editorPage: "/",
+  editorDirty: false,
+  editorLoading: false
 };
 
 function configured() {
@@ -544,28 +549,170 @@ function setDashboardView(view) {
   }
 }
 
+async function loadWebEditorStatus({ quiet = false } = {}) {
+  if (state.editorLoading) return;
+  state.editorLoading = true;
+
+  try {
+    const result = await apiRequest("/editor-status");
+    state.editorStatus = result.status || null;
+  } catch (error) {
+    state.editorStatus = {
+      connected: false,
+      error: error?.message || "Unable to load GitHub editor status."
+    };
+    if (!quiet) showToast(state.editorStatus.error, "error");
+  } finally {
+    state.editorLoading = false;
+    if (state.currentView === "editor") renderWebEditor();
+  }
+}
+
+function editorPageConfig(mode, path) {
+  const status = state.editorStatus;
+  if (!status?.connected) return {};
+
+  const source =
+    mode === "production"
+      ? status.main?.overrides
+      : status.beta?.overrides;
+
+  return source?.pages?.[path] || {};
+}
+
+function editorBranchSummary() {
+  const comparison = state.editorStatus?.comparison;
+  if (!state.editorStatus?.connected || !comparison) {
+    return "GitHub connection required";
+  }
+
+  if (comparison.behindBy > 0 && comparison.aheadBy > 0) {
+    return `beta-main is ${comparison.aheadBy} ahead · ${comparison.behindBy} behind`;
+  }
+
+  if (comparison.behindBy > 0) {
+    return `beta-main is ${comparison.behindBy} commit${comparison.behindBy === 1 ? "" : "s"} behind production`;
+  }
+
+  if (comparison.aheadBy > 0) {
+    return `${comparison.aheadBy} beta commit${comparison.aheadBy === 1 ? "" : "s"} ready for review`;
+  }
+
+  return "beta-main is synced with production";
+}
+
+async function syncWebEditorBeta() {
+  const button = document.querySelector("#web-editor-sync");
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Syncing…";
+  }
+
+  try {
+    const result = await apiRequest("/editor-sync", {
+      method: "POST",
+      body: {}
+    });
+
+    state.editorStatus = result.status || state.editorStatus;
+    state.editorDirty = false;
+    showToast("beta-main is synced with production.");
+    renderWebEditor();
+  } catch (error) {
+    showToast(error?.message || "Unable to sync beta-main.", "error");
+    if (button) {
+      button.disabled = false;
+      button.textContent = "Sync beta from production";
+    }
+  }
+}
+
+async function publishWebEditorDraft(payload) {
+  const button = document.querySelector("#web-editor-preview-submit");
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Publishing…";
+  }
+
+  try {
+    const result = await apiRequest("/editor-publish", {
+      method: "POST",
+      body: payload
+    });
+
+    if (state.editorStatus?.beta) {
+      state.editorStatus.beta.overrides = result.overrides;
+      if (result.commitSha) state.editorStatus.beta.sha = result.commitSha;
+    }
+
+    state.editorDirty = false;
+    showToast("Committed to beta-main. Cloudflare will deploy the Beta Preview.");
+    await loadWebEditorStatus({ quiet: true });
+  } catch (error) {
+    showToast(error?.message || "Unable to publish to beta-main.", "error");
+    if (button) {
+      button.disabled = false;
+      button.textContent = "Publish to beta-main";
+    }
+  }
+}
+
+function openEditorPromotionConfirm() {
+  const modal = document.querySelector("#editor-promote-modal");
+  if (!modal) return;
+  modal.hidden = false;
+  document.body.classList.add("has-support-confirm-modal");
+  requestAnimationFrame(() => {
+    document.querySelector("#confirm-editor-promote")?.focus();
+  });
+}
+
+function closeEditorPromotionConfirm() {
+  const modal = document.querySelector("#editor-promote-modal");
+  if (modal) modal.hidden = true;
+  document.body.classList.remove("has-support-confirm-modal");
+  document.querySelector("#web-editor-promote")?.focus();
+}
+
+async function promoteWebEditorBeta() {
+  const button = document.querySelector("#confirm-editor-promote");
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Promoting…";
+  }
+
+  try {
+    const result = await apiRequest("/editor-promote", {
+      method: "POST",
+      body: { confirm: "PROMOTE_BETA_TO_MAIN" }
+    });
+
+    state.editorStatus = result.status || state.editorStatus;
+    state.editorDirty = false;
+    document.body.classList.remove("has-support-confirm-modal");
+    showToast("beta-main promoted to main. Production deployment is starting.");
+    renderWebEditor();
+  } catch (error) {
+    showToast(error?.message || "Unable to promote beta-main.", "error");
+    if (button) {
+      button.disabled = false;
+      button.textContent = "Promote to production";
+    }
+  }
+}
+
 function renderWebEditor() {
   const panel = document.querySelector("#chat-panel");
   if (!panel) return;
 
-  const environments = {
-    production: {
-      label: "Production",
-      branch: "main",
-      origin: "https://wellwebsite.pages.dev",
-      customOrigin: "https://www.wellcollegeglobal.com",
-      editable: false
-    },
-    beta: {
-      label: "Beta Preview",
-      branch: "beta-main",
-      origin: "https://beta-main.wellwebsite.pages.dev",
-      customOrigin: "https://beta-main.wellwebsite.pages.dev",
-      editable: true
-    }
-  };
-
-  let editorEnvironment = "production";
+  const productionPreviewOrigin = "https://wellwebsite.pages.dev";
+  const betaPreviewOrigin = "https://beta-main.wellwebsite.pages.dev";
+  const publicOrigin = "https://www.wellcollegeglobal.com";
+  const connected = state.editorStatus?.connected === true;
+  const comparison = state.editorStatus?.comparison || {};
+  const betaBehind = Number(comparison.behindBy || 0) > 0;
+  const betaAhead = Number(comparison.aheadBy || 0) > 0;
+  const editable = state.editorMode === "beta" && connected && !betaBehind;
 
   panel.className = "chat-panel web-editor-panel";
   panel.innerHTML = `
@@ -574,60 +721,85 @@ function renderWebEditor() {
         <div>
           <div class="eyebrow"><i aria-hidden="true"></i> Website management</div>
           <h1>Web Editor</h1>
-          <p>Compare production with beta-main, make temporary edits against the beta preview, then promote approved beta-main changes to main.</p>
+          <p>Compare production with beta-main, edit the beta preview, then deliberately promote approved changes to main.</p>
         </div>
         <a
           class="web-editor-open-site"
-          href="https://www.wellcollegeglobal.com/"
+          href="${publicOrigin}/"
           target="_blank"
           rel="noopener noreferrer"
         >
-          Open production site
+          Open public site
           <span aria-hidden="true">↗</span>
         </a>
       </header>
 
-      <section class="editor-environment-switcher" aria-label="Website environment">
-        <button class="is-active" type="button" data-editor-environment="production">
-          <span class="editor-environment-status is-production"></span>
-          <span>
-            <strong>Production</strong>
-            <small>main · wellwebsite.pages.dev</small>
-          </span>
-          <b>Read only</b>
+      <section class="editor-environments" aria-label="Website environments">
+        <button
+          class="editor-environment-card ${state.editorMode === "production" ? "is-active" : ""}"
+          type="button"
+          data-editor-environment="production"
+        >
+          <span class="editor-env-label">Production Preview</span>
+          <strong>wellwebsite.pages.dev</strong>
+          <small><b>main</b> · read-only reference</small>
         </button>
-        <button type="button" data-editor-environment="beta">
-          <span class="editor-environment-status is-beta"></span>
-          <span>
-            <strong>Beta Preview</strong>
-            <small>beta-main · beta-main.wellwebsite.pages.dev</small>
-          </span>
-          <b>Editable</b>
+        <div class="editor-environment-arrow" aria-hidden="true">→</div>
+        <button
+          class="editor-environment-card ${state.editorMode === "beta" ? "is-active" : ""}"
+          type="button"
+          data-editor-environment="beta"
+        >
+          <span class="editor-env-label">Beta Preview</span>
+          <strong>beta-main.wellwebsite.pages.dev</strong>
+          <small><b>beta-main</b> · editable staging</small>
         </button>
       </section>
 
+      <section class="editor-github-status ${connected ? "is-connected" : "is-disconnected"}">
+        <div class="editor-github-status-copy">
+          <span class="editor-status-dot"></span>
+          <div>
+            <strong>${connected ? "GitHub connected" : "GitHub connection required"}</strong>
+            <small>${connected ? editorBranchSummary() : "Add the Cloudflare secret WELLWEBSITE_GITHUB_TOKEN to enable publishing."}</small>
+          </div>
+        </div>
+        <div class="editor-github-actions">
+          ${connected && betaBehind ? `
+            <button id="web-editor-sync" class="editor-action-button is-secondary" type="button">
+              Sync beta from production
+            </button>
+          ` : ""}
+          ${connected && betaAhead && !betaBehind ? `
+            <button id="web-editor-promote" class="editor-action-button is-promote" type="button">
+              Promote to production
+            </button>
+          ` : ""}
+        </div>
+      </section>
+
       <section class="editor-workflow" aria-label="Website publishing workflow">
-        <article class="is-active">
+        <article class="${state.editorMode === "beta" ? "is-active" : ""}">
           <span>01</span>
-          <div><strong>Production reference</strong><small>main · current approved site</small></div>
+          <div><strong>Edit beta</strong><small>Draft changes against beta-main</small></div>
         </article>
         <i aria-hidden="true"></i>
-        <article>
+        <article class="${betaAhead ? "is-active" : ""}">
           <span>02</span>
-          <div><strong>Edit & review beta</strong><small>beta-main · Cloudflare branch preview</small></div>
+          <div><strong>Review preview</strong><small>beta-main.wellwebsite.pages.dev</small></div>
         </article>
         <i aria-hidden="true"></i>
-        <article>
+        <article class="${!betaAhead && connected && !betaBehind ? "is-complete" : ""}">
           <span>03</span>
-          <div><strong>Promote</strong><small>beta-main → main → production deploy</small></div>
+          <div><strong>Production</strong><small>promote beta-main → main</small></div>
         </article>
       </section>
 
       <section class="web-editor-grid">
         <aside class="editor-controls">
           <div class="editor-controls-head">
-            <span id="editor-controls-mode">Production reference</span>
-            <strong>Choose what to inspect</strong>
+            <span>${state.editorMode === "beta" ? "Beta editor" : "Production reference"}</span>
+            <strong>${state.editorMode === "beta" ? "Edit beta-main" : "View production"}</strong>
           </div>
 
           <label class="editor-field">
@@ -643,21 +815,21 @@ function renderWebEditor() {
             </select>
           </label>
 
-          <fieldset id="web-editor-draft-controls" class="editor-draft-controls" disabled>
+          <fieldset id="web-editor-fields" ${editable ? "" : "disabled"}>
             <div class="editor-section">
-              <span class="editor-section-label">Temporary content preview</span>
+              <span class="editor-section-label">Content</span>
               <label class="editor-field">
                 <span>Main heading</span>
-                <textarea id="web-editor-heading" rows="3" placeholder="Leave blank to keep the beta heading…"></textarea>
+                <textarea id="web-editor-heading" rows="3" placeholder="Leave blank to use the source heading…"></textarea>
               </label>
               <label class="editor-field">
                 <span>Lead copy</span>
-                <textarea id="web-editor-copy" rows="5" placeholder="Leave blank to keep the beta page copy…"></textarea>
+                <textarea id="web-editor-copy" rows="5" placeholder="Leave blank to use the source page copy…"></textarea>
               </label>
             </div>
 
             <div class="editor-section">
-              <span class="editor-section-label">Temporary appearance preview</span>
+              <span class="editor-section-label">Appearance</span>
               <label class="editor-field">
                 <span>Primary navy / accent</span>
                 <div class="editor-colour-row">
@@ -676,23 +848,34 @@ function renderWebEditor() {
             </div>
           </fieldset>
 
-          <div id="editor-mode-note" class="editor-draft-note">
-            <strong>Production is read-only</strong>
-            <span>Use this mode to compare against the approved main branch. Switch to Beta Preview to make temporary editor changes.</span>
+          <div class="editor-draft-note">
+            <strong>${state.editorMode === "beta" ? "Beta changes only" : "Production is read-only"}</strong>
+            <span>${state.editorMode === "beta"
+              ? "Draft edits affect only the embedded beta preview until you commit them to beta-main."
+              : "Switch to Beta Preview to make changes. Production cannot be edited directly from this dashboard."}</span>
           </div>
+
+          ${!connected ? `
+            <div class="editor-secret-callout">
+              <strong>Connect GitHub</strong>
+              <span>Cloudflare secret required:</span>
+              <code>WELLWEBSITE_GITHUB_TOKEN</code>
+              <small>Use a fine-grained GitHub token restricted to the WellWebsite repository with Contents: Read and write.</small>
+            </div>
+          ` : ""}
 
           <div class="editor-draft-note is-devtools-note">
             <strong>Chrome DevTools</strong>
-            <span>Use Desktop, Tablet and Mobile here for routine checks. Open the active page in Chrome for full DOM, network and performance inspection.</span>
+            <span>Use the built-in device sizes for routine checks, or open the selected preview in Chrome for DOM, network and performance inspection.</span>
           </div>
         </aside>
 
         <div class="editor-preview-shell">
           <div class="editor-preview-toolbar">
             <div>
-              <span id="editor-preview-status-dot" class="editor-status-dot"></span>
-              <strong id="editor-preview-title">Production preview</strong>
-              <small id="web-editor-preview-path">wellwebsite.pages.dev/</small>
+              <span class="editor-status-dot"></span>
+              <strong id="web-editor-preview-title">${state.editorMode === "beta" ? "Beta Preview" : "Production Preview"}</strong>
+              <small id="web-editor-preview-path"></small>
             </div>
 
             <div class="editor-device-toolbar" role="group" aria-label="Preview device size">
@@ -704,12 +887,7 @@ function renderWebEditor() {
             <div class="editor-preview-actions">
               <button id="web-editor-refresh" type="button">Refresh</button>
               <button id="web-editor-inspect" type="button">Inspect in Chrome</button>
-              <a
-                id="web-editor-open-page"
-                href="https://wellwebsite.pages.dev/"
-                target="_blank"
-                rel="noopener noreferrer"
-              >Open preview ↗</a>
+              <a id="web-editor-open-page" target="_blank" rel="noopener noreferrer">Open preview ↗</a>
             </div>
           </div>
 
@@ -717,14 +895,13 @@ function renderWebEditor() {
             <div id="web-editor-browser" class="editor-preview-browser" data-device="desktop">
               <div class="editor-preview-browser-bar">
                 <i></i><i></i><i></i>
-                <span id="web-editor-browser-url">wellwebsite.pages.dev/</span>
-                <b id="web-editor-environment-badge">MAIN</b>
+                <span id="web-editor-browser-url"></span>
+                <b>${state.editorMode === "beta" ? "BETA" : "PROD"}</b>
               </div>
               <iframe
                 id="web-editor-frame"
                 class="editor-live-frame"
                 title="Well College Global website preview"
-                src="https://wellwebsite.pages.dev/?wcgEditor=1"
                 loading="eager"
                 referrerpolicy="strict-origin-when-cross-origin"
               ></iframe>
@@ -733,19 +910,45 @@ function renderWebEditor() {
 
           <footer class="editor-publish-bar">
             <div>
-              <strong id="editor-publish-title">Production · main</strong>
-              <span id="editor-publish-copy">Read-only reference. Make changes in Beta Preview before promotion.</span>
+              <strong>${state.editorMode === "beta" ? "beta-main editing" : "main production reference"}</strong>
+              <span>${state.editorMode === "beta"
+                ? "Save to beta-main → review Cloudflare Beta Preview → promote to main."
+                : "Production changes only when approved beta-main work is promoted."}</span>
             </div>
             <div class="editor-publish-actions">
-              <button class="is-secondary" type="button" id="web-editor-discard" disabled>Reset preview edits</button>
-              <button class="is-primary" type="button" id="web-editor-preview-submit" disabled>
-                Production is read-only
+              <button class="is-secondary" type="button" id="web-editor-discard" ${state.editorMode === "beta" ? "" : "disabled"}>
+                Reset draft
               </button>
-              <button class="is-promote" type="button" id="web-editor-promote" disabled>
-                Promote beta-main → main
+              <button
+                class="is-primary"
+                type="button"
+                id="web-editor-preview-submit"
+                ${editable && state.editorDirty ? "" : "disabled"}
+              >
+                Publish to beta-main
               </button>
             </div>
           </footer>
+        </div>
+      </section>
+    </div>
+
+    <div id="editor-promote-modal" class="confirm-modal" hidden>
+      <button
+        id="editor-promote-backdrop"
+        class="confirm-modal-backdrop"
+        type="button"
+        aria-label="Cancel production promotion"
+      ></button>
+      <section class="confirm-card" role="dialog" aria-modal="true" aria-labelledby="editor-promote-title">
+        <div class="confirm-icon">${editorIcon()}</div>
+        <h2 id="editor-promote-title">Promote beta to production?</h2>
+        <p>
+          This merges <strong>beta-main</strong> into <strong>main</strong>. Cloudflare will then deploy the approved version to wellwebsite.pages.dev and the production website.
+        </p>
+        <div class="confirm-actions">
+          <button id="cancel-editor-promote" class="confirm-secondary" type="button">Cancel</button>
+          <button id="confirm-editor-promote" class="confirm-danger" type="button">Promote to production</button>
         </div>
       </section>
     </div>
@@ -757,34 +960,43 @@ function renderWebEditor() {
   const accent = document.querySelector("#web-editor-accent");
   const accentText = document.querySelector("#web-editor-accent-text");
   const font = document.querySelector("#web-editor-font");
-  const draftControls = document.querySelector("#web-editor-draft-controls");
   const frame = document.querySelector("#web-editor-frame");
   const browser = document.querySelector("#web-editor-browser");
   const openPage = document.querySelector("#web-editor-open-page");
   const previewPath = document.querySelector("#web-editor-preview-path");
   const browserUrl = document.querySelector("#web-editor-browser-url");
-  const environmentBadge = document.querySelector("#web-editor-environment-badge");
-  const previewTitle = document.querySelector("#editor-preview-title");
-  const controlsMode = document.querySelector("#editor-controls-mode");
-  const modeNote = document.querySelector("#editor-mode-note");
-  const discardButton = document.querySelector("#web-editor-discard");
   const publishButton = document.querySelector("#web-editor-preview-submit");
-  const promoteButton = document.querySelector("#web-editor-promote");
-  const publishTitle = document.querySelector("#editor-publish-title");
-  const publishCopy = document.querySelector("#editor-publish-copy");
 
-  const activeEnvironment = () => environments[editorEnvironment];
+  if (pageSelect) pageSelect.value = state.editorPage;
 
-  const cleanPageUrl = () => {
-    const path = pageSelect?.value || "/";
-    return new URL(path, activeEnvironment().origin).toString();
-  };
+  const activeOrigin = () =>
+    state.editorMode === "beta"
+      ? betaPreviewOrigin
+      : productionPreviewOrigin;
 
-  const previewPageUrl = (cacheBust = false) => {
-    const url = new URL(cleanPageUrl());
+  const pageUrl = () =>
+    new URL(state.editorPage || "/", activeOrigin()).toString();
+
+  const iframeUrl = (cacheBust = false) => {
+    const url = new URL(pageUrl());
     url.searchParams.set("wcgEditor", "1");
     if (cacheBust) url.searchParams.set("_preview", String(Date.now()));
     return url.toString();
+  };
+
+  const loadFields = () => {
+    const config = editorPageConfig(
+      state.editorMode === "beta" ? "beta" : "production",
+      state.editorPage
+    );
+
+    if (heading) heading.value = config.heading || "";
+    if (copy) copy.value = config.copy || "";
+    if (accent) accent.value = config.accent || "#304660";
+    if (accentText) accentText.value = config.accent || "#304660";
+    if (font) font.value = config.font || "DM Serif Display";
+    state.editorDirty = false;
+    if (publishButton) publishButton.disabled = true;
   };
 
   const draftPayload = () => ({
@@ -797,145 +1009,71 @@ function renderWebEditor() {
   });
 
   const postDraft = () => {
-    const environment = activeEnvironment();
-    if (!environment.editable) return;
+    if (state.editorMode !== "beta") return;
 
     frame?.contentWindow?.postMessage(
       {
         type: "WCG_EDITOR_PREVIEW",
         payload: draftPayload()
       },
-      environment.origin
+      betaPreviewOrigin
     );
   };
 
-  const resetDraft = ({ notify = true } = {}) => {
-    if (heading) heading.value = "";
-    if (copy) copy.value = "";
-    if (accent) accent.value = "#304660";
-    if (accentText) accentText.value = "#304660";
-    if (font) font.value = "DM Serif Display";
-
-    const environment = activeEnvironment();
-    if (environment.editable) {
-      frame?.contentWindow?.postMessage(
-        { type: "WCG_EDITOR_PREVIEW_RESET" },
-        environment.origin
-      );
-    }
-
-    if (notify) showToast("Beta preview edits reset.");
+  const markDirty = () => {
+    if (!editable) return;
+    state.editorDirty = true;
+    if (publishButton) publishButton.disabled = false;
+    postDraft();
   };
 
-  const updatePage = ({ reload = true } = {}) => {
-    const cleanUrl = cleanPageUrl();
-    const parsed = new URL(cleanUrl);
+  const updatePreviewLocation = ({ reload = true, cacheBust = false } = {}) => {
+    const url = pageUrl();
+    const parsed = new URL(url);
     const display = parsed.hostname + parsed.pathname;
 
-    if (openPage) openPage.href = cleanUrl;
+    if (openPage) openPage.href = url;
     if (previewPath) previewPath.textContent = display;
     if (browserUrl) browserUrl.textContent = display;
-
-    if (reload && frame) {
-      frame.src = previewPageUrl();
-    }
-  };
-
-  const updateEnvironmentUI = ({ reload = true } = {}) => {
-    const environment = activeEnvironment();
-    const isBeta = editorEnvironment === "beta";
-
-    document.querySelectorAll("[data-editor-environment]").forEach((button) => {
-      button.classList.toggle(
-        "is-active",
-        button.dataset.editorEnvironment === editorEnvironment
-      );
-    });
-
-    if (draftControls) draftControls.disabled = !environment.editable;
-    if (discardButton) discardButton.disabled = !environment.editable;
-
-    if (previewTitle) {
-      previewTitle.textContent = isBeta
-        ? "Beta Preview · editable"
-        : "Production Preview · read only";
-    }
-
-    if (environmentBadge) {
-      environmentBadge.textContent = isBeta ? "BETA-MAIN" : "MAIN";
-      environmentBadge.classList.toggle("is-beta", isBeta);
-    }
-
-    if (controlsMode) {
-      controlsMode.textContent = isBeta ? "Beta editor" : "Production reference";
-    }
-
-    if (modeNote) {
-      modeNote.innerHTML = isBeta
-        ? "<strong>Editing beta-main</strong><span>Temporary controls modify only this embedded beta preview. Approved source changes should be committed to beta-main, reviewed here, then promoted to main.</span>"
-        : "<strong>Production is read-only</strong><span>Use this mode to compare against the approved main branch. Switch to Beta Preview to make temporary editor changes.</span>";
-    }
-
-    if (publishTitle) {
-      publishTitle.textContent = isBeta ? "Beta Preview · beta-main" : "Production · main";
-    }
-
-    if (publishCopy) {
-      publishCopy.textContent = isBeta
-        ? "Review the beta-main deployment here before promoting it to main."
-        : "Read-only reference. Make changes in Beta Preview before promotion.";
-    }
-
-    if (publishButton) {
-      publishButton.textContent = isBeta
-        ? "Publish edits to beta-main"
-        : "Production is read-only";
-      // GitHub writes remain disabled until the dashboard has a server-side GitHub credential.
-      publishButton.disabled = true;
-    }
-
-    if (promoteButton) {
-      // Promotion also requires the secure server-side GitHub connection.
-      promoteButton.disabled = true;
-    }
-
-    if (!isBeta) {
-      resetDraft({ notify: false });
-    }
-
-    updatePage({ reload });
+    if (reload && frame) frame.src = iframeUrl(cacheBust);
   };
 
   document.querySelectorAll("[data-editor-environment]").forEach((button) => {
     button.addEventListener("click", () => {
-      const next = button.dataset.editorEnvironment;
-      if (!environments[next] || next === editorEnvironment) return;
-      editorEnvironment = next;
-      updateEnvironmentUI();
+      state.editorMode =
+        button.dataset.editorEnvironment === "production"
+          ? "production"
+          : "beta";
+      state.editorDirty = false;
+      renderWebEditor();
     });
   });
 
-  pageSelect?.addEventListener("change", () => updatePage());
+  pageSelect?.addEventListener("change", () => {
+    state.editorPage = pageSelect.value || "/";
+    loadFields();
+    updatePreviewLocation();
+  });
 
-  heading?.addEventListener("input", postDraft);
-  copy?.addEventListener("input", postDraft);
-  font?.addEventListener("change", postDraft);
+  heading?.addEventListener("input", markDirty);
+  copy?.addEventListener("input", markDirty);
+  font?.addEventListener("change", markDirty);
 
   accent?.addEventListener("input", () => {
     if (accentText) accentText.value = accent.value;
-    postDraft();
+    markDirty();
   });
 
   accentText?.addEventListener("input", () => {
     if (/^#[0-9a-f]{6}$/i.test(accentText.value) && accent) {
       accent.value = accentText.value;
-      postDraft();
+      markDirty();
     }
   });
 
   frame?.addEventListener("load", () => {
-    if (activeEnvironment().editable) {
-      window.setTimeout(postDraft, 80);
+    if (state.editorMode === "beta" && state.editorDirty) {
+      window.setTimeout(postDraft, 100);
     }
   });
 
@@ -951,25 +1089,72 @@ function renderWebEditor() {
   });
 
   document.querySelector("#web-editor-refresh")?.addEventListener("click", () => {
-    if (frame) frame.src = previewPageUrl(true);
+    if (frame) frame.src = iframeUrl(true);
   });
 
   document.querySelector("#web-editor-inspect")?.addEventListener("click", () => {
-    window.open(cleanPageUrl(), "_blank", "noopener,noreferrer");
+    window.open(pageUrl(), "_blank", "noopener,noreferrer");
     showToast("Open Chrome DevTools with ⌘⌥I on Mac, or Ctrl+Shift+I / F12 on Windows.");
   });
 
-  discardButton?.addEventListener("click", () => resetDraft());
+  document.querySelector("#web-editor-discard")?.addEventListener("click", () => {
+    if (state.editorMode !== "beta") return;
+    loadFields();
+
+    frame?.contentWindow?.postMessage(
+      { type: "WCG_EDITOR_PREVIEW_RESET" },
+      betaPreviewOrigin
+    );
+
+    showToast("Draft reset to the currently deployed beta-main version.");
+  });
 
   publishButton?.addEventListener("click", () => {
-    showToast("Connect a server-side GitHub credential before enabling beta-main publishing.", "error");
+    if (!editable || !state.editorDirty) return;
+    publishWebEditorDraft({
+      pagePath: state.editorPage,
+      ...draftPayload()
+    });
   });
 
-  promoteButton?.addEventListener("click", () => {
-    showToast("Connect a server-side GitHub credential before enabling beta-main → main promotion.", "error");
-  });
+  document.querySelector("#web-editor-sync")?.addEventListener(
+    "click",
+    syncWebEditorBeta
+  );
 
-  updateEnvironmentUI({ reload: false });
+  document.querySelector("#web-editor-promote")?.addEventListener(
+    "click",
+    openEditorPromotionConfirm
+  );
+
+  document.querySelector("#editor-promote-backdrop")?.addEventListener(
+    "click",
+    closeEditorPromotionConfirm
+  );
+
+  document.querySelector("#cancel-editor-promote")?.addEventListener(
+    "click",
+    closeEditorPromotionConfirm
+  );
+
+  document.querySelector("#confirm-editor-promote")?.addEventListener(
+    "click",
+    promoteWebEditorBeta
+  );
+
+  document.querySelector("#editor-promote-modal")?.addEventListener(
+    "keydown",
+    (event) => {
+      if (event.key === "Escape") closeEditorPromotionConfirm();
+    }
+  );
+
+  loadFields();
+  updatePreviewLocation({ reload: true });
+
+  if (!state.editorStatus && !state.editorLoading) {
+    window.setTimeout(() => loadWebEditorStatus({ quiet: true }), 0);
+  }
 }
 
 function notificationStatusLabel() {
@@ -2716,6 +2901,10 @@ async function signOut() {
   state.knownVisitorMessageIds = new Set();
   state.notificationsReady = false;
   state.analytics = null;
+  state.editorStatus = null;
+  state.editorMode = "beta";
+  state.editorPage = "/";
+  state.editorDirty = false;
   state.currentView = "dashboard";
   renderLogin();
 }
