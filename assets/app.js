@@ -2,7 +2,11 @@ const SDK_URL = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.116.0/+esm
 const MAX_MESSAGE_LENGTH = 4000;
 
 const app = document.querySelector("#app");
-const config = window.WELL_SUPPORT_CONFIG || {};
+const DEFAULT_CONFIG = Object.freeze({
+  supabaseUrl: "https://fmlrtcofnbqdotpvuaem.supabase.co",
+  publishableKey: "sb_publishable_my0myBoo-Kdu4tMCOsdKiQ_l0uuIHpR"
+});
+const config = { ...DEFAULT_CONFIG, ...(window.WELL_SUPPORT_CONFIG || {}) };
 
 const state = {
   client: null,
