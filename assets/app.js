@@ -381,12 +381,12 @@ function renderLogin(message = "") {
         <div class="auth-brand">
           <span class="brand-mark" aria-hidden="true">W</span>
           <div class="auth-brand-copy">
-            <strong>Well Support</strong>
-            <span>Well College Global</span>
+            <strong>Well College Global</strong>
+            <span>Dashboard</span>
           </div>
         </div>
         <h1 id="staff-sign-in-title">Staff sign in</h1>
-        <p>Access live website conversations and reply to learners in real time.</p>
+        <p>Access website analytics, live conversations and visitor activity.</p>
         <div id="auth-error" class="auth-error" role="status" ${message ? "" : "hidden"}></div>
         <form id="login-form" class="auth-form" autocomplete="on">
           <div class="field">
@@ -877,9 +877,9 @@ function renderDashboard() {
               <span id="account-avatar-preview" class="account-avatar-preview"></span>
               <div class="account-avatar-actions">
                 <label class="account-photo-button" for="account-avatar-input">Change photo</label>
-                <input id="account-avatar-input" type="file" accept="image/jpeg,image/png,image/webp,image/gif" hidden />
+                <input id="account-avatar-input" type="file" accept="image/jpeg,image/png,image/webp" hidden />
                 <button id="remove-avatar-button" class="account-remove-photo" type="button">Remove photo</button>
-                <small>JPG, PNG, WebP or GIF · max 5 MB</small>
+                <small>JPG, PNG or WebP · max 5 MB</small>
               </div>
             </div>
 
@@ -1274,6 +1274,7 @@ function renderChatShell() {
   const conversation = currentConversation();
   if (!panel || !conversation) return;
 
+  panel.className = "chat-panel";
   panel.innerHTML = `
     <header class="chat-header">
       <div class="chat-person">
@@ -1652,6 +1653,7 @@ function subscribeRealtime() {
 function renderDashboardChatEmpty() {
   const panel = document.querySelector("#chat-panel");
   if (!panel) return;
+  panel.className = "chat-panel";
   panel.innerHTML = `
     <div class="chat-empty">
       <div class="chat-empty-card">
