@@ -7,10 +7,13 @@ Private staff dashboard for the Well College Global website support chat.
 - Email/password sign-in only.
 - No signup flow.
 - A valid Supabase user is **not enough** to enter the dashboard: the user must also exist as an active row in `public.support_agents`.
-- Reads `support_conversations` and `support_messages` through Supabase RLS.
-- Receives new website chats and messages through Supabase Realtime.
-- Sends staff replies as `sender_type = 'agent'` using the signed-in staff UUID.
-- Allows staff to close and reopen conversations.
+- Staff authentication is handled by same-origin Cloudflare Pages Functions; Supabase access/refresh tokens are stored only in Secure, HttpOnly, SameSite=Strict cookies.
+- The browser does not receive a Supabase publishable key or Auth token.
+- Every protected server request validates the Supabase Auth session and re-checks the active `support_agents` allowlist.
+- Reads and writes `support_conversations` / `support_messages` server-side using the staff JWT so Supabase RLS remains an additional authorization boundary.
+- Polls the same-origin staff API for near-realtime website chats without exposing Supabase Realtime credentials to browser JavaScript.
+- Sends staff replies as `sender_type = 'agent'` using the verified signed-in staff UUID.
+- Closing a chat permanently deletes that conversation and its cascade-deleted messages.
 - Shows temporary visitor city/region/country, IP, timezone and browser language above the thread while that metadata is available.
 - Marks the first staff open with “A staff member joined your conversation”.
 - Visitor chats use ephemeral tokens rather than visitor Supabase Auth users.
@@ -24,14 +27,7 @@ Use:
 - Build command: `npm run build`
 - Build output directory: `dist`
 
-The dashboard is preconfigured to the live **Well Website** Supabase project (`fmlrtcofnbqdotpvuaem`). These optional Cloudflare build variables can override the defaults:
-
-```
-VITE_SUPPORT_SUPABASE_URL=https://fmlrtcofnbqdotpvuaem.supabase.co
-VITE_SUPPORT_SUPABASE_PUBLISHABLE_KEY=sb_publishable_my0myBoo-Kdu4tMCOsdKiQ_l0uuIHpR
-```
-
-The publishable key is expected to be public browser configuration. Never add a Supabase secret/service-role key to this repository or to browser-accessible Cloudflare variables.
+No Supabase key or staff Auth token is emitted into the browser build. The Pages Functions under `functions/api/staff/` are the backend-for-frontend security boundary and use the Supabase publishable project key only server-side together with the staff JWT. The publishable key is not a privileged secret; no service-role/secret key is used.
 
 ## Staff access
 
@@ -86,7 +82,10 @@ The development server builds the static site and serves it at `http://localhost
 ## Security notes
 
 - No signup UI exists.
-- No service-role key is used.
+- The browser does not receive Supabase API keys or Auth tokens.
+- Staff access/refresh tokens are Secure, HttpOnly, SameSite=Strict cookies.
+- Every staff API endpoint checks same-origin mutation headers and validates active staff authorization server-side.
+- No service-role/secret key is used.
 - Dynamic message and visitor content is rendered with `textContent`, not injected as HTML.
-- Cloudflare security headers deny framing and limit browser network access to Supabase plus the pinned Supabase browser SDK CDN.
-- The Supabase SDK URL is pinned to `@supabase/supabase-js@2.116.0`.
+- CSP allows scripts only from the dashboard origin, denies framing of the dashboard, denies objects/media/workers, and limits browser network calls to same-origin.
+- Supabase RLS remains enabled as defense in depth even though the browser no longer talks directly to the Data API.
