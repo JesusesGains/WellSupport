@@ -17,7 +17,7 @@ export async function onRequestGet({ request, env }) {
 
   try {
     const messages = await restJson(
-      `/rest/v1/support_messages?select=id,conversation_id,sender_type,sender_user_id,sender_display_name,sender_avatar_url,body,created_at&conversation_id=eq.${encodeURIComponent(conversationId)}&order=created_at.asc&limit=500`,
+      `/rest/v1/support_messages?select=id,conversation_id,sender_type,sender_user_id,sender_display_name,sender_avatar_url,client_message_id,body,created_at&conversation_id=eq.${encodeURIComponent(conversationId)}&order=created_at.asc&limit=500`,
       session
     );
 
