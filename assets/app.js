@@ -548,7 +548,8 @@ function renderWebEditor() {
   const panel = document.querySelector("#chat-panel");
   if (!panel) return;
 
-  const liveOrigin = "https://www.wellcollegeglobal.com";
+  const previewOrigin = "https://wellwebsite.pages.dev";
+  const productionOrigin = "https://www.wellcollegeglobal.com";
 
   panel.className = "chat-panel web-editor-panel";
   panel.innerHTML = `
@@ -557,15 +558,15 @@ function renderWebEditor() {
         <div>
           <div class="eyebrow"><i aria-hidden="true"></i> Website management</div>
           <h1>Web Editor</h1>
-          <p>Edit against the real Well College Global website, test responsive layouts, then send approved changes through beta-main before production.</p>
+          <p>Edit against the live Cloudflare Pages preview at wellwebsite.pages.dev, test responsive layouts, then send approved changes through beta-main before production.</p>
         </div>
         <a
           class="web-editor-open-site"
-          href="${liveOrigin}/"
+          href="${productionOrigin}/"
           target="_blank"
           rel="noopener noreferrer"
         >
-          Open live site
+          Open production site
           <span aria-hidden="true">↗</span>
         </a>
       </header>
@@ -640,7 +641,7 @@ function renderWebEditor() {
 
           <div class="editor-draft-note">
             <strong>Real site, temporary overrides</strong>
-            <span>The iframe is the actual production page. Draft controls only change the embedded preview; they do not alter production or GitHub.</span>
+            <span>The iframe is the actual wellwebsite.pages.dev deployment. Draft controls only change the embedded preview; they do not alter production or GitHub.</span>
           </div>
 
           <div class="editor-draft-note is-devtools-note">
@@ -653,8 +654,8 @@ function renderWebEditor() {
           <div class="editor-preview-toolbar">
             <div>
               <span class="editor-status-dot"></span>
-              <strong>Live production preview</strong>
-              <small id="web-editor-preview-path">wellcollegeglobal.com/</small>
+              <strong>Live Cloudflare preview</strong>
+              <small id="web-editor-preview-path">wellwebsite.pages.dev/</small>
             </div>
 
             <div class="editor-device-toolbar" role="group" aria-label="Preview device size">
@@ -668,7 +669,7 @@ function renderWebEditor() {
               <button id="web-editor-inspect" type="button">Inspect in Chrome</button>
               <a
                 id="web-editor-open-page"
-                href="${liveOrigin}/"
+                href="${productionOrigin}/"
                 target="_blank"
                 rel="noopener noreferrer"
               >Open page ↗</a>
@@ -679,14 +680,14 @@ function renderWebEditor() {
             <div id="web-editor-browser" class="editor-preview-browser" data-device="desktop">
               <div class="editor-preview-browser-bar">
                 <i></i><i></i><i></i>
-                <span id="web-editor-browser-url">wellcollegeglobal.com/</span>
+                <span id="web-editor-browser-url">wellwebsite.pages.dev/</span>
                 <b>LIVE</b>
               </div>
               <iframe
                 id="web-editor-frame"
                 class="editor-live-frame"
                 title="Well College Global live website preview"
-                src="${liveOrigin}/?wcgEditor=1"
+                src="${previewOrigin}/?wcgEditor=1"
                 loading="eager"
                 referrerpolicy="strict-origin-when-cross-origin"
               ></iframe>
@@ -724,7 +725,7 @@ function renderWebEditor() {
 
   const cleanPageUrl = () => {
     const path = pageSelect?.value || "/";
-    return new URL(path, liveOrigin).toString();
+    return new URL(path, previewOrigin).toString();
   };
 
   const previewPageUrl = (cacheBust = false) => {
@@ -749,7 +750,7 @@ function renderWebEditor() {
         type: "WCG_EDITOR_PREVIEW",
         payload: draftPayload()
       },
-      liveOrigin
+      previewOrigin
     );
   };
 
@@ -817,10 +818,10 @@ function renderWebEditor() {
 
     frame?.contentWindow?.postMessage(
       { type: "WCG_EDITOR_PREVIEW_RESET" },
-      liveOrigin
+      previewOrigin
     );
 
-    showToast("Preview edits reset to the live website.");
+    showToast("Preview edits reset to the Cloudflare Pages version.");
   });
 
   updatePage({ reload: false });
