@@ -787,7 +787,7 @@ textarea {
   width: 30px;
   height: 30px;
   align-self: flex-end;
-  margin-right: 7px;
+  margin-left: 7px;
   border-radius: 10px;
   font-size: .62rem;
 }
