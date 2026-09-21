@@ -1217,6 +1217,11 @@ function formatNumber(value) {
   return new Intl.NumberFormat().format(Number(value || 0));
 }
 
+function formatDecimal(value, digits = 2) {
+  const number = Number(value || 0);
+  return Number.isFinite(number) ? number.toFixed(digits) : "0.00";
+}
+
 function formatDuration(value) {
   const totalSeconds = Math.max(0, Math.round(Number(value || 0) / 1000));
   if (totalSeconds < 60) return `${totalSeconds}s`;
@@ -1386,7 +1391,7 @@ function renderAnalyticsDashboard() {
         <div>
           <div class="eyebrow"><i aria-hidden="true"></i> Website analytics</div>
           <h1>Dashboard</h1>
-          <p>First-party, cookieless traffic and engagement from Well College Global.</p>
+          <p>Cloudflare Web Analytics traffic with first-party engagement and conversion events from Well College Global.</p>
         </div>
         <div class="analytics-range" role="group" aria-label="Analytics date range">
           <button type="button" data-analytics-days="7">7d</button>
@@ -1396,13 +1401,15 @@ function renderAnalyticsDashboard() {
       </header>
 
       <div id="analytics-loading" class="analytics-loading" hidden>Refreshing analytics…</div>
+      <div id="analytics-source" class="analytics-source" aria-live="polite"></div>
 
       <section class="analytics-metrics" aria-label="Website metrics">
-        <article><span>Unique visitors</span><strong id="metric-visitors">0</strong><small>unique tab sessions</small></article>
-        <article><span>Page views</span><strong id="metric-pageviews">0</strong><small>public page loads</small></article>
+        <article><span>Visits</span><strong id="metric-visits">0</strong><small>Cloudflare human visits</small></article>
+        <article><span>Page views</span><strong id="metric-pageviews">0</strong><small>Cloudflare RUM page loads</small></article>
+        <article><span>Pages / visit</span><strong id="metric-pages-per-visit">0.00</strong><small>page views divided by visits</small></article>
         <article class="is-page-metric"><span>Most viewed page</span><strong id="metric-most-viewed">—</strong><small id="metric-most-viewed-count">No views yet</small></article>
-        <article><span>Total clicks</span><strong id="metric-clicks">0</strong><small>links and controls</small></article>
-        <article><span>Avg. visit</span><strong id="metric-duration">0s</strong><small>until page exit</small></article>
+        <article><span>Total clicks</span><strong id="metric-clicks">0</strong><small>first-party links and controls</small></article>
+        <article><span>Avg. engagement</span><strong id="metric-duration">0s</strong><small>first-party time until page exit</small></article>
       </section>
 
       <section class="analytics-grid">
@@ -1433,7 +1440,7 @@ function renderAnalyticsDashboard() {
         </article>
 
         <article class="analytics-card">
-          <div class="analytics-card-head"><div><span>Audience</span><h2>Top locations</h2></div></div>
+          <div class="analytics-card-head"><div><span>Audience</span><h2>Top countries</h2></div></div>
           <div id="analytics-locations" class="analytics-list"></div>
         </article>
 
@@ -1448,6 +1455,16 @@ function renderAnalyticsDashboard() {
         </article>
 
         <article class="analytics-card">
+          <div class="analytics-card-head"><div><span>Browsers</span><h2>Top browsers</h2></div></div>
+          <div id="analytics-browsers" class="analytics-list"></div>
+        </article>
+
+        <article class="analytics-card">
+          <div class="analytics-card-head"><div><span>Systems</span><h2>Operating systems</h2></div></div>
+          <div id="analytics-operating-systems" class="analytics-list"></div>
+        </article>
+
+        <article class="analytics-card">
           <div class="analytics-card-head"><div><span>Campaigns</span><h2>UTM traffic</h2></div></div>
           <div id="analytics-campaigns" class="analytics-list"></div>
         </article>
@@ -1455,12 +1472,12 @@ function renderAnalyticsDashboard() {
         <article class="analytics-card is-wide privacy-card">
           <div class="analytics-card-head"><div><span>Privacy</span><h2>Tracking & storage inventory</h2></div></div>
           <div class="privacy-grid">
+            <div><strong>Traffic source</strong><span>Cloudflare Web Analytics aggregated RUM data</span></div>
+            <div><strong>Engagement events</strong><span>First-party click, exit and UTM events only</span></div>
             <div><strong>Analytics cookies</strong><span>None</span></div>
-            <div><strong>Analytics session</strong><span>Random sessionStorage ID, cleared with the browser tab</span></div>
-            <div><strong>Raw IP stored</strong><span>No</span></div>
-            <div><strong>Approx. location</strong><span>City, region and country from Cloudflare</span></div>
-            <div><strong>Privacy signals</strong><span>Global Privacy Control and Do Not Track are respected</span></div>
-            <div><strong>Retention</strong><span>Analytics events are deleted after 90 days</span></div>
+            <div><strong>Raw IP in analytics</strong><span>Not stored by the Well analytics event table</span></div>
+            <div><strong>Privacy signals</strong><span>Global Privacy Control and Do Not Track are respected by first-party events</span></div>
+            <div><strong>First-party retention</strong><span>Engagement events are deleted after 90 days</span></div>
             <div><strong>Support chat</strong><span>Tab-scoped sessionStorage until the tab closes or staff closes the chat</span></div>
             <div><strong>Staff dashboard</strong><span>Secure HttpOnly SameSite=Strict authentication cookies</span></div>
           </div>
@@ -1497,8 +1514,9 @@ function paintAnalytics() {
   const metrics = summary.metrics || {};
   const topPage = summary.topPages?.[0] || null;
   const metricValues = {
-    "#metric-visitors": formatNumber(metrics.visitors),
+    "#metric-visits": formatNumber(metrics.visits),
     "#metric-pageviews": formatNumber(metrics.pageViews),
+    "#metric-pages-per-visit": formatDecimal(metrics.pagesPerVisit),
     "#metric-most-viewed": topPage?.path || "—",
     "#metric-most-viewed-count": topPage
       ? `${formatNumber(topPage.views)} views`
@@ -1511,6 +1529,19 @@ function paintAnalytics() {
     const element = document.querySelector(selector);
     if (element) element.textContent = value;
   });
+
+  const source = document.querySelector("#analytics-source");
+  if (source) {
+    if (summary.trafficSource === "cloudflare") {
+      source.textContent = "Traffic: Cloudflare Web Analytics · Engagement: first-party events";
+      source.classList.remove("is-warning");
+    } else {
+      source.textContent = summary.cloudflareConfigured
+        ? "Cloudflare traffic is temporarily unavailable · showing first-party fallback data"
+        : "Cloudflare analytics is not configured · showing first-party fallback data";
+      source.classList.add("is-warning");
+    }
+  }
 
   renderRankBars("#analytics-top-pages", summary.topPages || [], {
     labelKey: "path",
@@ -1529,18 +1560,28 @@ function paintAnalytics() {
     value: formatNumber(row.clicks)
   }));
   renderAnalyticsList("#analytics-locations", summary.locations, (row) => ({
-    primary: [row.city, row.region].filter(Boolean).join(", "),
-    secondary: row.country,
+    primary: row.country || "Unknown",
+    secondary: "Cloudflare visits",
     value: formatNumber(row.visitors)
   }));
   renderAnalyticsList("#analytics-referrers", summary.referrers, (row) => ({
     primary: row.host,
-    secondary: "Referring visitors",
+    secondary: "Cloudflare visits",
     value: formatNumber(row.visitors)
   }));
   renderAnalyticsList("#analytics-devices", summary.devices, (row) => ({
     primary: String(row.device || "unknown").replace(/^./, (letter) => letter.toUpperCase()),
-    secondary: "Visitors",
+    secondary: "Cloudflare visits",
+    value: formatNumber(row.visitors)
+  }));
+  renderAnalyticsList("#analytics-browsers", summary.browsers, (row) => ({
+    primary: row.browser || "Unknown",
+    secondary: "Cloudflare visits",
+    value: formatNumber(row.visitors)
+  }));
+  renderAnalyticsList("#analytics-operating-systems", summary.operatingSystems, (row) => ({
+    primary: row.os || "Unknown",
+    secondary: "Cloudflare visits",
     value: formatNumber(row.visitors)
   }));
   renderAnalyticsList("#analytics-campaigns", summary.campaigns, (row) => ({
