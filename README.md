@@ -33,8 +33,19 @@ Configure the **WellSupport** Cloudflare Pages project with:
 
 - `SUPABASE_URL` — Text
 - `SUPABASE_PUBLISHABLE_KEY` — Text
+- `WELLWEBSITE_GITHUB_TOKEN` — **Secret, production environment only**
 
-These values are available only to the server-side Pages Functions. The publishable key is not privileged; every data request still carries the verified staff JWT and remains constrained by RLS. No service-role/secret key is used.
+These values are available only to the server-side Pages Functions. The Supabase publishable key is not privileged; every data request still carries the verified staff JWT and remains constrained by RLS. No Supabase service-role/secret key is used.
+
+The Web Editor uses `WELLWEBSITE_GITHUB_TOKEN` server-side to read/write only `JesusesGains/WellWebsite`. Use a fine-grained GitHub personal access token restricted to that one repository with **Contents: Read and write**. Do not expose it to browser code, commit it to either repository, or add it to Cloudflare preview environments. The production dashboard is the only environment that should receive this token.
+
+Web Editor branch workflow:
+
+1. `main` is production and powers `wellwebsite.pages.dev` / the public website.
+2. `beta-main` is staging and powers `beta-main.wellwebsite.pages.dev`.
+3. Staff edit and publish only to `beta-main`.
+4. Staff review the Beta Preview.
+5. The explicit Promote action merges `beta-main → main` and then fast-forwards `beta-main` to the resulting production commit.
 
 ## Staff access
 
