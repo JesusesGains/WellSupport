@@ -1,1 +1,0 @@
-window.WELL_SUPPORT_CONFIG = Object.freeze({\n  supabaseUrl: "https://fmlrtcofnbqdotpvuaem.supabase.co",\n  publishableKey: "sb_publishable_my0myBoo-Kdu4tMCOsdKiQ_l0uuIHpR"\n});\n
