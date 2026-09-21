@@ -1,16 +1,7 @@
-const SDK_URL = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.116.0/+esm";
 const MAX_MESSAGE_LENGTH = 4000;
-const CONVERSATION_FIELDS = "id,status,page_path,created_at,updated_at,client_ip,visitor_city,visitor_region,visitor_country,visitor_country_code,visitor_timezone,browser_language,user_agent,staff_joined_at,joined_agent_id";
 
 const app = document.querySelector("#app");
-const DEFAULT_CONFIG = Object.freeze({
-  supabaseUrl: "https://fmlrtcofnbqdotpvuaem.supabase.co",
-  publishableKey: "sb_publishable_my0myBoo-Kdu4tMCOsdKiQ_l0uuIHpR"
-});
-const config = { ...DEFAULT_CONFIG, ...(window.WELL_SUPPORT_CONFIG || {}) };
-
 const state = {
-  client: null,
   agent: null,
   user: null,
   conversations: [],
@@ -21,18 +12,70 @@ const state = {
   filter: "open",
   search: "",
   realtimeStatus: "connecting",
-  channel: null,
   loadingInbox: false,
   loadingMessages: false,
   pendingAvatarFile: null,
-  removeAvatar: false
+  removeAvatar: false,
+  pollTimer: null,
+  messagePollTimer: null,
+  pollBusy: false,
+  messagePollBusy: false
 };
 
 function configured() {
-  return Boolean(
-    String(config.supabaseUrl || "").trim() &&
-    String(config.publishableKey || "").trim()
-  );
+  return true;
+}
+
+async function apiRequest(path, {
+  method = "GET",
+  body,
+  formData
+} = {}) {
+  const headers = new Headers({
+    "X-Well-Support-Request": "1"
+  });
+
+  let requestBody;
+
+  if (formData) {
+    requestBody = formData;
+  } else if (body !== undefined) {
+    headers.set("Content-Type", "application/json");
+    requestBody = JSON.stringify(body);
+  }
+
+  const response = await fetch(`/api/staff${path}`, {
+    method,
+    headers,
+    credentials: "same-origin",
+    cache: "no-store",
+    body: requestBody
+  });
+
+  let payload = {};
+  try {
+    payload = await response.json();
+  } catch {
+    // handled below
+  }
+
+  if (!response.ok) {
+    if (response.status === 401 || response.status === 403) {
+      cleanupRealtime();
+      state.agent = null;
+      state.user = null;
+      state.conversations = [];
+      state.messages = [];
+      state.selectedId = null;
+      renderLogin(response.status === 403 ? payload?.error || "Access denied." : "");
+    }
+
+    const error = new Error(payload?.error || "Support request failed.");
+    error.status = response.status;
+    throw error;
+  }
+
+  return payload;
 }
 
 function formatTime(value) {
@@ -216,66 +259,40 @@ async function saveAccountDetails(event) {
   }
 
   try {
-    const client = await getClient();
     let avatarUrl = state.agent.avatar_url || null;
+    let avatarChanged = false;
 
     if (state.removeAvatar) {
-      const { error: removeError } = await client.storage
-        .from("support-avatars")
-        .remove([`${state.user.id}/profile`]);
-
-      if (removeError && !String(removeError.message || "").toLowerCase().includes("not found")) {
-        throw removeError;
-      }
-
+      await apiRequest("/avatar", { method: "DELETE" });
       avatarUrl = null;
+      avatarChanged = true;
     }
 
     if (state.pendingAvatarFile) {
-      const file = state.pendingAvatarFile;
-      const allowedTypes = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
+      const form = new FormData();
+      form.append("file", state.pendingAvatarFile);
 
-      if (!allowedTypes.has(file.type)) {
-        throw new Error("Use a JPG, PNG, WebP, or GIF profile photo.");
-      }
+      const uploaded = await apiRequest("/avatar", {
+        method: "POST",
+        formData: form
+      });
 
-      if (file.size > 5 * 1024 * 1024) {
-        throw new Error("Profile photos must be 5 MB or smaller.");
-      }
-
-      const objectPath = `${state.user.id}/profile`;
-      const { error: uploadError } = await client.storage
-        .from("support-avatars")
-        .upload(objectPath, file, {
-          upsert: true,
-          contentType: file.type,
-          cacheControl: "3600"
-        });
-
-      if (uploadError) throw uploadError;
-
-      const { data: publicData } = client.storage
-        .from("support-avatars")
-        .getPublicUrl(objectPath);
-
-      avatarUrl = publicData?.publicUrl
-        ? `${publicData.publicUrl}?v=${Date.now()}`
-        : null;
+      avatarUrl = uploaded.avatarUrl || null;
+      avatarChanged = true;
     }
 
-    const { data, error } = await client
-      .from("support_agents")
-      .update({
-        display_name: displayName,
-        avatar_url: avatarUrl
-      })
-      .eq("user_id", state.user.id)
-      .select("user_id,display_name,avatar_url,active")
-      .single();
+    const payload = {
+      displayName
+    };
 
-    if (error) throw error;
+    if (avatarChanged) payload.avatarUrl = avatarUrl;
 
-    state.agent = data;
+    const result = await apiRequest("/profile", {
+      method: "POST",
+      body: payload
+    });
+
+    state.agent = result.agent;
     state.pendingAvatarFile = null;
     state.removeAvatar = false;
     refreshProfileUI();
@@ -339,77 +356,6 @@ function showToast(message, tone = "default") {
   }, 3600);
 }
 
-async function getClient() {
-  if (state.client) return state.client;
-  if (!configured()) throw new Error("Supabase is not configured for Well Support.");
-
-  const { createClient } = await import(SDK_URL);
-  state.client = createClient(
-    String(config.supabaseUrl).trim(),
-    String(config.publishableKey).trim(),
-    {
-      auth: {
-        persistSession: true,
-        autoRefreshToken: true,
-        detectSessionInUrl: false
-      },
-      realtime: {
-        params: {
-          eventsPerSecond: 10
-        }
-      }
-    }
-  );
-
-  state.client.auth.onAuthStateChange((event) => {
-    if (event === "SIGNED_OUT") {
-      cleanupRealtime();
-      state.agent = null;
-      state.user = null;
-      state.conversations = [];
-      state.messages = [];
-      state.selectedId = null;
-      renderLogin();
-    }
-  });
-
-  return state.client;
-}
-
-async function loadStaff(userId) {
-  const client = await getClient();
-  const { data, error } = await client
-    .from("support_agents")
-    .select("user_id,display_name,avatar_url,active")
-    .eq("user_id", userId)
-    .eq("active", true)
-    .maybeSingle();
-
-  if (error) throw error;
-  return data || null;
-}
-
-async function verifyCurrentStaff() {
-  const client = await getClient();
-  const { data, error } = await client.auth.getUser();
-  if (error || !data?.user) return null;
-
-  if (data.user.is_anonymous) {
-    await client.auth.signOut();
-    return null;
-  }
-
-  const agent = await loadStaff(data.user.id);
-  if (!agent) {
-    await client.auth.signOut();
-    return null;
-  }
-
-  state.user = data.user;
-  state.agent = agent;
-  return { user: data.user, agent };
-}
-
 function renderLogin(message = "") {
   app.innerHTML = `
     <main class="auth-shell">
@@ -433,7 +379,7 @@ function renderLogin(message = "") {
             <label for="staff-password">Password</label>
             <input id="staff-password" name="password" type="password" autocomplete="current-password" required />
           </div>
-          <button id="login-submit" class="auth-submit" type="submit" ${configured() ? "" : "disabled"}>Sign in</button>
+          <button id="login-submit" class="auth-submit" type="submit">Sign in</button>
         </form>
       </section>
     </main>
@@ -447,7 +393,6 @@ function renderLogin(message = "") {
 
 async function handleLogin(event) {
   event.preventDefault();
-  if (!configured()) return;
 
   const form = new FormData(event.currentTarget);
   const email = String(form.get("email") || "").trim();
@@ -459,34 +404,24 @@ async function handleLogin(event) {
     submit.disabled = true;
     submit.textContent = "Signing in…";
   }
+
   if (errorBox) {
     errorBox.hidden = true;
     errorBox.textContent = "";
   }
 
   try {
-    const client = await getClient();
-    const { data, error } = await client.auth.signInWithPassword({ email, password });
-    if (error) throw error;
-    if (!data?.user) throw new Error("Unable to sign in.");
+    const result = await apiRequest("/login", {
+      method: "POST",
+      body: { email, password }
+    });
 
-    if (data.user.is_anonymous) {
-      await client.auth.signOut();
-      throw new Error("This account is not permitted to access staff support.");
-    }
-
-    const agent = await loadStaff(data.user.id);
-    if (!agent) {
-      await client.auth.signOut();
-      throw new Error("This account does not have Well Support access.");
-    }
-
-    state.user = data.user;
-    state.agent = agent;
+    state.user = result.user;
+    state.agent = result.agent;
     renderDashboard();
     await initialiseDashboard();
   } catch (error) {
-    if (errorBox) {
+    if (errorBox && document.body.contains(errorBox)) {
       errorBox.textContent = error?.message || "Unable to sign in.";
       errorBox.hidden = false;
     }
@@ -691,41 +626,55 @@ async function initialiseDashboard() {
   subscribeRealtime();
 }
 
-async function loadInbox() {
-  state.loadingInbox = true;
-  renderConversationList();
+async function loadInbox({ silent = false } = {}) {
+  if (state.pollBusy) return;
+  state.pollBusy = true;
+
+  if (!silent) {
+    state.loadingInbox = true;
+    renderConversationList();
+  }
 
   try {
-    const client = await getClient();
-    const [conversationResult, messageResult] = await Promise.all([
-      client
-        .from("support_conversations")
-        .select(CONVERSATION_FIELDS)
-        .order("created_at", { ascending: false })
-        .limit(500),
-      client
-        .from("support_messages")
-        .select("id,conversation_id,sender_type,sender_display_name,sender_avatar_url,body,created_at")
-        .order("created_at", { ascending: false })
-        .limit(1000)
-    ]);
+    const result = await apiRequest("/inbox");
+    const previousIds = new Set(state.conversations.map((item) => item.id));
 
-    if (conversationResult.error) throw conversationResult.error;
-    if (messageResult.error) throw messageResult.error;
-
-    state.conversations = conversationResult.data || [];
+    state.conversations = result.conversations || [];
     state.lastMessages = new Map();
 
-    for (const message of messageResult.data || []) {
+    for (const message of result.messages || []) {
       if (!state.lastMessages.has(message.conversation_id)) {
         state.lastMessages.set(message.conversation_id, message);
       }
+
+      if (
+        silent &&
+        message.sender_type === "visitor" &&
+        !previousIds.has(message.conversation_id) &&
+        state.selectedId !== message.conversation_id
+      ) {
+        state.unread.add(message.conversation_id);
+      }
     }
+
+    if (state.selectedId && !state.conversations.some((item) => item.id === state.selectedId)) {
+      state.selectedId = null;
+      state.messages = [];
+      document.querySelector("#dashboard")?.classList.remove("has-selection");
+      renderDashboardChatEmpty();
+    }
+
+    state.realtimeStatus = "live";
   } catch (error) {
-    showToast(error?.message || "Unable to load support inbox.", "error");
+    if (error.status !== 401 && error.status !== 403) {
+      state.realtimeStatus = "error";
+      if (!silent) showToast(error?.message || "Unable to load support inbox.", "error");
+    }
   } finally {
+    state.pollBusy = false;
     state.loadingInbox = false;
     renderConversationList();
+    renderRealtimeStatus();
   }
 }
 
@@ -850,43 +799,13 @@ async function markConversationJoined(id) {
   const conversation = state.conversations.find((item) => item.id === id);
   if (!conversation || conversation.status !== "open" || conversation.staff_joined_at || !state.user) return;
 
-  const client = await getClient();
-  const joinedAt = new Date().toISOString();
+  const result = await apiRequest("/join", {
+    method: "POST",
+    body: { conversationId: id }
+  });
 
-  const { data: joinedConversation, error: joinError } = await client
-    .from("support_conversations")
-    .update({
-      staff_joined_at: joinedAt,
-      joined_agent_id: state.user.id,
-      updated_at: joinedAt
-    })
-    .eq("id", id)
-    .is("staff_joined_at", null)
-    .select(CONVERSATION_FIELDS)
-    .maybeSingle();
-
-  if (joinError) throw joinError;
-  if (!joinedConversation) return;
-
-  upsertConversation(joinedConversation);
-
-  const staffName = state.agent?.display_name || "Staff member";
-
-  const { data: systemMessage, error: messageError } = await client
-    .from("support_messages")
-    .insert({
-      conversation_id: id,
-      sender_type: "system",
-      sender_user_id: state.user.id,
-      sender_display_name: staffName,
-      sender_avatar_url: state.agent?.avatar_url || null,
-      body: `${staffName} has joined your chat`
-    })
-    .select("id,conversation_id,sender_type,sender_user_id,sender_display_name,sender_avatar_url,body,created_at")
-    .single();
-
-  if (messageError) throw messageError;
-  appendMessage(systemMessage);
+  if (result.conversation) upsertConversation(result.conversation);
+  if (result.message) appendMessage(result.message);
 }
 
 async function selectConversation(id) {
@@ -989,26 +908,32 @@ function renderChatShell() {
   renderComposer();
 }
 
-async function loadMessages(conversationId) {
-  state.loadingMessages = true;
-  renderMessages();
+async function loadMessages(conversationId, { silent = false } = {}) {
+  if (!conversationId || state.messagePollBusy) return;
+  state.messagePollBusy = true;
+
+  if (!silent) {
+    state.loadingMessages = true;
+    renderMessages();
+  }
 
   try {
-    const client = await getClient();
-    const { data, error } = await client
-      .from("support_messages")
-      .select("id,conversation_id,sender_type,sender_user_id,sender_display_name,sender_avatar_url,body,created_at")
-      .eq("conversation_id", conversationId)
-      .order("created_at", { ascending: true })
-      .limit(500);
+    const result = await apiRequest(
+      `/messages?conversationId=${encodeURIComponent(conversationId)}`
+    );
 
-    if (error) throw error;
     if (state.selectedId === conversationId) {
-      state.messages = data || [];
+      state.messages = result.messages || [];
+
+      const last = state.messages[state.messages.length - 1];
+      if (last) state.lastMessages.set(conversationId, last);
     }
   } catch (error) {
-    showToast(error?.message || "Unable to load messages.", "error");
+    if (error.status !== 401 && error.status !== 403 && !silent) {
+      showToast(error?.message || "Unable to load messages.", "error");
+    }
   } finally {
+    state.messagePollBusy = false;
     state.loadingMessages = false;
     if (state.selectedId === conversationId) renderMessages();
   }
@@ -1152,6 +1077,7 @@ function renderComposer() {
 
 async function sendReply(event) {
   event.preventDefault();
+
   const input = document.querySelector("#message-input");
   const button = document.querySelector("#send-button");
   const body = String(input?.value || "").trim();
@@ -1161,25 +1087,17 @@ async function sendReply(event) {
   if (body.length > MAX_MESSAGE_LENGTH) return;
 
   if (button) button.disabled = true;
-  if (input) input.disabled = true;
 
   try {
-    const client = await getClient();
-    const { data, error } = await client
-      .from("support_messages")
-      .insert({
-        conversation_id: conversation.id,
-        sender_type: "agent",
-        sender_user_id: state.user.id,
-        sender_display_name: state.agent?.display_name || "Well College Global",
-        sender_avatar_url: state.agent?.avatar_url || null,
+    const result = await apiRequest("/send", {
+      method: "POST",
+      body: {
+        conversationId: conversation.id,
         body
-      })
-      .select("id,conversation_id,sender_type,sender_user_id,sender_display_name,sender_avatar_url,body,created_at")
-      .single();
+      }
+    });
 
-    if (error) throw error;
-    appendMessage(data);
+    if (result.message) appendMessage(result.message);
 
     if (input) {
       input.value = "";
@@ -1188,7 +1106,6 @@ async function sendReply(event) {
   } catch (error) {
     showToast(error?.message || "Unable to send reply.", "error");
   } finally {
-    if (input) input.disabled = false;
     if (button) button.disabled = !String(input?.value || "").trim();
     input?.focus();
   }
@@ -1224,13 +1141,10 @@ async function deleteConversation() {
   }
 
   try {
-    const client = await getClient();
-    const { error } = await client
-      .from("support_conversations")
-      .delete()
-      .eq("id", conversation.id);
-
-    if (error) throw error;
+    await apiRequest("/close", {
+      method: "POST",
+      body: { conversationId: conversation.id }
+    });
 
     state.conversations = state.conversations.filter((item) => item.id !== conversation.id);
     state.lastMessages.delete(conversation.id);
@@ -1267,45 +1181,18 @@ function subscribeRealtime() {
   state.realtimeStatus = "connecting";
   renderRealtimeStatus();
 
-  const client = state.client;
-  if (!client) return;
+  const pollInbox = async () => {
+    if (!state.user) return;
+    await loadInbox({ silent: true });
 
-  state.channel = client
-    .channel("well-support-dashboard")
-    .on(
-      "postgres_changes",
-      { event: "*", schema: "public", table: "support_conversations" },
-      (payload) => {
-        if (payload.eventType === "DELETE") {
-          state.conversations = state.conversations.filter((item) => item.id !== payload.old?.id);
-          if (state.selectedId === payload.old?.id) {
-            state.selectedId = null;
-            state.messages = [];
-            document.querySelector("#dashboard")?.classList.remove("has-selection");
-            renderDashboardChatEmpty();
-          }
-          renderConversationList();
-          return;
-        }
+    if (state.selectedId) {
+      await loadMessages(state.selectedId, { silent: true });
+    }
 
-        upsertConversation(payload.new);
-        if (state.selectedId === payload.new?.id) {
-          renderChatShell();
-          renderMessages();
-        }
-      }
-    )
-    .on(
-      "postgres_changes",
-      { event: "INSERT", schema: "public", table: "support_messages" },
-      (payload) => appendMessage(payload.new)
-    )
-    .subscribe((status) => {
-      if (status === "SUBSCRIBED") state.realtimeStatus = "live";
-      else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") state.realtimeStatus = "error";
-      else state.realtimeStatus = "connecting";
-      renderRealtimeStatus();
-    });
+    state.pollTimer = window.setTimeout(pollInbox, 1400);
+  };
+
+  state.pollTimer = window.setTimeout(pollInbox, 700);
 }
 
 function renderDashboardChatEmpty() {
@@ -1330,7 +1217,7 @@ function renderRealtimeStatus() {
   dot.className = "live-dot";
   if (state.realtimeStatus === "live") {
     dot.classList.add("is-live");
-    copy.textContent = "Realtime live";
+    copy.textContent = "Secure live";
   } else if (state.realtimeStatus === "error") {
     dot.classList.add("is-error");
     copy.textContent = "Reconnect needed";
@@ -1341,46 +1228,45 @@ function renderRealtimeStatus() {
 }
 
 function cleanupRealtime() {
-  if (state.client && state.channel) {
-    state.client.removeChannel(state.channel);
-  }
-  state.channel = null;
+  if (state.pollTimer) window.clearTimeout(state.pollTimer);
+  if (state.messagePollTimer) window.clearTimeout(state.messagePollTimer);
+  state.pollTimer = null;
+  state.messagePollTimer = null;
+  state.pollBusy = false;
+  state.messagePollBusy = false;
 }
 
 async function signOut() {
   try {
     cleanupRealtime();
-    await state.client?.auth.signOut();
-  } catch (error) {
-    showToast(error?.message || "Unable to sign out.", "error");
+    await apiRequest("/logout", { method: "POST" });
+  } catch {
+    // Server also expires the session cookie on normal logout; render locally regardless.
   }
+
+  state.agent = null;
+  state.user = null;
+  state.conversations = [];
+  state.messages = [];
+  state.selectedId = null;
+  state.lastMessages = new Map();
+  state.unread = new Set();
+  renderLogin();
 }
 
 async function bootstrap() {
-  if (!configured()) {
-    renderLogin();
-    return;
-  }
-
   try {
-    const client = await getClient();
-    const { data } = await client.auth.getSession();
-
-    if (!data?.session) {
-      renderLogin();
-      return;
-    }
-
-    const verified = await verifyCurrentStaff();
-    if (!verified) {
-      renderLogin("Your session does not have Well Support access.");
-      return;
-    }
-
+    const result = await apiRequest("/session");
+    state.user = result.user;
+    state.agent = result.agent;
     renderDashboard();
     await initialiseDashboard();
   } catch (error) {
-    renderLogin(error?.message || "Unable to initialise Well Support.");
+    if (error.status !== 401 && error.status !== 403) {
+      renderLogin("Unable to initialise Well Support.");
+    } else if (!document.querySelector(".auth-shell")) {
+      renderLogin();
+    }
   }
 }
 
