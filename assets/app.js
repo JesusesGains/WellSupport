@@ -2472,7 +2472,8 @@ function renderAnalyticsDashboard() {
             <div><strong>Traffic source</strong><span>Cloudflare Web Analytics aggregated RUM data</span></div>
             <div><strong>Engagement events</strong><span>First-party click, exit and UTM events only</span></div>
             <div><strong>Analytics cookies</strong><span>None</span></div>
-            <div><strong>Raw IP in analytics</strong><span>Not stored by the Well analytics event table</span></div>
+            <div><strong>Raw IP in analytics</strong><span>Not stored by the historical Well analytics event table</span></div>
+            <div><strong>Live visitor presence</strong><span>Current IP and page are held only in the private short-lived Visitors view</span></div>
             <div><strong>Privacy signals</strong><span>Global Privacy Control and Do Not Track are respected by first-party events</span></div>
             <div><strong>First-party retention</strong><span>Engagement events are deleted after 90 days</span></div>
             <div><strong>Support chat</strong><span>Tab-scoped sessionStorage until the tab closes or staff closes the chat</span></div>
