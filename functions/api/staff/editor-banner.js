@@ -89,48 +89,12 @@ export async function onRequestPost({ request, env }) {
   const session = await requireStaff(env, request);
   if (session.response) return session.response;
 
-  const input = await request.json().catch(() => ({}));
-  const target = input.target === "beta" ? BETA_BRANCH : MAIN_BRANCH;
-  const operation = input.operation === "delete" ? "delete" : "update";
-  const items = cleanItems(input.items);
-  const intervalMs = Math.max(
-    3200,
-    Math.min(12000, Number(input.intervalMs || 5200))
+  return sessionResponse(
+    {
+      error:
+        "Banner edits are a local draft. Publish beta preview from the top-right to create the beta-main commit/build."
+    },
+    session,
+    409
   );
-
-  try {
-    const current = await readOverrides(env, target);
-    const next = {
-      version: 2,
-      pages: { ...(current.data.pages || {}) },
-      banner: {
-        intervalMs,
-        items
-      }
-    };
-
-    const result = await writeOverrides(
-      env,
-      target,
-      next,
-      current.sha,
-      operation === "delete"
-        ? `Rolling banner: delete announcement (${target})`
-        : `Rolling banner: update settings (${target})`
-    );
-
-    return sessionResponse({
-      ok: true,
-      branch: target,
-      commitSha: result.commit?.sha || null,
-      banner: next.banner,
-      overrides: next
-    }, session);
-  } catch (error) {
-    return sessionResponse(
-      { error: error.message || "Unable to update announcement banner." },
-      session,
-      error.status || 500
-    );
-  }
 }

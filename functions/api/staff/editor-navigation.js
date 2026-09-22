@@ -147,110 +147,12 @@ export async function onRequestPost({ request, env }) {
   const session = await requireStaff(env, request);
   if (session.response) return session.response;
 
-  const input = await request.json().catch(() => ({}));
-
-  if (input.target && input.target !== "beta") {
-    return sessionResponse(
-      {
-        error:
-          "Header ordering is edited on beta-main first, then promoted through the normal preview workflow."
-      },
-      session,
-      400
-    );
-  }
-
-  let headerOrder;
-  let shortCourseGroupOrder;
-
-  try {
-    headerOrder = assertExactOrder(
-      input.headerOrder,
-      HEADER_KEYS,
-      "header"
-    );
-    shortCourseGroupOrder = assertExactOrder(
-      input.shortCourseGroupOrder,
-      SHORT_COURSE_GROUPS,
-      "Short Courses dropdown"
-    );
-  } catch (error) {
-    return sessionResponse(
-      { error: error.message || "Invalid navigation order." },
-      session,
-      error.status || 400
-    );
-  }
-
-  try {
-    const comparison = await compareBranches(env);
-    if (comparison.behindBy > 0) {
-      return sessionResponse(
-        {
-          error:
-            "beta-main is behind production. Update preview from the live site before editing navigation.",
-          code: "beta_behind"
-        },
-        session,
-        409
-      );
-    }
-
-    const file = await readTextFile(env, BETA_BRANCH, NAVIGATION_PATH);
-    const current = ordersFromSource(file.content);
-
-    if (
-      JSON.stringify(current.headerOrder) === JSON.stringify(headerOrder) &&
-      JSON.stringify(current.shortCourseGroupOrder) ===
-        JSON.stringify(shortCourseGroupOrder)
-    ) {
-      return sessionResponse(
-        {
-          ok: true,
-          branch: BETA_BRANCH,
-          commitSha: null,
-          headerOrder,
-          shortCourseGroupOrder
-        },
-        session
-      );
-    }
-
-    let nextSource = replaceExportedStringArray(
-      file.content,
-      "headerNavigationOrder",
-      headerOrder
-    );
-    nextSource = replaceExportedStringArray(
-      nextSource,
-      "shortCourseGroupOrder",
-      shortCourseGroupOrder
-    );
-
-    const result = await writeTextFile(
-      env,
-      BETA_BRANCH,
-      NAVIGATION_PATH,
-      nextSource,
-      file.sha,
-      "Web Editor: reorder header navigation"
-    );
-
-    return sessionResponse(
-      {
-        ok: true,
-        branch: BETA_BRANCH,
-        commitSha: result.commit?.sha || null,
-        headerOrder,
-        shortCourseGroupOrder
-      },
-      session
-    );
-  } catch (error) {
-    return sessionResponse(
-      { error: error.message || "Unable to update website navigation source." },
-      session,
-      error.status || 500
-    );
-  }
+  return sessionResponse(
+    {
+      error:
+        "Navigation edits are a local draft. Publish beta preview from the top-right to create the beta-main commit/build."
+    },
+    session,
+    409
+  );
 }

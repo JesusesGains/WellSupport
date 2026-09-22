@@ -213,6 +213,82 @@ export async function moveBranchForward(env, branch, sha) {
   );
 }
 
+export async function commitFiles(env, branch, files, message) {
+  const cleanFiles = Array.isArray(files)
+    ? files.filter((file) => file?.path && typeof file.content === "string")
+    : [];
+
+  if (!cleanFiles.length) {
+    const error = new Error("No files supplied for commit.");
+    error.status = 400;
+    throw error;
+  }
+
+  const branchInfo = await githubRequest(
+    env,
+    `/repos/${REPOSITORY}/branches/${encodeURIComponent(branch)}`
+  );
+  const parentSha = branchInfo.commit?.sha;
+  if (!parentSha) throw new Error("Unable to resolve branch head.");
+
+  const parentCommit = await githubRequest(
+    env,
+    `/repos/${REPOSITORY}/git/commits/${encodeURIComponent(parentSha)}`
+  );
+  const baseTree = parentCommit.tree?.sha;
+  if (!baseTree) throw new Error("Unable to resolve branch tree.");
+
+  const tree = [];
+  for (const file of cleanFiles) {
+    const blob = await githubRequest(env, `/repos/${REPOSITORY}/git/blobs`, {
+      method: "POST",
+      body: {
+        content: file.content,
+        encoding: file.encoding === "base64" ? "base64" : "utf-8"
+      }
+    });
+
+    tree.push({
+      path: file.path,
+      mode: "100644",
+      type: "blob",
+      sha: blob.sha
+    });
+  }
+
+  const nextTree = await githubRequest(env, `/repos/${REPOSITORY}/git/trees`, {
+    method: "POST",
+    body: {
+      base_tree: baseTree,
+      tree
+    }
+  });
+
+  const commit = await githubRequest(env, `/repos/${REPOSITORY}/git/commits`, {
+    method: "POST",
+    body: {
+      message,
+      tree: nextTree.sha,
+      parents: [parentSha]
+    }
+  });
+
+  await githubRequest(
+    env,
+    `/repos/${REPOSITORY}/git/refs/heads/${encodeURIComponent(branch)}`,
+    {
+      method: "PATCH",
+      body: { sha: commit.sha, force: false }
+    }
+  );
+
+  return {
+    sha: commit.sha,
+    parentSha,
+    treeSha: nextTree.sha
+  };
+}
+
 export {
   REPOSITORY,
   MAIN_BRANCH,
