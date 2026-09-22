@@ -1,12 +1,14 @@
 const MAX_MESSAGE_LENGTH = 4000;
 const DASHBOARD_VIEW_PATHS = {
   dashboard: "/dashboard",
+  visitors: "/visitors",
   messages: "/messages",
   editor: "/web-editor"
 };
 
 function dashboardViewFromPath(pathname = window.location.pathname) {
   const path = String(pathname || "/").replace(/\/+$/, "") || "/";
+  if (path === "/visitors") return "visitors";
   if (path === "/messages") return "messages";
   if (path === "/web-editor") return "editor";
   return "dashboard";
@@ -44,6 +46,10 @@ const state = {
   analyticsDays: 30,
   analyticsLoading: false,
   analyticsTimer: null,
+  visitors: [],
+  visitorsLoading: false,
+  visitorsTimer: null,
+  visitorsGeneratedAt: "",
   unreadCounts: new Map(),
   knownVisitorMessageIds: new Set(),
   visitorNames: new Map(),
@@ -668,6 +674,10 @@ function dashboardIcon() {
   return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h6v6H4zM14 4h6v4h-6zM14 12h6v8h-6zM4 14h6v6H4z"></path></svg>`;
 }
 
+function visitorsIcon() {
+  return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M22 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>`;
+}
+
 function editorIcon() {
   return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19.5V4.5A1.5 1.5 0 0 1 5.5 3h8.8L20 8.7v10.8A1.5 1.5 0 0 1 18.5 21h-13A1.5 1.5 0 0 1 4 19.5Z"></path><path d="M14 3v6h6"></path><path d="m8 16 5.8-5.8 2 2L10 18H8v-2Z"></path></svg>`;
 }
@@ -718,7 +728,7 @@ function updatePrimaryNavigation() {
 }
 
 function setDashboardView(view, { historyMode = "push" } = {}) {
-  const resolvedView = ["dashboard", "messages", "editor"].includes(view)
+  const resolvedView = ["dashboard", "visitors", "messages", "editor"].includes(view)
     ? view
     : "dashboard";
 
@@ -737,13 +747,31 @@ function setDashboardView(view, { historyMode = "push" } = {}) {
 
   const dashboard = document.querySelector("#dashboard");
   dashboard?.classList.toggle("is-dashboard", state.currentView === "dashboard");
+  dashboard?.classList.toggle("is-visitors", state.currentView === "visitors");
   dashboard?.classList.toggle("is-messages", state.currentView === "messages");
   dashboard?.classList.toggle("is-editor", state.currentView === "editor");
+
+  if (state.currentView !== "visitors" && state.visitorsTimer) {
+    window.clearInterval(state.visitorsTimer);
+    state.visitorsTimer = null;
+  }
 
   if (state.currentView === "dashboard") {
     dashboard?.classList.remove("has-selection");
     renderAnalyticsDashboard();
     if (!state.analytics && !state.analyticsLoading) loadAnalytics();
+    return;
+  }
+
+  if (state.currentView === "visitors") {
+    dashboard?.classList.remove("has-selection");
+    renderVisitorsPage();
+    loadVisitors({ silent: state.visitors.length > 0 });
+    if (!state.visitorsTimer) {
+      state.visitorsTimer = window.setInterval(() => {
+        if (state.currentView === "visitors") loadVisitors({ silent: true });
+      }, 10000);
+    }
     return;
   }
 
@@ -2578,6 +2606,166 @@ async function loadAnalytics({ silent = false } = {}) {
   }
 }
 
+function countryFlagEmoji(countryCode) {
+  const code = String(countryCode || "").trim().toUpperCase();
+  if (!/^[A-Z]{2}$/.test(code)) return "🌐";
+  return String.fromCodePoint(
+    ...[...code].map((letter) => 127397 + letter.charCodeAt(0))
+  );
+}
+
+function visitorLastSeenLabel(value) {
+  const timestamp = new Date(value).getTime();
+  if (!Number.isFinite(timestamp)) return "Active now";
+  const seconds = Math.max(0, Math.round((Date.now() - timestamp) / 1000));
+  if (seconds < 8) return "Active now";
+  if (seconds < 60) return `${seconds}s ago`;
+  return `${Math.max(1, Math.round(seconds / 60))}m ago`;
+}
+
+function visitorWebsiteUrl(path) {
+  const value = String(path || "/").trim();
+  try {
+    return new URL(value.startsWith("/") ? value : `/${value}`, "https://www.wellcollegeglobal.com").toString();
+  } catch {
+    return "https://www.wellcollegeglobal.com/";
+  }
+}
+
+function paintVisitors() {
+  if (state.currentView !== "visitors") return;
+
+  const count = document.querySelector("#visitors-count");
+  const badge = document.querySelector("#visitors-nav-badge");
+  const loading = document.querySelector("#visitors-loading");
+  const list = document.querySelector("#visitors-list");
+  const stamp = document.querySelector("#visitors-updated");
+
+  const total = state.visitors.length;
+  if (count) count.textContent = String(total);
+  if (badge) {
+    badge.textContent = total > 99 ? "99+" : String(total);
+    badge.hidden = total < 1;
+  }
+  if (loading) loading.hidden = !state.visitorsLoading;
+  if (stamp) {
+    stamp.textContent = state.visitorsGeneratedAt
+      ? `Updated ${visitorLastSeenLabel(state.visitorsGeneratedAt)}`
+      : "Live presence";
+  }
+  if (!list) return;
+
+  list.replaceChildren();
+
+  if (!total && !state.visitorsLoading) {
+    const empty = document.createElement("div");
+    empty.className = "visitors-empty";
+    empty.innerHTML = `
+      <span class="visitors-empty-icon">${visitorsIcon()}</span>
+      <strong>No active visitors right now</strong>
+      <p>Visitors appear here while they are actively browsing the Well College Global website.</p>
+    `;
+    list.appendChild(empty);
+    return;
+  }
+
+  for (const visitor of state.visitors) {
+    const row = document.createElement("article");
+    row.className = "visitor-live-row";
+
+    const location = [visitor.city, visitor.region, visitor.country]
+      .filter(Boolean)
+      .join(", ") || visitor.country || "Unknown location";
+
+    const page = String(visitor.pagePath || "/");
+    const device = String(visitor.device || "unknown");
+    const width = Number(visitor.viewportWidth || 0);
+
+    row.innerHTML = `
+      <div class="visitor-live-country">
+        <span class="visitor-live-flag" aria-hidden="true">${countryFlagEmoji(visitor.countryCode)}</span>
+        <div>
+          <strong>${escapeEditorAttribute(visitor.country || "Unknown")}</strong>
+          <span>${escapeEditorAttribute(location)}</span>
+        </div>
+      </div>
+      <div class="visitor-live-ip">
+        <span>IP address</span>
+        <code>${escapeEditorAttribute(visitor.ip || "Unavailable")}</code>
+      </div>
+      <a class="visitor-live-page" href="${escapeEditorAttribute(visitorWebsiteUrl(page))}" target="_blank" rel="noopener noreferrer">
+        <span>Current page</span>
+        <strong>${escapeEditorAttribute(visitor.pageTitle || page)}</strong>
+        <small>${escapeEditorAttribute(page)} ↗</small>
+      </a>
+      <div class="visitor-live-device">
+        <span>Device</span>
+        <strong>${escapeEditorAttribute(device.replace(/^./, (letter) => letter.toUpperCase()))}</strong>
+        <small>${width ? `${width}px viewport` : "Viewport unavailable"}</small>
+      </div>
+      <div class="visitor-live-seen">
+        <i aria-hidden="true"></i>
+        <strong>${escapeEditorAttribute(visitorLastSeenLabel(visitor.lastSeen))}</strong>
+      </div>
+    `;
+
+    list.appendChild(row);
+  }
+}
+
+function renderVisitorsPage() {
+  const panel = document.querySelector("#chat-panel");
+  if (!panel) return;
+
+  panel.className = "chat-panel visitors-panel";
+  panel.innerHTML = `
+    <div class="visitors-view">
+      <header class="visitors-header">
+        <div>
+          <div class="eyebrow"><i aria-hidden="true"></i> Live website presence</div>
+          <div class="visitors-title-row">
+            <h1>Visitors</h1>
+            <span id="visitors-count" class="visitors-count">0</span>
+          </div>
+          <p>People currently browsing Well College Global. Presence refreshes automatically and drops off shortly after a visitor leaves.</p>
+        </div>
+        <div class="visitors-header-actions">
+          <span id="visitors-updated">Live presence</span>
+          <button id="visitors-refresh" type="button">Refresh</button>
+        </div>
+      </header>
+      <div id="visitors-loading" class="visitors-loading" hidden>Refreshing active visitors…</div>
+      <section id="visitors-list" class="visitors-list" aria-live="polite"></section>
+      <p class="visitors-privacy-note">IP addresses are used only for this short-lived active-presence view and are not written into the historical analytics event table.</p>
+    </div>
+  `;
+
+  document.querySelector("#visitors-refresh")?.addEventListener("click", () => {
+    loadVisitors();
+  });
+
+  paintVisitors();
+}
+
+async function loadVisitors({ silent = false } = {}) {
+  if (state.visitorsLoading) return;
+  state.visitorsLoading = true;
+  if (!silent) paintVisitors();
+
+  try {
+    const result = await apiRequest("/visitors");
+    state.visitors = Array.isArray(result.visitors) ? result.visitors : [];
+    state.visitorsGeneratedAt = result.generatedAt || new Date().toISOString();
+  } catch (error) {
+    if (error.status !== 401 && error.status !== 403 && !silent) {
+      showToast(error?.message || "Unable to load active visitors.", "error");
+    }
+  } finally {
+    state.visitorsLoading = false;
+    paintVisitors();
+  }
+}
+
 function renderDashboard() {
   app.innerHTML = `
     <main id="dashboard" class="dashboard is-${state.currentView}">
@@ -2664,6 +2852,11 @@ function renderDashboard() {
           <button class="nav-button is-active" type="button" data-dashboard-view="dashboard">
             ${dashboardIcon()}
             <span>Dashboard</span>
+          </button>
+          <button class="nav-button" type="button" data-dashboard-view="visitors">
+            ${visitorsIcon()}
+            <span>Visitors</span>
+            <b id="visitors-nav-badge" class="nav-badge" hidden>0</b>
           </button>
           <button class="nav-button" type="button" data-dashboard-view="messages">
             ${inboxIcon()}
