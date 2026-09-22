@@ -2110,7 +2110,7 @@ function renderWebEditor() {
                           <div class="editor-asset-actions">
                             <button type="button" data-editor-asset-copy="${escapeEditorAttribute(asset.url || asset.publicUrl)}">Copy link</button>
                             ${state.editorSelectedObject?.tag === "img"
-                              ? `<button type="button" data-editor-asset-use="${escapeEditorAttribute(asset.url || asset.publicUrl)}">Use</button>`
+                              ? `<button type="button" data-editor-asset-use="/${escapeEditorAttribute(asset.path)}">Use</button>`
                               : ""}
                           </div>
                         </article>
