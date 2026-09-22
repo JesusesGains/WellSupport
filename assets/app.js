@@ -63,6 +63,7 @@ const state = {
   editorDraftKey: "",
   editorTextDrafts: {},
   editorAttributeDrafts: {},
+  editorStyleDrafts: {},
   editorAccentDraft: "",
   editorFontDraft: "",
   editorHeadingDraft: "",
@@ -1003,6 +1004,19 @@ function cloneEditorAttributeDrafts(value) {
   );
 }
 
+function cloneEditorStyleDrafts(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value).map(([selector, styles]) => [
+      selector,
+      styles && typeof styles === "object" && !Array.isArray(styles)
+        ? { ...styles }
+        : {}
+    ])
+  );
+}
+
+
 function editorDraftFromConfig(config = {}) {
   return {
     heading: String(config.heading || ""),
@@ -1013,7 +1027,8 @@ function editorDraftFromConfig(config = {}) {
       config.text && typeof config.text === "object" && !Array.isArray(config.text)
         ? { ...config.text }
         : {},
-    attributes: cloneEditorAttributeDrafts(config.attributes)
+    attributes: cloneEditorAttributeDrafts(config.attributes),
+    styles: cloneEditorStyleDrafts(config.styles)
   };
 }
 
@@ -1024,7 +1039,8 @@ function currentEditorDraftSnapshot() {
     accent: state.editorAccentDraft || "",
     font: state.editorFontDraft || "",
     text: { ...state.editorTextDrafts },
-    attributes: cloneEditorAttributeDrafts(state.editorAttributeDrafts)
+    attributes: cloneEditorAttributeDrafts(state.editorAttributeDrafts),
+    styles: cloneEditorStyleDrafts(state.editorStyleDrafts)
   };
 }
 
@@ -1036,6 +1052,7 @@ function applyEditorDraftSnapshot(snapshot = {}) {
   state.editorFontDraft = draft.font;
   state.editorTextDrafts = draft.text;
   state.editorAttributeDrafts = draft.attributes;
+  state.editorStyleDrafts = draft.styles;
 }
 
 function storeCurrentEditorDraft() {
@@ -2447,6 +2464,8 @@ function renderWebEditor() {
     font: state.editorFontDraft || "",
     text: { ...state.editorTextDrafts },
     attributes: cloneEditorAttributeDrafts(state.editorAttributeDrafts),
+    styles: cloneEditorStyleDrafts(state.editorStyleDrafts),
+    linkDestinations: EDITOR_LINK_DESTINATIONS.map(([href, label]) => ({ href, label })),
     headerOrder: [...state.editorNavigationHeaderOrder],
     shortCourseGroupOrder: [...state.editorNavigationGroupOrder],
     layoutOrders: Object.fromEntries(
@@ -2818,6 +2837,69 @@ function renderWebEditor() {
             : {}
       };
       renderSelectedItem();
+      return;
+    }
+
+    if (event.data.type === "WCG_EDITOR_ATTRIBUTE_CHANGE" && editable) {
+      const selector = String(event.data.selector || "");
+      const field = String(event.data.field || "");
+      const value = String(event.data.value || "").slice(0, 2000);
+      if (!selector || !["src", "alt", "href"].includes(field)) return;
+
+      recordEditorHistory();
+      state.editorAttributeDrafts = {
+        ...state.editorAttributeDrafts,
+        [selector]: {
+          ...(state.editorAttributeDrafts[selector] || {}),
+          [field]: value
+        }
+      };
+      storeCurrentEditorDraft();
+      state.editorDirty = editorPendingChangeCount() > 0;
+
+      const publish = document.querySelector("#web-editor-preview-submit");
+      if (publish) publish.disabled = false;
+      return;
+    }
+
+    if (event.data.type === "WCG_EDITOR_STYLE_CHANGE" && editable) {
+      const selector = String(event.data.selector || "");
+      const styles =
+        event.data.styles &&
+        typeof event.data.styles === "object" &&
+        !Array.isArray(event.data.styles)
+          ? event.data.styles
+          : {};
+      if (!selector) return;
+
+      const allowed = new Set([
+        "backgroundColor",
+        "color",
+        "minHeight",
+        "paddingTop",
+        "paddingBottom",
+        "borderRadius"
+      ]);
+      const nextStyles = {};
+      for (const [name, value] of Object.entries(styles)) {
+        if (!allowed.has(name)) continue;
+        nextStyles[name] = String(value || "").slice(0, 40);
+      }
+      if (!Object.keys(nextStyles).length) return;
+
+      recordEditorHistory();
+      state.editorStyleDrafts = {
+        ...state.editorStyleDrafts,
+        [selector]: {
+          ...(state.editorStyleDrafts[selector] || {}),
+          ...nextStyles
+        }
+      };
+      storeCurrentEditorDraft();
+      state.editorDirty = editorPendingChangeCount() > 0;
+
+      const publish = document.querySelector("#web-editor-preview-submit");
+      if (publish) publish.disabled = false;
       return;
     }
 
@@ -3196,6 +3278,7 @@ function renderWebEditor() {
     if (
       Object.keys(state.editorTextDrafts || {}).length ||
       Object.keys(state.editorAttributeDrafts || {}).length ||
+      Object.keys(state.editorStyleDrafts || {}).length ||
       state.editorHeadingDraft ||
       state.editorCopyDraft ||
       state.editorAccentDraft ||
