@@ -879,8 +879,8 @@ async function publishEditorBanner() {
   if (button) {
     button.disabled = true;
     button.textContent = state.editorBannerTarget === "production"
-      ? "Publishing…"
-      : "Saving…";
+      ? "Committing…"
+      : "Committing…";
   }
 
   try {
@@ -903,15 +903,17 @@ async function publishEditorBanner() {
     state.editorBannerKey = "";
     showToast(
       state.editorBannerTarget === "production"
-        ? "Announcement banner published to production. Cloudflare deployment is starting."
-        : "Announcement banner saved to beta-main."
+        ? `Rolling banner committed to WellWebsite/main${result.commitSha ? ` · ${result.commitSha.slice(0, 7)}` : ""}. Cloudflare deployment is starting.`
+        : `Rolling banner committed to WellWebsite/beta-main${result.commitSha ? ` · ${result.commitSha.slice(0, 7)}` : ""}.`
     );
     await loadWebEditorStatus({ quiet: true });
   } catch (error) {
-    showToast(error?.message || "Unable to publish announcement banner.", "error");
+    showToast(error?.message || "Unable to commit the rolling banner.", "error");
     if (button) {
       button.disabled = false;
-      button.textContent = "Publish banner";
+      button.textContent = state.editorBannerTarget === "production"
+        ? "Commit to production"
+        : "Commit to beta-main";
     }
   }
 }
@@ -1160,13 +1162,13 @@ function renderWebEditor() {
 
             <section class="editor-inspector-section editor-banner-section">
               <div class="editor-inspector-heading">
-                <span>Header banner</span>
-                <small>Schedule announcements</small>
+                <span>Rolling banner</span>
+                <small>Rotate & schedule announcements</small>
               </div>
 
               <div class="editor-banner-toolbar">
                 <label>
-                  <span>Publish to</span>
+                  <span>Commit to</span>
                   <select id="editor-banner-target">
                     <option value="production" ${state.editorBannerTarget === "production" ? "selected" : ""}>Production</option>
                     <option value="beta" ${state.editorBannerTarget === "beta" ? "selected" : ""}>Beta</option>
@@ -1244,13 +1246,13 @@ function renderWebEditor() {
               <div class="editor-banner-actions">
                 <button id="editor-banner-add" type="button">+ Add announcement</button>
                 <button id="editor-banner-save" class="is-primary" type="button" ${connected && state.editorBannerDirty ? "" : "disabled"}>
-                  ${state.editorBannerTarget === "production" ? "Publish banner" : "Save to beta"}
+                  ${state.editorBannerTarget === "production" ? "Commit to production" : "Commit to beta-main"}
                 </button>
               </div>
               <small class="editor-banner-note">
                 ${state.editorBannerTarget === "production"
-                  ? "Production changes commit directly to main and appear after Cloudflare deploys the commit."
-                  : "Beta changes stay on beta-main until promoted."}
+                  ? "Creates a GitHub commit directly on WellWebsite/main. Cloudflare deploys that production commit."
+                  : "Creates a GitHub commit on WellWebsite/beta-main until you promote it."}
               </small>
             </section>
 
