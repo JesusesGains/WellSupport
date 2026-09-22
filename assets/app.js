@@ -247,6 +247,28 @@ function visitorSourceUrl(conversation) {
   }
 }
 
+function simplifiedVisitorPage(conversation) {
+  const raw = String(conversation?.page_path || "/").trim();
+
+  try {
+    const parsed = /^https:\/\//i.test(raw)
+      ? new URL(raw)
+      : new URL(
+          raw.startsWith("/") ? raw : `/${raw}`,
+          "https://www.wellcollegeglobal.com"
+        );
+
+    let path = parsed.pathname || "/";
+    path = path.replace(/\/index\.html$/i, "/");
+    path = path.replace(/\.html$/i, "");
+    path = path.replace(/\/+$/, "") || "/";
+
+    return path === "/" ? "/home" : path;
+  } catch {
+    return "/home";
+  }
+}
+
 
 function decodeVisitorMessage(message) {
   const body = String(message?.body || "");
@@ -3352,6 +3374,10 @@ function renderConversationList() {
   if (waitingCount) waitingCount.textContent = String(waiting.length);
   if (allCount) allCount.textContent = String(assigned.length);
 
+  const waitingTab = document.querySelector('[data-message-section="waiting"]');
+  waitingTab?.classList.toggle("has-waiting", waiting.length > 0);
+  waitingCount?.classList.toggle("has-waiting", waiting.length > 0);
+
   document.querySelectorAll("[data-message-section]").forEach((item) => {
     item.classList.toggle(
       "is-active",
@@ -3411,6 +3437,10 @@ function renderConversationList() {
     button.classList.toggle("is-selected", state.selectedId === conversation.id);
     button.classList.toggle("is-unread", isUnread);
     button.classList.toggle(
+      "is-waiting",
+      conversation.status === "open" && !conversation.joined_agent_id
+    );
+    button.classList.toggle(
       "is-other-staff",
       Boolean(conversation.joined_agent_id && !conversationIsMine(conversation))
     );
@@ -3450,7 +3480,7 @@ function renderConversationList() {
 
     const path = document.createElement("span");
     path.className = "conversation-path";
-    path.textContent = conversation.page_path || "Website";
+    path.textContent = `Current page: ${simplifiedVisitorPage(conversation)}`;
     meta.appendChild(path);
 
     if (conversation.joined_agent_id) {
@@ -3726,10 +3756,10 @@ function renderChatShell() {
   if (visitorNameElement) visitorNameElement.textContent = currentVisitorName;
   if (visitorAvatar) visitorAvatar.textContent = initials(currentVisitorName);
   if (sourcePathElement) {
-    sourcePathElement.textContent =
-      conversation.page_path || "Well College Global website";
+    const simplifiedPage = simplifiedVisitorPage(conversation);
+    sourcePathElement.textContent = `Current page: ${simplifiedPage}`;
     sourcePathElement.href = visitorSourceUrl(conversation);
-    sourcePathElement.title = `Open ${sourcePathElement.textContent}`;
+    sourcePathElement.title = `Open ${simplifiedPage}`;
   }
   document.querySelector("#visitor-location").textContent = location;
   document.querySelector("#visitor-context-meta").textContent =
@@ -3737,11 +3767,13 @@ function renderChatShell() {
 
   const ownerChip = document.querySelector("#chat-owner-chip");
   if (ownerChip) {
+    const waiting = !conversation.joined_agent_id;
     ownerChip.textContent = mine
       ? "Your chat"
       : assignedToOther
         ? `${owner?.display_name || "Staff"} is handling`
         : "Waiting";
+    ownerChip.classList.toggle("is-waiting", waiting);
   }
 
   if (assignedToOther) {
