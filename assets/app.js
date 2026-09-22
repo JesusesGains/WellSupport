@@ -73,6 +73,8 @@ const state = {
   editorPickedColour: "",
   editorDevice: "desktop",
   editorMessageHandler: null,
+  editorPreviewResizeObserver: null,
+  editorPreviewResizeHandler: null,
   editorPendingPages: {},
   editorHistory: [],
   editorFuture: [],
@@ -1773,6 +1775,13 @@ function renderWebEditor() {
   const panel = document.querySelector("#chat-panel");
   if (!panel) return;
 
+  state.editorPreviewResizeObserver?.disconnect?.();
+  state.editorPreviewResizeObserver = null;
+  if (state.editorPreviewResizeHandler) {
+    window.removeEventListener("resize", state.editorPreviewResizeHandler);
+    state.editorPreviewResizeHandler = null;
+  }
+
   const productionPreviewOrigin = "https://wellwebsite.pages.dev";
   const betaPreviewOrigin = "https://beta-main.wellwebsite.pages.dev";
   const publicOrigin = "https://www.wellcollegeglobal.com";
@@ -1928,7 +1937,22 @@ function renderWebEditor() {
               </select>
             </section>
 
-            <section class="editor-inspector-section editor-navigation-section">
+            <section class="editor-inspector-section editor-visual-editor-info">
+              <div class="editor-inspector-heading">
+                <span>Visual editor</span>
+                <small>Edits happen on the page</small>
+              </div>
+              <div class="editor-visual-info-card">
+                <strong>Click directly in the preview</strong>
+                <span>Text, links, images and sections open controls beside the item you clicked. Drag supported sections and cards directly on the page. The sidebar now stays focused on page status, assets and publishing.</span>
+              </div>
+              <div class="editor-visual-info-status">
+                <span><i></i> Draft changes stay local</span>
+                <span><i></i> Publish beta preview creates the build</span>
+              </div>
+            </section>
+
+            <section class="editor-inspector-section editor-navigation-section editor-legacy-edit-controls">
               <div class="editor-inspector-heading">
                 <span>Header navigation</span>
                 <small>Live draft · no commit yet</small>
@@ -1979,7 +2003,7 @@ function renderWebEditor() {
               >${state.editorNavigationDirty ? "Staged · publish top right" : "No unpublished navigation changes"}</button>
             </section>
 
-            <section class="editor-inspector-section editor-layout-section">
+            <section class="editor-inspector-section editor-layout-section editor-legacy-edit-controls">
               <div class="editor-inspector-heading">
                 <span>Move sections &amp; containers</span>
                 <small>Live draft</small>
@@ -1990,7 +2014,7 @@ function renderWebEditor() {
               </div>
             </section>
 
-            <section class="editor-inspector-section editor-banner-section">
+            <section class="editor-inspector-section editor-banner-section editor-legacy-edit-controls">
               <div class="editor-inspector-heading">
                 <span>Rolling banner</span>
                 <small>${state.editorMode === "production" ? "Live website" : "Preview website"}</small>
@@ -2119,7 +2143,7 @@ function renderWebEditor() {
               </small>
             </section>
 
-            <section class="editor-inspector-section editor-selection-section">
+            <section class="editor-inspector-section editor-selection-section editor-legacy-edit-controls">
               <div class="editor-inspector-heading">
                 <span>Selected item</span>
                 <small>Click text, an image or a link</small>
@@ -2134,7 +2158,7 @@ function renderWebEditor() {
               </div>
             </section>
 
-            <section class="editor-inspector-section">
+            <section class="editor-inspector-section editor-legacy-edit-controls">
               <div class="editor-inspector-heading">
                 <span>Page colours</span>
                 <small id="editor-colour-count">${state.editorColours.length ? `${state.editorColours.length} found` : "Finding colours…"}</small>
@@ -2142,7 +2166,7 @@ function renderWebEditor() {
               <div id="editor-colour-swatches" class="editor-colour-swatches"></div>
             </section>
 
-            <section class="editor-inspector-section">
+            <section class="editor-inspector-section editor-legacy-edit-controls">
               <div class="editor-inspector-heading">
                 <span>Pick a colour</span>
                 <small>Sample any colour on screen</small>
@@ -2253,7 +2277,7 @@ function renderWebEditor() {
             </div>
 
             <div class="editor-live-help">
-              ${editable ? "Hover and click anything you want to change" : "Live website preview · view only"}
+              ${editable ? "Click an item to edit it directly on the page · drag blue-handled sections to move them" : "Live website preview · view only"}
             </div>
           </div>
 
@@ -2327,6 +2351,7 @@ function renderWebEditor() {
   const pageSelect = document.querySelector("#web-editor-page");
   const frame = document.querySelector("#web-editor-frame");
   const browser = document.querySelector("#web-editor-browser");
+  const previewCanvas = document.querySelector(".editor-preview-placeholder.is-fullscreen");
   const openPage = document.querySelector("#web-editor-open-page");
   const previewPath = document.querySelector("#web-editor-preview-path");
   const browserUrl = document.querySelector("#web-editor-browser-url");
@@ -2365,11 +2390,13 @@ function renderWebEditor() {
     window.setTimeout(() => loadEditorAssets({ quiet: true }), 0);
   }
 
-  // Draft editing should not depend on a Cloudflare beta deployment being
-  // available. Use the current production build as the in-browser canvas,
-  // then apply beta/draft overrides over it with postMessage. The beta URL is
-  // reserved for the deployed review step after changes are pushed.
-  const frameOrigin = () => productionPreviewOrigin;
+  // Use the actual deployed branch as the editing canvas so the visual editor
+  // matches the exact code users will review. Local drafts are still applied
+  // in-memory and do not publish until the top-right beta publish action.
+  const frameOrigin = () =>
+    state.editorMode === "beta"
+      ? betaPreviewOrigin
+      : productionPreviewOrigin;
 
   const reviewOrigin = () =>
     state.editorMode === "beta"
@@ -2387,6 +2414,30 @@ function renderWebEditor() {
     url.searchParams.set("wcgEditor", "1");
     if (cacheBust) url.searchParams.set("_preview", String(Date.now()));
     return url.toString();
+  };
+
+  const previewViewportForDevice = () => {
+    if (state.editorDevice === "mobile") return { width: 390, minHeight: 844 };
+    if (state.editorDevice === "tablet") return { width: 820, minHeight: 1024 };
+    return { width: 1440, minHeight: 900 };
+  };
+
+  const syncPreviewViewport = () => {
+    if (!browser || !previewCanvas) return;
+
+    const viewport = previewViewportForDevice();
+    const availableWidth = Math.max(280, previewCanvas.clientWidth - 24);
+    const availableHeight = Math.max(420, previewCanvas.clientHeight - 24);
+    const scale = Math.min(1, availableWidth / viewport.width);
+    const sourceHeight = Math.max(
+      viewport.minHeight,
+      Math.round(availableHeight / Math.max(scale, 0.1))
+    );
+
+    browser.style.width = `${viewport.width}px`;
+    browser.style.height = `${sourceHeight}px`;
+    browser.style.setProperty("--editor-preview-scale", String(scale));
+    browser.dataset.sourceWidth = String(viewport.width);
   };
 
   const draftPayload = () => ({
@@ -2636,6 +2687,15 @@ function renderWebEditor() {
     if (browserUrl) browserUrl.textContent = display;
     if (reload && frame) frame.src = iframeUrl(cacheBust);
   };
+
+  syncPreviewViewport();
+  if (previewCanvas && typeof ResizeObserver !== "undefined") {
+    state.editorPreviewResizeObserver = new ResizeObserver(syncPreviewViewport);
+    state.editorPreviewResizeObserver.observe(previewCanvas);
+  } else {
+    state.editorPreviewResizeHandler = syncPreviewViewport;
+    window.addEventListener("resize", syncPreviewViewport, { passive: true });
+  }
 
   if (state.editorMessageHandler) {
     window.removeEventListener("message", state.editorMessageHandler);
