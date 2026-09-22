@@ -5051,9 +5051,42 @@ body.has-support-confirm-modal {
 
 .editor-banner-toolbar {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) 112px;
   gap: 8px;
   margin-bottom: 10px;
+}
+
+.editor-banner-toolbar.is-current-branch {
+  align-items: end;
+}
+
+.editor-banner-branch {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+
+.editor-banner-branch > span {
+  color: #8f9692;
+  font-size: .49rem;
+  font-weight: 800;
+  letter-spacing: .055em;
+  text-transform: uppercase;
+}
+
+.editor-banner-branch > strong {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  padding: 0 9px;
+  border: 1px solid var(--wcg-line);
+  border-radius: 9px;
+  color: var(--wcg-navy);
+  background: #fff;
+  font-size: .55rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .editor-banner-toolbar label,
@@ -5101,43 +5134,133 @@ body.has-support-confirm-modal {
 
 .editor-banner-card {
   display: grid;
-  gap: 9px;
-  padding: 11px;
+  overflow: hidden;
   border: 1px solid rgba(48,70,96,.09);
   border-radius: 12px;
-  background: #f8faf9;
+  background: #fff;
+  transition: border-color 160ms ease, box-shadow 160ms ease, background 160ms ease;
+}
+
+.editor-banner-card:hover,
+.editor-banner-card.is-open {
+  border-color: rgba(48,70,96,.17);
+  box-shadow: 0 6px 20px rgba(48,70,96,.045);
 }
 
 .editor-banner-card-head {
   display: grid;
-  grid-template-columns: minmax(0,1fr) auto auto;
+  grid-template-columns: minmax(0,1fr) auto;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
+  padding: 7px;
 }
 
-.editor-banner-card-head > strong {
+.editor-banner-card-toggle {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  grid-template-columns: 28px minmax(0,1fr) auto;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 7px;
+  border: 0;
+  border-radius: 9px;
+  color: inherit;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.editor-banner-card-toggle:hover {
+  background: #f7f9f8;
+}
+
+.editor-banner-card-colour {
+  width: 28px;
+  height: 28px;
+  border: 1px solid rgba(48,70,96,.12);
+  border-radius: 8px;
+  background: var(--banner-preview);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.12);
+}
+
+.editor-banner-card-summary {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.editor-banner-card-summary strong,
+.editor-banner-card-summary small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editor-banner-card-summary strong {
   color: var(--wcg-navy);
   font-size: .58rem;
 }
 
-.editor-banner-card-head > button {
+.editor-banner-card-summary small {
+  color: #999f9c;
+  font-size: .48rem;
+}
+
+.editor-banner-card-chevron {
+  color: #9ba19e;
+  font-size: .72rem;
+  transition: transform 170ms ease;
+}
+
+.editor-banner-card.is-open .editor-banner-card-chevron {
+  transform: rotate(180deg);
+}
+
+.editor-banner-delete {
   display: grid;
-  width: 24px;
-  height: 24px;
+  width: 30px;
+  height: 30px;
   place-items: center;
   padding: 0;
-  border: 0;
-  border-radius: 7px;
-  color: #929995;
-  background: transparent;
-  font: inherit;
-  font-size: .9rem;
+  border: 1px solid rgba(170,73,65,.13);
+  border-radius: 9px;
+  color: #aa4941;
+  background: rgba(170,73,65,.045);
   cursor: pointer;
 }
 
-.editor-banner-card-head > button:hover {
+.editor-banner-delete svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.editor-banner-delete:hover {
   color: #fff;
-  background: #a46058;
+  border-color: #aa4941;
+  background: #aa4941;
+}
+
+.editor-banner-card-body {
+  display: none;
+  gap: 9px;
+  padding: 3px 11px 11px;
+  border-top: 1px solid rgba(48,70,96,.07);
+  background: #f8faf9;
+}
+
+.editor-banner-card.is-open .editor-banner-card-body {
+  display: grid;
+  animation: editor-banner-expand 170ms cubic-bezier(.22,1,.36,1) both;
+}
+
+.editor-banner-card-body > .editor-banner-enabled {
+  margin: 7px 0 1px;
 }
 
 .editor-banner-enabled {
@@ -5340,4 +5463,15 @@ body.has-support-confirm-modal {
 
 .visitor-avatar {
   border-radius: 50% !important;
+}
+
+@keyframes editor-banner-expand {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
