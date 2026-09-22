@@ -658,6 +658,133 @@ function editorPageConfig(mode, path) {
   return source?.pages?.[path] || {};
 }
 
+const DEFAULT_EDITOR_BANNERS = [
+  {
+    id: "clarity-session",
+    message: "Not sure where to begin?",
+    cta: "Book a free clarity session",
+    href: "session-bookings.html",
+    background: "#304660",
+    foreground: "#FFFEFA",
+    startsAt: "",
+    endsAt: "",
+    enabled: true
+  },
+  {
+    id: "live-events",
+    message: "Join a free live Pathways to Health Coaching session",
+    cta: "View upcoming events",
+    href: "free-coaching-webinar-series.html",
+    background: "#42514C",
+    foreground: "#FFFEFA",
+    startsAt: "",
+    endsAt: "",
+    enabled: true
+  }
+];
+
+function escapeEditorAttribute(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
+function editorBannerSource(target = state.editorBannerTarget) {
+  const source =
+    target === "beta"
+      ? state.editorStatus?.beta?.overrides
+      : state.editorStatus?.main?.overrides;
+
+  const banner =
+    source?.banner && typeof source.banner === "object"
+      ? source.banner
+      : null;
+
+  return {
+    intervalMs: Number(banner?.intervalMs || 5200),
+    items: Array.isArray(banner?.items)
+      ? banner.items.map((item) => ({ ...item }))
+      : DEFAULT_EDITOR_BANNERS.map((item) => ({ ...item }))
+  };
+}
+
+function editorDateTimeLocal(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+
+  const pad = (number) => String(number).padStart(2, "0");
+  return [
+    date.getFullYear(),
+    "-",
+    pad(date.getMonth() + 1),
+    "-",
+    pad(date.getDate()),
+    "T",
+    pad(date.getHours()),
+    ":",
+    pad(date.getMinutes())
+  ].join("");
+}
+
+function newEditorBannerItem() {
+  return {
+    id: `banner-${Date.now().toString(36)}`,
+    message: "New announcement",
+    cta: "Learn more",
+    href: "",
+    background: "#304660",
+    foreground: "#FFFEFA",
+    startsAt: "",
+    endsAt: "",
+    enabled: true
+  };
+}
+
+async function publishEditorBanner() {
+  const button = document.querySelector("#editor-banner-save");
+  if (button) {
+    button.disabled = true;
+    button.textContent = state.editorBannerTarget === "production"
+      ? "Publishing…"
+      : "Saving…";
+  }
+
+  try {
+    const result = await apiRequest("/editor-banner", {
+      method: "POST",
+      body: {
+        target: state.editorBannerTarget === "beta" ? "beta" : "production",
+        intervalMs: state.editorBannerInterval,
+        items: state.editorBannerItems
+      }
+    });
+
+    const branch = state.editorBannerTarget === "beta" ? "beta" : "main";
+    if (state.editorStatus?.[branch]) {
+      state.editorStatus[branch].overrides = result.overrides;
+      if (result.commitSha) state.editorStatus[branch].sha = result.commitSha;
+    }
+
+    state.editorBannerDirty = false;
+    state.editorBannerKey = "";
+    showToast(
+      state.editorBannerTarget === "production"
+        ? "Announcement banner published to production. Cloudflare deployment is starting."
+        : "Announcement banner saved to beta-main."
+    );
+    await loadWebEditorStatus({ quiet: true });
+  } catch (error) {
+    showToast(error?.message || "Unable to publish announcement banner.", "error");
+    if (button) {
+      button.disabled = false;
+      button.textContent = "Publish banner";
+    }
+  }
+}
+
 function editorBranchSummary() {
   const comparison = state.editorStatus?.comparison;
   if (!state.editorStatus?.connected || !comparison) {
