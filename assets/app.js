@@ -2582,6 +2582,19 @@ async function loadInbox({ silent = false } = {}) {
       : [];
 
     state.conversations = result.conversations || [];
+
+    const activeConversationIds = new Set(
+      state.conversations.map((conversation) => conversation.id)
+    );
+    let removedVisitorOverride = false;
+    for (const conversationId of state.visitorNameOverrides.keys()) {
+      if (!activeConversationIds.has(conversationId)) {
+        state.visitorNameOverrides.delete(conversationId);
+        removedVisitorOverride = true;
+      }
+    }
+    if (removedVisitorOverride) saveVisitorNameOverrides();
+
     state.agents = new Map(
       (result.agents || []).map((agent) => [agent.user_id, agent])
     );
@@ -2664,7 +2677,7 @@ async function loadInbox({ silent = false } = {}) {
         const isNewChat = !previousIds.has(conversationId);
         showDesktopChatNotification(
           isNewChat ? "New website chat" : "New support message",
-          newest?.body || "A visitor sent a message.",
+          newest ? visibleMessageBody(newest) : "A visitor sent a message.",
           conversationId
         );
       }
