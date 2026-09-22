@@ -88,6 +88,8 @@ const state = {
   editorNavigationGroupOrder: [],
   editorNavigationDirty: false,
   editorNavigationLoading: false,
+  editorNavigationSaving: false,
+  editorNavigationSaveQueued: false,
   editorNavigationDrag: null,
   supportPagePickerSection: ""
 };
@@ -1428,6 +1430,22 @@ const EDITOR_HEADER_NAV_LABELS = {
   more: "More"
 };
 
+const EDITOR_SHORT_COURSE_GROUPS = [
+  "Nutrition & health",
+  "Holistic health",
+  "Psychology & coaching",
+  "Business"
+];
+
+function sameStringSet(value, allowed) {
+  if (!Array.isArray(value) || value.length !== allowed.length) return false;
+  const clean = value.map((item) => String(item || ""));
+  const unique = new Set(clean);
+  return unique.size === allowed.length &&
+    allowed.every((item) => unique.has(item));
+}
+
+
 async function loadEditorNavigation({ quiet = false } = {}) {
   if (state.editorNavigationLoading || !state.editorStatus?.connected) return;
 
@@ -1460,7 +1478,7 @@ async function loadEditorNavigation({ quiet = false } = {}) {
   }
 }
 
-async function saveEditorNavigationOrder() {
+async function saveEditorNavigationOrder({ automatic = false } = {}) {
   if (
     state.editorMode !== "beta" ||
     !state.editorStatus?.connected ||
@@ -1469,10 +1487,29 @@ async function saveEditorNavigationOrder() {
     return;
   }
 
+  if (state.editorNavigationSaving) {
+    state.editorNavigationSaveQueued = true;
+    return;
+  }
+
+  const headerOrder = [...state.editorNavigationHeaderOrder];
+  const shortCourseGroupOrder = [...state.editorNavigationGroupOrder];
+
+  if (
+    !sameStringSet(headerOrder, Object.keys(EDITOR_HEADER_NAV_LABELS)) ||
+    !sameStringSet(shortCourseGroupOrder, EDITOR_SHORT_COURSE_GROUPS)
+  ) {
+    showToast("Navigation order is incomplete. Refresh the editor and try again.", "error");
+    return;
+  }
+
+  state.editorNavigationSaving = true;
+  state.editorNavigationSaveQueued = false;
+
   const button = document.querySelector("#editor-navigation-save");
   if (button) {
     button.disabled = true;
-    button.textContent = "Saving source…";
+    button.textContent = automatic ? "Auto-saving…" : "Saving source…";
   }
 
   try {
@@ -1480,23 +1517,37 @@ async function saveEditorNavigationOrder() {
       method: "POST",
       body: {
         target: "beta",
-        headerOrder: [...state.editorNavigationHeaderOrder],
-        shortCourseGroupOrder: [...state.editorNavigationGroupOrder]
+        headerOrder,
+        shortCourseGroupOrder
       }
     });
 
-    state.editorNavigationHeaderOrder = [...result.headerOrder];
-    state.editorNavigationGroupOrder = [...result.shortCourseGroupOrder];
-    state.editorNavigationDirty = false;
+    const stillMatches =
+      JSON.stringify(state.editorNavigationHeaderOrder) ===
+        JSON.stringify(headerOrder) &&
+      JSON.stringify(state.editorNavigationGroupOrder) ===
+        JSON.stringify(shortCourseGroupOrder);
+
+    if (stillMatches) {
+      state.editorNavigationHeaderOrder = [...result.headerOrder];
+      state.editorNavigationGroupOrder = [...result.shortCourseGroupOrder];
+      state.editorNavigationDirty = false;
+    }
 
     showToast(
-      "Header order saved directly to website source code on beta-main."
+      automatic
+        ? "Header order auto-saved to beta-main."
+        : "Header order saved directly to website source code on beta-main."
     );
 
     await loadWebEditorStatus({ quiet: true });
-    state.editorNavigationTarget = "";
-    await loadEditorNavigation({ quiet: true });
+
+    if (!state.editorNavigationDirty) {
+      state.editorNavigationTarget = "";
+      await loadEditorNavigation({ quiet: true });
+    }
   } catch (error) {
+    state.editorNavigationDirty = true;
     showToast(
       error?.message || "Unable to save header navigation source.",
       "error"
@@ -1504,6 +1555,16 @@ async function saveEditorNavigationOrder() {
     if (button) {
       button.disabled = false;
       button.textContent = "Save header order to beta";
+    }
+  } finally {
+    state.editorNavigationSaving = false;
+
+    if (state.editorNavigationSaveQueued || state.editorNavigationDirty) {
+      state.editorNavigationSaveQueued = false;
+      window.setTimeout(
+        () => saveEditorNavigationOrder({ automatic: true }),
+        120
+      );
     }
   }
 }
@@ -1572,7 +1633,15 @@ function bindEditorNavigationSortable(list, orderKey, editable) {
     state.editorNavigationDirty = true;
 
     const save = document.querySelector("#editor-navigation-save");
-    if (save) save.disabled = false;
+    if (save) {
+      save.disabled = true;
+      save.textContent = "Auto-saving…";
+    }
+
+    window.setTimeout(
+      () => saveEditorNavigationOrder({ automatic: true }),
+      0
+    );
   };
 
   list.addEventListener("drop", (event) => {
@@ -1749,13 +1818,13 @@ function renderWebEditor() {
 
               <div class="editor-source-edit-note">
                 <strong>Edits website code</strong>
-                <span>This rewrites the existing order in <code>src/data/navigation.js</code> on <b>beta-main</b>. It does not add CSS layers or DOM overlays.</span>
+                <span>Drag items here or drag them literally inside the website preview. The preview reflows immediately and the canonical order in <code>src/data/navigation.js</code> is auto-saved to <b>beta-main</b>. No CSS layers or DOM overlays are stacked.</span>
               </div>
 
               <div class="editor-nav-order-group">
                 <div class="editor-nav-order-heading">
                   <strong>Header sections</strong>
-                  <span>Desktop and mobile use the same order</span>
+                  <span>Drag here or directly in the live preview · desktop and mobile stay in sync</span>
                 </div>
                 <div id="editor-header-order-list" class="editor-nav-order-list">
                   ${state.editorNavigationHeaderOrder.length
@@ -1773,7 +1842,7 @@ function renderWebEditor() {
               <div class="editor-nav-order-group">
                 <div class="editor-nav-order-heading">
                   <strong>Short Courses dropdown sections</strong>
-                  <span>Drag the dropdown columns into the order you want</span>
+                  <span>Open Short Courses in the preview and drag the dropdown columns directly</span>
                 </div>
                 <div id="editor-short-course-order-list" class="editor-nav-order-list">
                   ${state.editorNavigationGroupOrder.length
@@ -1789,7 +1858,7 @@ function renderWebEditor() {
                 class="editor-source-save"
                 type="button"
                 ${editable && state.editorNavigationDirty ? "" : "disabled"}
-              >Save header order to beta</button>
+              >${state.editorNavigationSaving ? "Auto-saving…" : state.editorNavigationDirty ? "Save now" : "Saved automatically"}</button>
             </section>
 
             <section class="editor-inspector-section editor-banner-section">
@@ -2140,6 +2209,8 @@ function renderWebEditor() {
     font: state.editorFontDraft || "",
     text: { ...state.editorTextDrafts },
     attributes: cloneEditorAttributeDrafts(state.editorAttributeDrafts),
+    headerOrder: [...state.editorNavigationHeaderOrder],
+    shortCourseGroupOrder: [...state.editorNavigationGroupOrder],
     editable
   });
 
@@ -2390,6 +2461,60 @@ function renderWebEditor() {
       return;
     }
 
+    if (event.data.type === "WCG_EDITOR_NAVIGATION_ORDER" && editable) {
+      const kind = String(event.data.kind || "");
+      const order = Array.isArray(event.data.order)
+        ? event.data.order.map((item) => String(item || ""))
+        : [];
+
+      if (
+        kind === "header" &&
+        sameStringSet(order, Object.keys(EDITOR_HEADER_NAV_LABELS))
+      ) {
+        state.editorNavigationHeaderOrder = [...order];
+      } else if (
+        kind === "groups" &&
+        sameStringSet(order, EDITOR_SHORT_COURSE_GROUPS)
+      ) {
+        state.editorNavigationGroupOrder = [...order];
+      } else {
+        return;
+      }
+
+      state.editorNavigationDirty = true;
+
+      const list =
+        kind === "header"
+          ? document.querySelector("#editor-header-order-list")
+          : document.querySelector("#editor-short-course-order-list");
+
+      if (list) {
+        const nodes = new Map(
+          [...list.querySelectorAll("[data-editor-nav-key]")].map((node) => [
+            String(node.dataset.editorNavKey || ""),
+            node
+          ])
+        );
+        for (const key of order) {
+          const node = nodes.get(key);
+          if (node) list.appendChild(node);
+        }
+      }
+
+      const save = document.querySelector("#editor-navigation-save");
+      if (save) {
+        save.disabled = true;
+        save.textContent = "Auto-saving…";
+      }
+
+      postDraft();
+      window.setTimeout(
+        () => saveEditorNavigationOrder({ automatic: true }),
+        0
+      );
+      return;
+    }
+
     if (event.data.type === "WCG_EDITOR_TEXT_SELECTED") {
       state.editorSelectedObject = null;
       state.editorSelectedText = {
@@ -2470,6 +2595,8 @@ function renderWebEditor() {
       state.editorNavigationHeaderOrder = [];
       state.editorNavigationGroupOrder = [];
       state.editorNavigationDirty = false;
+      state.editorNavigationSaving = false;
+      state.editorNavigationSaveQueued = false;
       state.editorNavigationDrag = null;
       renderWebEditor();
     });
@@ -2497,7 +2624,7 @@ function renderWebEditor() {
     editable
   );
   document.querySelector("#editor-navigation-save")
-    ?.addEventListener("click", saveEditorNavigationOrder);
+    ?.addEventListener("click", () => saveEditorNavigationOrder());
 
     bannerInterval?.addEventListener("change", () => {
     state.editorBannerInterval = Number(bannerInterval.value || 5200);
