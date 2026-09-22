@@ -82,7 +82,8 @@ const state = {
   editorBannerDirty: false,
   editorBannerKey: "",
   editorBannerOpenId: "",
-  editorBannerPendingDeleteIndex: null
+  editorBannerPendingDeleteIndex: null,
+  supportPagePickerSection: ""
 };
 
 function configured() {
@@ -168,7 +169,113 @@ function formatDay(value) {
 }
 
 const VISITOR_NAME_PREFIX = "[[WCG_VISITOR_NAME_V1:";
+const SUPPORT_PAGE_LINK_PREFIX = "[[WCG_PAGE_LINK_V1:";
 const VISITOR_NAME_OVERRIDE_KEY = "well-support:visitor-name-overrides";
+
+const SUPPORT_PAGE_CATALOG = {
+  qualifications: {
+    label: "Qualifications",
+    description: "Professional qualification pages",
+    items: [
+      ["Diploma in Nutrition & Health Coaching", "/diploma-in-nutrition-and-health-coaching.html"],
+      ["Women’s Health & Wellness Coach Certification", "/womens-health-and-wellness-coach-certification.html"],
+      ["ICF Course", "/icf-certified-coaching-professional-program.html"],
+      ["Diploma in Coaching for Lifestyle & Wellbeing", "/diploma-lifestyle-coaching.html"],
+      ["Bio Optimise Holistic Wellness Practitioner", "/holisticwellnesspractitioner.html"],
+      ["Ultimate Triple Qualification", "/the-ultimate-triple-qualification.html"],
+      ["Wellness Coaching for Professionals", "/wellness-coaching-for-professionals.html"],
+      ["Professional Certificate in Meal Planning", "/professional-certificate-in-meal-planning.html"],
+      ["Coach Gap Training", "/coach-gap-training.html"],
+      ["ELCAS Approved Courses", "/elcas-approved-provider.html"],
+      ["Accreditation, Registration & Insurance", "/accreditation-registration--insurance-options.html"],
+      ["Study Pathways", "/study-pathways.html"],
+      ["Vedic Wellness Studies", "/vedicwellnessstudies.html"]
+    ]
+  },
+  shortCourses: {
+    label: "Short courses",
+    description: "Focused study and free learning",
+    items: [
+      ["Human Nutrition", "/human-nutrition.html", "Nutrition & health"],
+      ["Biomarker & Functional Tests", "/biomarkers.html", "Nutrition & health"],
+      ["Ayurvedic Lifestyle", "/ayurvedic-lifestyle.html", "Nutrition & health"],
+      ["Sports Nutrition for Optimal Performance", "/sports-nutrition-for-optimal-performance.html", "Nutrition & health"],
+      ["Nutrition for Conception, Pregnancy & Lactation", "/pregnancynutrition.html", "Nutrition & health"],
+      ["Early Childhood Nutrition", "/early-childhood-nutrition.html", "Nutrition & health"],
+      ["Gut & Microbiome", "/gut--microbiome-online-course.html", "Nutrition & health"],
+      ["Botanical Healing", "/botanical-healing.html", "Nutrition & health"],
+      ["Meal Planning for Healthy Living", "/meal-planning-for-healthy-living.html", "Nutrition & health"],
+      ["Non-Diet Approach", "/non-diet-approach.html", "Nutrition & health"],
+      ["Nutrition Psychology", "/nutrition-psychology.html", "Nutrition & health"],
+      ["Super Nutrition", "/super-nutrition.html", "Nutrition & health"],
+      ["Women’s Health & Hormones", "/womens-health-and-hormones.html", "Nutrition & health"],
+      ["Weight Management Nutrition", "/weight-management-nutrition.html", "Nutrition & health"],
+      ["Integrative Wellness Techniques", "/integrative-wellness-techniques.html", "Holistic health"],
+      ["Coaching Clients Holistically", "/coaching-clients-holistically.html", "Holistic health"],
+      ["Introduction to Holistic Wellness", "/holistic_wellness_intro.html", "Holistic health"],
+      ["Mental Health & Trauma Awareness", "/mental-health--trauma-awareness.html", "Psychology & coaching"],
+      ["Wellbeing Management & Coaching Practices", "/wellbeing-management-and-coaching-practices.html", "Psychology & coaching"],
+      ["Cultivating Confidence", "/cultivating-confidence.html", "Psychology & coaching"],
+      ["Psychology & Wellbeing Foundations", "/psychology-and-wellbeing-foundations.html", "Psychology & coaching"],
+      ["Coach Supervision & Mentoring", "/coaching-supervision-and-mentoring.html", "Psychology & coaching"],
+      ["Coaching Practicum", "/coaching-practicum.html", "Business & practice"],
+      ["Motivational Techniques", "/motivational-techniques.html", "Business & practice"],
+      ["Creating Healthy Lifestyle Courses & Programs", "/creating-healthy-lifestyle-courses-and-programs.html", "Business & practice"],
+      ["Grow Your Coaching Business", "/grow-your-coaching-business.html", "Business & practice"],
+      ["Professional Practice & Business Ready Workshops", "/professional-practice-and-business-ready-workshops.html", "Business & practice"],
+      ["Continuing Education Courses", "/continuing-ed-courses.html", "More learning"],
+      ["Free Courses & Samplers", "/free-courses.html", "Free learning"],
+      ["Pathways to Health Coaching", "/pathways-to-health-coaching.html", "Free learning"],
+      ["Free Coaching Webinar Series", "/free-coaching-webinar-series.html", "Free learning"]
+    ]
+  },
+  more: {
+    label: "More",
+    description: "Helpful website pages",
+    items: [
+      ["Home", "/"],
+      ["About us", "/about.html"],
+      ["Testimonials", "/testimonials.html"],
+      ["Contact", "/contact.html"],
+      ["FAQs", "/faqs.html"],
+      ["Book a Free Clarity Session", "/session-bookings.html"],
+      ["Enrol & Pay", "/enrol.html"],
+      ["Well Collective Blog", "/well-collective-blog.html"],
+      ["Find a Health Coach", "/find-a-coach.html"],
+      ["Qualifications", "/qualifications.html"],
+      ["Short Courses", "/short-courses.html"]
+    ]
+  }
+};
+
+function encodeSupportPageLink(label, path) {
+  const cleanLabel = String(label || "").trim().slice(0, 140);
+  const cleanPath = String(path || "").trim().slice(0, 500);
+  return `${SUPPORT_PAGE_LINK_PREFIX}${encodeURIComponent(cleanLabel)}:${encodeURIComponent(cleanPath)}]]`;
+}
+
+function decodeSupportPageLink(body) {
+  const value = String(body || "").trim();
+  if (!value.startsWith(SUPPORT_PAGE_LINK_PREFIX) || !value.endsWith("]]")) {
+    return null;
+  }
+
+  const payload = value.slice(SUPPORT_PAGE_LINK_PREFIX.length, -2);
+  const separator = payload.indexOf(":");
+  if (separator <= 0) return null;
+
+  try {
+    const label = decodeURIComponent(payload.slice(0, separator)).trim().slice(0, 140);
+    const path = decodeURIComponent(payload.slice(separator + 1)).trim().slice(0, 500);
+    if (!label || !/^\/[a-z0-9._~!const VISITOR_NAME_PREFIX = "[[WCG_VISITOR_NAME_V1:";
+const VISITOR_NAME_OVERRIDE_KEY = "well-support:visitor-name-overrides";
+'()*+,;=:@%/?#-]*$/i.test(path)) return null;
+    return { label, path };
+  } catch {
+    return null;
+  }
+}
+
 
 function cleanVisitorDisplayName(value) {
   return String(value || "")
@@ -340,7 +447,9 @@ function visitorName(conversation) {
 }
 
 function visibleMessageBody(message) {
-  return decodeVisitorMessage(message).body;
+  const body = decodeVisitorMessage(message).body;
+  const pageLink = decodeSupportPageLink(body);
+  return pageLink ? `Shared page: ${pageLink.label}` : body;
 }
 
 function refreshCurrentVisitorIdentity() {
@@ -4066,9 +4175,33 @@ function renderMessages({ forceBottom = false } = {}) {
 
     meta.append(sender, time);
 
-    const body = document.createElement("p");
-    body.className = "message-body";
-    body.textContent = visibleMessageBody(message);
+    const pageLink = decodeSupportPageLink(
+      decodeVisitorMessage(message).body
+    );
+
+    const body = pageLink
+      ? document.createElement("a")
+      : document.createElement("p");
+
+    body.className = pageLink
+      ? "message-page-link"
+      : "message-body";
+
+    if (pageLink) {
+      body.href = new URL(
+        pageLink.path,
+        "https://www.wellcollegeglobal.com"
+      ).toString();
+      body.target = "_blank";
+      body.rel = "noopener noreferrer";
+      body.innerHTML = `
+        <span>Shared page</span>
+        <strong>${escapeEditorAttribute(pageLink.label)}</strong>
+        <i aria-hidden="true">↗</i>
+      `;
+    } else {
+      body.textContent = visibleMessageBody(message);
+    }
 
     bubble.append(meta, body);
 
@@ -4130,6 +4263,112 @@ function renderMessages({ forceBottom = false } = {}) {
   }
 }
 
+function closeSupportPagePicker() {
+  state.supportPagePickerSection = "";
+  const picker = document.querySelector("#support-page-picker");
+  const button = document.querySelector("#support-page-picker-button");
+  if (picker) {
+    picker.hidden = true;
+    picker.replaceChildren();
+  }
+  button?.setAttribute("aria-expanded", "false");
+}
+
+function renderSupportPagePicker(section = "") {
+  const picker = document.querySelector("#support-page-picker");
+  const button = document.querySelector("#support-page-picker-button");
+  if (!picker || !button) return;
+
+  state.supportPagePickerSection = section;
+  picker.hidden = false;
+  button.setAttribute("aria-expanded", "true");
+
+  if (!section || !SUPPORT_PAGE_CATALOG[section]) {
+    picker.innerHTML = `
+      <div class="support-page-picker-head">
+        <div>
+          <strong>Share a page</strong>
+          <span>Choose what you want to send</span>
+        </div>
+        <button type="button" data-page-picker-close aria-label="Close page picker">×</button>
+      </div>
+      <div class="support-page-picker-groups">
+        ${Object.entries(SUPPORT_PAGE_CATALOG).map(([key, group]) => `
+          <button type="button" class="support-page-picker-group" data-page-picker-section="${key}">
+            <span>
+              <strong>${escapeEditorAttribute(group.label)}</strong>
+              <small>${escapeEditorAttribute(group.description)}</small>
+            </span>
+            <i aria-hidden="true">→</i>
+          </button>
+        `).join("")}
+      </div>
+    `;
+  } else {
+    const group = SUPPORT_PAGE_CATALOG[section];
+    const groupedItems = group.items.reduce((map, item) => {
+      const label = item[0];
+      const path = item[1];
+      const subgroup = item[2] || "";
+      if (!map.has(subgroup)) map.set(subgroup, []);
+      map.get(subgroup).push({ label, path });
+      return map;
+    }, new Map());
+
+    picker.innerHTML = `
+      <div class="support-page-picker-head">
+        <button type="button" class="support-page-picker-back" data-page-picker-back aria-label="Back">←</button>
+        <div>
+          <strong>${escapeEditorAttribute(group.label)}</strong>
+          <span>Click a page to send it</span>
+        </div>
+        <button type="button" data-page-picker-close aria-label="Close page picker">×</button>
+      </div>
+      <div class="support-page-picker-pages">
+        ${[...groupedItems.entries()].map(([subgroup, items]) => `
+          ${subgroup ? `<div class="support-page-picker-subheading">${escapeEditorAttribute(subgroup)}</div>` : ""}
+          ${items.map((item) => `
+            <button
+              type="button"
+              class="support-page-picker-page"
+              data-page-label="${escapeEditorAttribute(item.label)}"
+              data-page-path="${escapeEditorAttribute(item.path)}"
+            >
+              <span>${escapeEditorAttribute(item.label)}</span>
+              <i aria-hidden="true">↗</i>
+            </button>
+          `).join("")}
+        `).join("")}
+      </div>
+    `;
+  }
+
+  picker.querySelector("[data-page-picker-close]")?.addEventListener(
+    "click",
+    closeSupportPagePicker
+  );
+
+  picker.querySelector("[data-page-picker-back]")?.addEventListener(
+    "click",
+    () => renderSupportPagePicker("")
+  );
+
+  picker.querySelectorAll("[data-page-picker-section]").forEach((item) => {
+    item.addEventListener("click", () => {
+      renderSupportPagePicker(item.dataset.pagePickerSection || "");
+    });
+  });
+
+  picker.querySelectorAll("[data-page-path]").forEach((item) => {
+    item.addEventListener("click", () => {
+      sendSupportPageLink(
+        item.dataset.pageLabel || "Website page",
+        item.dataset.pagePath || "/"
+      );
+    });
+  });
+}
+
 function renderComposer() {
   const slot = document.querySelector("#composer-slot");
   const conversation = currentConversation();
@@ -4157,7 +4396,18 @@ function renderComposer() {
 
   slot.innerHTML = `
     <form id="composer-form" class="composer">
+      <div id="support-page-picker" class="support-page-picker" hidden></div>
+
       <div class="composer-inner">
+        <button
+          id="support-page-picker-button"
+          class="composer-add-button"
+          type="button"
+          aria-label="Share a website page"
+          title="Share a website page"
+          aria-expanded="false"
+        >+</button>
+
         <textarea
           id="message-input"
           rows="1"
@@ -4165,12 +4415,14 @@ function renderComposer() {
           placeholder="Reply as Well College Global…"
           aria-label="Support reply"
         ></textarea>
+
         <button id="send-button" class="send-button" type="submit" disabled aria-label="Send reply">
           ${sendIcon()}
         </button>
       </div>
+
       <div class="composer-note">
-        <span>Enter to send · Shift + Enter for a new line</span>
+        <span>+ Share a page · Enter to send · Shift + Enter for a new line</span>
         <span>Powered by <strong>Well College Global</strong></span>
       </div>
     </form>
@@ -4192,6 +4444,21 @@ function renderComposer() {
       form?.requestSubmit();
     }
   });
+
+  document.querySelector("#support-page-picker-button")?.addEventListener(
+    "click",
+    (event) => {
+      event.stopPropagation();
+      const picker = document.querySelector("#support-page-picker");
+      if (!picker) return;
+
+      if (!picker.hidden) {
+        closeSupportPagePicker();
+      } else {
+        renderSupportPagePicker("");
+      }
+    }
+  );
 
   form?.addEventListener("submit", sendReply);
 }
@@ -4315,6 +4582,35 @@ function retryStaffMessage(message) {
   message._sendError = "";
   renderMessages({ forceBottom: true });
   deliverStaffMessage(message);
+}
+
+function sendSupportPageLink(label, path) {
+  const conversation = currentConversation();
+
+  if (
+    !conversation ||
+    conversation.status !== "open" ||
+    !state.user ||
+    !conversationIsMine(conversation)
+  ) {
+    return;
+  }
+
+  const body = encodeSupportPageLink(label, path);
+  const clientMessageId = crypto.randomUUID();
+  const optimistic = optimisticStaffMessage(
+    conversation,
+    body,
+    clientMessageId
+  );
+
+  state.messages.push(optimistic);
+  state.lastMessages.set(conversation.id, optimistic);
+  closeSupportPagePicker();
+
+  renderMessages({ forceBottom: true });
+  renderConversationList();
+  deliverStaffMessage(optimistic);
 }
 
 function sendReply(event) {
