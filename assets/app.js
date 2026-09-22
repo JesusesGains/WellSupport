@@ -292,6 +292,20 @@ function visibleMessageBody(message) {
   return decodeVisitorMessage(message).body;
 }
 
+function refreshCurrentVisitorIdentity() {
+  const conversation = currentConversation();
+  if (!conversation) return;
+
+  const name = visitorName(conversation);
+  const nameElement = document.querySelector("#chat-visitor-name");
+  const avatar = document.querySelector("#chat-visitor-avatar");
+
+  if (nameElement && !nameElement.hasAttribute("contenteditable")) {
+    nameElement.textContent = name;
+  }
+  if (avatar) avatar.textContent = initials(name);
+}
+
 function visitorLocation(conversation) {
   const parts = [
     conversation?.visitor_city,
@@ -2581,6 +2595,8 @@ async function loadInbox({ silent = false } = {}) {
       }
     }
 
+    refreshCurrentVisitorIdentity();
+
     if (!state.notificationsReady) {
       state.notificationsReady = true;
     } else if (silent && newVisitorMessages.length) {
@@ -3791,6 +3807,7 @@ function appendMessage(message) {
   }
 
   renderConversationList();
+  refreshCurrentVisitorIdentity();
 }
 
 function openCloseChatConfirm() {
