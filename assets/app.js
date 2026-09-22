@@ -2054,8 +2054,8 @@ function renderWebEditor() {
 
     if (count) {
       count.textContent = colours.length
-        ? `${colours.length} detected`
-        : "No colours detected";
+        ? `${colours.length} found`
+        : "No colours found";
     }
 
     for (const colour of colours) {
@@ -2128,12 +2128,27 @@ function renderWebEditor() {
     }
 
     if (event.data.type === "WCG_EDITOR_TEXT_SELECTED") {
+      state.editorSelectedObject = null;
       state.editorSelectedText = {
         selector: String(event.data.selector || ""),
         text: String(event.data.text || ""),
         tag: String(event.data.tag || "")
       };
-      renderSelectedText();
+      renderSelectedItem();
+      return;
+    }
+
+    if (event.data.type === "WCG_EDITOR_OBJECT_SELECTED") {
+      state.editorSelectedText = null;
+      state.editorSelectedObject = {
+        selector: String(event.data.selector || ""),
+        tag: String(event.data.tag || ""),
+        attributes:
+          event.data.attributes && typeof event.data.attributes === "object"
+            ? { ...event.data.attributes }
+            : {}
+      };
+      renderSelectedItem();
       return;
     }
 
@@ -2142,17 +2157,20 @@ function renderWebEditor() {
       const text = String(event.data.text || "").slice(0, 4000);
       if (!selector) return;
 
+      recordEditorHistory();
+
       state.editorTextDrafts = {
         ...state.editorTextDrafts,
         [selector]: text
       };
+      state.editorSelectedObject = null;
       state.editorSelectedText = {
         selector,
         text,
         tag: String(event.data.tag || "")
       };
       setDirty();
-      renderSelectedText();
+      renderSelectedItem();
     }
   };
 
@@ -2175,10 +2193,12 @@ function renderWebEditor() {
 
       if (next === state.editorMode) return;
       state.editorMode = next;
-      state.editorDirty = false;
+      state.editorDirty =
+        next === "beta" && editorPendingChangeCount() > 0;
       state.editorDraftKey = "";
       state.editorColours = [];
       state.editorSelectedText = null;
+      state.editorSelectedObject = null;
       state.editorBannerTarget = next === "production" ? "production" : "beta";
       state.editorBannerDirty = false;
       state.editorBannerKey = "";
@@ -2189,10 +2209,12 @@ function renderWebEditor() {
 
   pageSelect?.addEventListener("change", () => {
     state.editorPage = pageSelect.value || "/";
-    state.editorDirty = false;
+    state.editorDirty =
+      state.editorMode === "beta" && editorPendingChangeCount() > 0;
     state.editorDraftKey = "";
     state.editorColours = [];
     state.editorSelectedText = null;
+    state.editorSelectedObject = null;
     renderWebEditor();
   });
 
@@ -2364,6 +2386,7 @@ function renderWebEditor() {
 
   applyPickedAccent?.addEventListener("click", () => {
     if (!editable || !/^#[0-9A-F]{6}$/i.test(state.editorPickedColour)) return;
+    recordEditorHistory();
     state.editorAccentDraft = state.editorPickedColour.toUpperCase();
     setDirty();
     postDraft();
