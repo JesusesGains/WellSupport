@@ -16,6 +16,8 @@ const ALLOWED_FONTS = new Set([
   "System Sans"
 ]);
 
+const ALLOWED_ATTRIBUTES = new Set(["src", "alt", "href"]);
+
 function cleanText(value, max) {
   return String(value || "").trim().slice(0, max);
 }
@@ -56,6 +58,151 @@ function cleanTextOverrides(value) {
   return output;
 }
 
+function cleanResourceValue(value, attribute) {
+  const raw = String(value || "")
+    .replace(/[\u0000-\u001f\u007f]/g, "")
+    .trim()
+    .slice(0, 2000);
+
+  if (!raw) return "";
+
+  if (attribute === "alt") {
+    return raw.slice(0, 500);
+  }
+
+  if (
+    raw.startsWith("/") ||
+    /^[a-z0-9][a-z0-9._~!$&'()*+,;=:@%/?#-]*$/i.test(raw)
+  ) {
+    return raw;
+  }
+
+  try {
+    const url = new URL(raw);
+    if (url.protocol === "https:") return url.toString();
+    if (attribute === "href" && ["mailto:", "tel:"].includes(url.protocol)) {
+      return raw;
+    }
+  } catch {
+    return "";
+  }
+
+  return "";
+}
+
+function cleanAttributeOverrides(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+
+  const output = {};
+  let totalLength = 0;
+
+  for (const [rawSelector, rawAttributes] of Object.entries(value).slice(0, 80)) {
+    const selector = cleanSelector(rawSelector);
+    if (
+      !selector ||
+      !rawAttributes ||
+      typeof rawAttributes !== "object" ||
+      Array.isArray(rawAttributes)
+    ) {
+      continue;
+    }
+
+    const attributes = {};
+    for (const [rawName, rawValue] of Object.entries(rawAttributes)) {
+      const name = String(rawName || "").toLowerCase();
+      if (!ALLOWED_ATTRIBUTES.has(name) || typeof rawValue !== "string") continue;
+
+      const cleaned = cleanResourceValue(rawValue, name);
+      totalLength += cleaned.length;
+      if (totalLength > 40000) break;
+      attributes[name] = cleaned;
+    }
+
+    if (Object.keys(attributes).length) output[selector] = attributes;
+    if (totalLength > 40000) break;
+  }
+
+  return output;
+}
+
+function normalisePagePatch(raw) {
+  const input = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+  const heading = cleanText(input.heading, 300);
+  const copy = cleanText(input.copy, 1800);
+  const accent = cleanText(input.accent, 16);
+  const font = cleanText(input.font, 40);
+  const text = cleanTextOverrides(input.text);
+  const attributes = cleanAttributeOverrides(input.attributes);
+
+  if (accent && !/^#[0-9a-f]{6}$/i.test(accent)) {
+    const error = new Error("Invalid accent colour.");
+    error.status = 400;
+    throw error;
+  }
+
+  if (font && !ALLOWED_FONTS.has(font)) {
+    const error = new Error("Invalid heading font.");
+    error.status = 400;
+    throw error;
+  }
+
+  return {
+    heading,
+    copy,
+    accent,
+    font,
+    text,
+    attributes,
+    supplied: {
+      heading: Object.prototype.hasOwnProperty.call(input, "heading"),
+      copy: Object.prototype.hasOwnProperty.call(input, "copy"),
+      accent: Object.prototype.hasOwnProperty.call(input, "accent"),
+      font: Object.prototype.hasOwnProperty.call(input, "font"),
+      text: Object.prototype.hasOwnProperty.call(input, "text"),
+      attributes: Object.prototype.hasOwnProperty.call(input, "attributes")
+    }
+  };
+}
+
+function applyPagePatch(existing, patch) {
+  const config = { ...(existing || {}) };
+
+  if (patch.supplied.heading) {
+    if (patch.heading) config.heading = patch.heading;
+    else delete config.heading;
+  }
+
+  if (patch.supplied.copy) {
+    if (patch.copy) config.copy = patch.copy;
+    else delete config.copy;
+  }
+
+  if (patch.supplied.accent) {
+    if (patch.accent && patch.accent.toLowerCase() !== "#304660") {
+      config.accent = patch.accent;
+    } else {
+      delete config.accent;
+    }
+  }
+
+  if (patch.supplied.font) {
+    if (patch.font && patch.font !== "DM Serif Display") config.font = patch.font;
+    else delete config.font;
+  }
+
+  if (patch.supplied.text) {
+    if (Object.keys(patch.text).length) config.text = patch.text;
+    else delete config.text;
+  }
+
+  if (patch.supplied.attributes) {
+    if (Object.keys(patch.attributes).length) config.attributes = patch.attributes;
+    else delete config.attributes;
+  }
+
+  return config;
+}
+
 export async function onRequestPost({ request, env }) {
   const blocked = assertSameOrigin(request);
   if (blocked) return blocked;
@@ -64,23 +211,31 @@ export async function onRequestPost({ request, env }) {
   if (session.response) return session.response;
 
   const input = await request.json().catch(() => ({}));
-  const pagePath = cleanPath(input.pagePath);
-  const heading = cleanText(input.heading, 300);
-  const copy = cleanText(input.copy, 1800);
-  const accent = cleanText(input.accent, 16);
-  const font = cleanText(input.font, 40);
-  const textOverrides = cleanTextOverrides(input.text);
 
-  if (!pagePath) {
-    return sessionResponse({ error: "Invalid website page." }, session, 400);
+  const rawPages =
+    input.pages && typeof input.pages === "object" && !Array.isArray(input.pages)
+      ? Object.entries(input.pages).slice(0, 25)
+      : [[input.pagePath, input]];
+
+  const pagePatches = [];
+  try {
+    for (const [rawPath, rawPatch] of rawPages) {
+      const path = cleanPath(rawPath);
+      if (!path) {
+        return sessionResponse({ error: "Invalid website page." }, session, 400);
+      }
+      pagePatches.push([path, normalisePagePatch(rawPatch)]);
+    }
+  } catch (error) {
+    return sessionResponse(
+      { error: error.message || "Invalid editor change." },
+      session,
+      error.status || 400
+    );
   }
 
-  if (accent && !/^#[0-9a-f]{6}$/i.test(accent)) {
-    return sessionResponse({ error: "Invalid accent colour." }, session, 400);
-  }
-
-  if (font && !ALLOWED_FONTS.has(font)) {
-    return sessionResponse({ error: "Invalid heading font." }, session, 400);
+  if (!pagePatches.length) {
+    return sessionResponse({ error: "No website changes supplied." }, session, 400);
   }
 
   try {
@@ -104,41 +259,16 @@ export async function onRequestPost({ request, env }) {
       ...(current.data.banner ? { banner: current.data.banner } : {})
     };
 
-    const existing =
-      next.pages[pagePath] && typeof next.pages[pagePath] === "object"
-        ? next.pages[pagePath]
-        : {};
-    const config = { ...existing };
+    for (const [pagePath, patch] of pagePatches) {
+      const existing =
+        next.pages[pagePath] && typeof next.pages[pagePath] === "object"
+          ? next.pages[pagePath]
+          : {};
 
-    if (Object.prototype.hasOwnProperty.call(input, "heading")) {
-      if (heading) config.heading = heading;
-      else delete config.heading;
-    }
+      const config = applyPagePatch(existing, patch);
 
-    if (Object.prototype.hasOwnProperty.call(input, "copy")) {
-      if (copy) config.copy = copy;
-      else delete config.copy;
-    }
-
-    if (Object.prototype.hasOwnProperty.call(input, "accent")) {
-      if (accent && accent.toLowerCase() !== "#304660") config.accent = accent;
-      else delete config.accent;
-    }
-
-    if (Object.prototype.hasOwnProperty.call(input, "font")) {
-      if (font && font !== "DM Serif Display") config.font = font;
-      else delete config.font;
-    }
-
-    if (Object.prototype.hasOwnProperty.call(input, "text")) {
-      if (Object.keys(textOverrides).length) config.text = textOverrides;
-      else delete config.text;
-    }
-
-    if (Object.keys(config).length) {
-      next.pages[pagePath] = config;
-    } else {
-      delete next.pages[pagePath];
+      if (Object.keys(config).length) next.pages[pagePath] = config;
+      else delete next.pages[pagePath];
     }
 
     const result = await writeOverrides(
@@ -146,13 +276,16 @@ export async function onRequestPost({ request, env }) {
       BETA_BRANCH,
       next,
       current.sha,
-      `Web Editor: update ${pagePath}`
+      pagePatches.length === 1
+        ? `Web Editor: update ${pagePatches[0][0]}`
+        : `Web Editor: push ${pagePatches.length} page changes to beta`
     );
 
     return sessionResponse({
       ok: true,
       branch: BETA_BRANCH,
       commitSha: result.commit?.sha || null,
+      pagesUpdated: pagePatches.map(([path]) => path),
       overrides: next
     }, session);
   } catch (error) {
