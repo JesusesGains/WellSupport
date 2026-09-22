@@ -1878,16 +1878,25 @@ function renderWebEditor() {
 
   if (pageSelect) pageSelect.value = state.editorPage;
 
-  const activeOrigin = () =>
+  // Draft editing should not depend on a Cloudflare beta deployment being
+  // available. Use the current production build as the in-browser canvas,
+  // then apply beta/draft overrides over it with postMessage. The beta URL is
+  // reserved for the deployed review step after changes are pushed.
+  const frameOrigin = () => productionPreviewOrigin;
+
+  const reviewOrigin = () =>
     state.editorMode === "beta"
       ? betaPreviewOrigin
       : productionPreviewOrigin;
 
-  const pageUrl = () =>
-    new URL(state.editorPage || "/", activeOrigin()).toString();
+  const framePageUrl = () =>
+    new URL(state.editorPage || "/", frameOrigin()).toString();
+
+  const reviewPageUrl = () =>
+    new URL(state.editorPage || "/", reviewOrigin()).toString();
 
   const iframeUrl = (cacheBust = false) => {
-    const url = new URL(pageUrl());
+    const url = new URL(framePageUrl());
     url.searchParams.set("wcgEditor", "1");
     if (cacheBust) url.searchParams.set("_preview", String(Date.now()));
     return url.toString();
@@ -1926,14 +1935,14 @@ function renderWebEditor() {
         type: "WCG_EDITOR_PREVIEW",
         payload: draftPayload()
       },
-      activeOrigin()
+      frameOrigin()
     );
   };
 
   const requestColours = () => {
     frame?.contentWindow?.postMessage(
       { type: "WCG_EDITOR_SCAN_COLOURS" },
-      activeOrigin()
+      frameOrigin()
     );
   };
 
@@ -2106,11 +2115,19 @@ function renderWebEditor() {
   };
 
   const updatePreviewLocation = ({ reload = true, cacheBust = false } = {}) => {
-    const url = pageUrl();
-    const parsed = new URL(url);
-    const display = parsed.hostname + parsed.pathname;
+    const frameUrl = framePageUrl();
+    const reviewUrl = reviewPageUrl();
+    const parsed = new URL(frameUrl);
+    const display =
+      state.editorMode === "beta"
+        ? `Browser preview · ${parsed.pathname || "/"}`
+        : parsed.hostname + parsed.pathname;
 
-    if (openPage) openPage.href = url;
+    if (openPage) {
+      openPage.href = reviewUrl;
+      openPage.textContent =
+        state.editorMode === "beta" ? "Open beta review ↗" : "Open page ↗";
+    }
     if (previewPath) previewPath.textContent = display;
     if (browserUrl) browserUrl.textContent = display;
     if (reload && frame) frame.src = iframeUrl(cacheBust);
