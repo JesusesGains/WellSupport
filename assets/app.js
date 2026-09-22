@@ -949,6 +949,19 @@ function renderWebEditor() {
       ? state.editorAccentDraft.toUpperCase()
       : "#304660";
 
+  const bannerBranch =
+    state.editorBannerTarget === "beta"
+      ? state.editorStatus?.beta
+      : state.editorStatus?.main;
+  const bannerKey = `${state.editorBannerTarget}:${bannerBranch?.sha || "unloaded"}`;
+
+  if (state.editorBannerKey !== bannerKey && !state.editorBannerDirty) {
+    const bannerSource = editorBannerSource(state.editorBannerTarget);
+    state.editorBannerKey = bannerKey;
+    state.editorBannerItems = bannerSource.items;
+    state.editorBannerInterval = bannerSource.intervalMs;
+  }
+
   panel.className = "chat-panel web-editor-panel is-fullscreen";
   panel.innerHTML = `
     <div class="web-editor-fullscreen">
@@ -1012,6 +1025,102 @@ function renderWebEditor() {
                 <option value="/faqs.html">FAQs</option>
                 <option value="/contact.html">Contact</option>
               </select>
+            </section>
+
+            <section class="editor-inspector-section editor-banner-section">
+              <div class="editor-inspector-heading">
+                <span>Header banner</span>
+                <small>Schedule announcements</small>
+              </div>
+
+              <div class="editor-banner-toolbar">
+                <label>
+                  <span>Publish to</span>
+                  <select id="editor-banner-target">
+                    <option value="production" ${state.editorBannerTarget === "production" ? "selected" : ""}>Production</option>
+                    <option value="beta" ${state.editorBannerTarget === "beta" ? "selected" : ""}>Beta</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Swap every</span>
+                  <select id="editor-banner-interval">
+                    ${[4000, 5200, 6500, 8000].map((value) => `
+                      <option value="${value}" ${Number(state.editorBannerInterval) === value ? "selected" : ""}>${(value / 1000).toFixed(value % 1000 ? 1 : 0)}s</option>
+                    `).join("")}
+                  </select>
+                </label>
+              </div>
+
+              <div id="editor-banner-list" class="editor-banner-list">
+                ${state.editorBannerItems.map((item, index) => `
+                  <article class="editor-banner-card" data-banner-index="${index}">
+                    <div class="editor-banner-card-head">
+                      <strong>Announcement ${index + 1}</strong>
+                      <label class="editor-banner-enabled">
+                        <input type="checkbox" data-banner-field="enabled" ${item.enabled !== false ? "checked" : ""}>
+                        <span>Enabled</span>
+                      </label>
+                      <button type="button" data-banner-remove="${index}" aria-label="Remove announcement ${index + 1}">×</button>
+                    </div>
+
+                    <label class="editor-banner-wide">
+                      <span>Message</span>
+                      <input type="text" maxlength="150" data-banner-field="message" value="${escapeEditorAttribute(item.message)}">
+                    </label>
+
+                    <div class="editor-banner-row">
+                      <label>
+                        <span>Link label</span>
+                        <input type="text" maxlength="80" data-banner-field="cta" value="${escapeEditorAttribute(item.cta)}">
+                      </label>
+                      <label>
+                        <span>Link</span>
+                        <input type="text" maxlength="400" data-banner-field="href" value="${escapeEditorAttribute(item.href)}" placeholder="event.html">
+                      </label>
+                    </div>
+
+                    <div class="editor-banner-row">
+                      <label>
+                        <span>Background</span>
+                        <div class="editor-banner-colour-input">
+                          <input type="color" data-banner-field="background" value="${/^#[0-9a-f]{6}$/i.test(item.background || "") ? item.background : "#304660"}">
+                          <code>${escapeEditorAttribute((item.background || "#304660").toUpperCase())}</code>
+                        </div>
+                      </label>
+                      <label>
+                        <span>Text colour</span>
+                        <div class="editor-banner-colour-input">
+                          <input type="color" data-banner-field="foreground" value="${/^#[0-9a-f]{6}$/i.test(item.foreground || "") ? item.foreground : "#FFFEFA"}">
+                          <code>${escapeEditorAttribute((item.foreground || "#FFFEFA").toUpperCase())}</code>
+                        </div>
+                      </label>
+                    </div>
+
+                    <div class="editor-banner-row">
+                      <label>
+                        <span>Show from</span>
+                        <input type="datetime-local" data-banner-field="startsAt" value="${editorDateTimeLocal(item.startsAt)}">
+                      </label>
+                      <label>
+                        <span>Hide after</span>
+                        <input type="datetime-local" data-banner-field="endsAt" value="${editorDateTimeLocal(item.endsAt)}">
+                      </label>
+                    </div>
+                  </article>
+                `).join("")}
+              </div>
+
+              <div class="editor-banner-actions">
+                <button id="editor-banner-add" type="button">+ Add announcement</button>
+                <button id="editor-banner-save" class="is-primary" type="button" ${connected && state.editorBannerDirty ? "" : "disabled"}>
+                  ${state.editorBannerTarget === "production" ? "Publish banner" : "Save to beta"}
+                </button>
+              </div>
+              <small class="editor-banner-note">
+                ${state.editorBannerTarget === "production"
+                  ? "Production changes commit directly to main and appear after Cloudflare deploys the commit."
+                  : "Beta changes stay on beta-main until promoted."}
+              </small>
             </section>
 
             <section class="editor-inspector-section">
@@ -1170,6 +1279,10 @@ function renderWebEditor() {
   const pickedValue = document.querySelector("#editor-picked-colour-value");
   const pickedSwatch = document.querySelector("#editor-picked-colour-swatch");
   const applyPickedAccent = document.querySelector("#editor-apply-picked-accent");
+  const bannerTarget = document.querySelector("#editor-banner-target");
+  const bannerInterval = document.querySelector("#editor-banner-interval");
+  const bannerList = document.querySelector("#editor-banner-list");
+  const bannerSave = document.querySelector("#editor-banner-save");
 
   if (pageSelect) pageSelect.value = state.editorPage;
 
@@ -1386,6 +1499,73 @@ function renderWebEditor() {
     state.editorSelectedText = null;
     renderWebEditor();
   });
+
+  bannerTarget?.addEventListener("change", () => {
+    state.editorBannerTarget = bannerTarget.value === "beta" ? "beta" : "production";
+    state.editorBannerDirty = false;
+    state.editorBannerKey = "";
+    renderWebEditor();
+  });
+
+  bannerInterval?.addEventListener("change", () => {
+    state.editorBannerInterval = Number(bannerInterval.value || 5200);
+    state.editorBannerDirty = true;
+    if (bannerSave) bannerSave.disabled = !connected;
+  });
+
+  bannerList?.addEventListener("input", (event) => {
+    const input = event.target;
+    const card = input?.closest?.("[data-banner-index]");
+    const field = input?.dataset?.bannerField;
+    const index = Number(card?.dataset?.bannerIndex);
+
+    if (!field || !Number.isInteger(index) || !state.editorBannerItems[index]) return;
+
+    const item = state.editorBannerItems[index];
+
+    if (field === "enabled") {
+      item.enabled = Boolean(input.checked);
+    } else if (field === "startsAt" || field === "endsAt") {
+      item[field] = input.value
+        ? new Date(input.value).toISOString()
+        : "";
+    } else if (field === "background" || field === "foreground") {
+      item[field] = String(input.value || "").toUpperCase();
+      const code = input.closest(".editor-banner-colour-input")?.querySelector("code");
+      if (code) code.textContent = item[field];
+    } else {
+      item[field] = String(input.value || "");
+    }
+
+    state.editorBannerDirty = true;
+    if (bannerSave) bannerSave.disabled = !connected;
+  });
+
+  bannerList?.addEventListener("change", (event) => {
+    if (event.target?.dataset?.bannerField === "enabled") {
+      event.target.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+  });
+
+  bannerList?.addEventListener("click", (event) => {
+    const button = event.target?.closest?.("[data-banner-remove]");
+    if (!button) return;
+
+    const index = Number(button.dataset.bannerRemove);
+    if (!Number.isInteger(index)) return;
+
+    state.editorBannerItems.splice(index, 1);
+    state.editorBannerDirty = true;
+    renderWebEditor();
+  });
+
+  document.querySelector("#editor-banner-add")?.addEventListener("click", () => {
+    state.editorBannerItems.push(newEditorBannerItem());
+    state.editorBannerDirty = true;
+    renderWebEditor();
+  });
+
+  bannerSave?.addEventListener("click", publishEditorBanner);
 
   frame?.addEventListener("load", () => {
     window.setTimeout(() => {
