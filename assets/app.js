@@ -1291,20 +1291,22 @@ function renderWebEditor() {
       ? state.editorStatus?.beta?.sha || "beta"
       : state.editorStatus?.main?.sha || "main";
   const draftKey = `${state.editorMode}:${state.editorPage}:${sourceSha}`;
+  const pendingDraft =
+    state.editorMode === "beta"
+      ? state.editorPendingPages?.[state.editorPage]
+      : null;
+  const draftSource = pendingDraft || config;
 
-  if (state.editorDraftKey !== draftKey && !state.editorDirty) {
+  if (state.editorDraftKey !== draftKey) {
     state.editorDraftKey = draftKey;
-    state.editorTextDrafts =
-      config.text && typeof config.text === "object"
-        ? { ...config.text }
-        : {};
-    state.editorAccentDraft = String(config.accent || "");
-    state.editorFontDraft = String(config.font || "");
-    state.editorHeadingDraft = String(config.heading || "");
-    state.editorCopyDraft = String(config.copy || "");
+    const draft = editorDraftFromConfig(draftSource);
+    applyEditorDraftSnapshot(draft);
     state.editorColours = [];
     state.editorSelectedText = null;
+    state.editorSelectedObject = null;
     state.editorPickedColour = "";
+    state.editorDirty =
+      state.editorMode === "beta" && editorPendingChangeCount() > 0;
   }
 
   const currentAccent =
