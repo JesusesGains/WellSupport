@@ -265,11 +265,21 @@ function decodeSupportPageLink(body) {
   if (separator <= 0) return null;
 
   try {
-    const label = decodeURIComponent(payload.slice(0, separator)).trim().slice(0, 140);
-    const path = decodeURIComponent(payload.slice(separator + 1)).trim().slice(0, 500);
-    if (!label || !/^\/[a-z0-9._~!const VISITOR_NAME_PREFIX = "[[WCG_VISITOR_NAME_V1:";
-const VISITOR_NAME_OVERRIDE_KEY = "well-support:visitor-name-overrides";
-'()*+,;=:@%/?#-]*$/i.test(path)) return null;
+    const label = decodeURIComponent(payload.slice(0, separator))
+      .trim()
+      .slice(0, 140);
+    const path = decodeURIComponent(payload.slice(separator + 1))
+      .trim()
+      .slice(0, 500);
+
+    if (!label || !path.startsWith("/") || path.startsWith("//")) {
+      return null;
+    }
+
+    if (/[ -<>\\]/.test(path)) {
+      return null;
+    }
+
     return { label, path };
   } catch {
     return null;
