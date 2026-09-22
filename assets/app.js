@@ -30,6 +30,8 @@ const state = {
   analyticsTimer: null,
   unreadCounts: new Map(),
   knownVisitorMessageIds: new Set(),
+  visitorNames: new Map(),
+  visitorNameOverrides: loadVisitorNameOverrides(),
   notificationsReady: false,
   editorStatus: null,
   editorMode: "beta",
@@ -137,6 +139,85 @@ function formatDay(value) {
 }
 
 const VISITOR_NAME_PREFIX = "[[WCG_VISITOR_NAME_V1:";
+const VISITOR_NAME_OVERRIDE_KEY = "well-support:visitor-name-overrides";
+
+function cleanVisitorDisplayName(value) {
+  return String(value || "")
+    .replace(/[\u0000-\u001f\u007f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 80);
+}
+
+function loadVisitorNameOverrides() {
+  if (typeof window === "undefined") return new Map();
+
+  try {
+    const raw = JSON.parse(
+      window.sessionStorage.getItem(VISITOR_NAME_OVERRIDE_KEY) || "{}"
+    );
+    return new Map(
+      Object.entries(raw || {}).filter(
+        ([conversationId, name]) =>
+          /^[0-9a-f-]{36}$/i.test(conversationId) &&
+          Boolean(cleanVisitorDisplayName(name))
+      )
+    );
+  } catch {
+    return new Map();
+  }
+}
+
+function saveVisitorNameOverrides() {
+  if (typeof window === "undefined") return;
+
+  try {
+    window.sessionStorage.setItem(
+      VISITOR_NAME_OVERRIDE_KEY,
+      JSON.stringify(Object.fromEntries(state.visitorNameOverrides))
+    );
+  } catch {
+    // Client-side name edits may remain in memory when storage is unavailable.
+  }
+}
+
+function setVisitorNameOverride(conversationId, value) {
+  const name = cleanVisitorDisplayName(value);
+  if (!conversationId) return;
+
+  if (name) state.visitorNameOverrides.set(conversationId, name);
+  else state.visitorNameOverrides.delete(conversationId);
+
+  saveVisitorNameOverrides();
+}
+
+function clearVisitorNameOverride(conversationId) {
+  if (!conversationId) return;
+  state.visitorNameOverrides.delete(conversationId);
+  saveVisitorNameOverrides();
+}
+
+function visitorSourceUrl(conversation) {
+  const raw = String(conversation?.page_path || "").trim();
+  if (!raw) return "https://www.wellcollegeglobal.com/";
+
+  try {
+    if (/^https:\/\//i.test(raw)) {
+      const url = new URL(raw);
+      return url.hostname === "www.wellcollegeglobal.com"
+        ? url.toString()
+        : "https://www.wellcollegeglobal.com/";
+    }
+
+    return new URL(
+      raw.startsWith("/") ? raw : `/${raw}`,
+      "https://www.wellcollegeglobal.com"
+    ).toString();
+  } catch {
+    return "https://www.wellcollegeglobal.com/";
+  }
+}
+
 
 function decodeVisitorMessage(message) {
   const body = String(message?.body || "");
@@ -178,6 +259,16 @@ function decodeVisitorMessage(message) {
 function visitorName(conversation) {
   const conversationId = conversation?.id;
   if (!conversationId) return "Website visitor";
+
+  const override = cleanVisitorDisplayName(
+    state.visitorNameOverrides.get(conversationId)
+  );
+  if (override) return override;
+
+  const knownName = cleanVisitorDisplayName(
+    state.visitorNames.get(conversationId)
+  );
+  if (knownName) return knownName;
 
   const namedMessage = [...state.messages]
     .reverse()
@@ -2304,12 +2395,14 @@ function renderDashboard() {
 
         <div class="inbox-tools">
           <button class="all-chats-entry" type="button" data-message-section="all">
-            <span id="all-chats-avatars" class="all-chats-avatars" aria-hidden="true"></span>
             <span class="all-chats-copy">
               <strong>All chats</strong>
               <small>Active chats across staff</small>
             </span>
-            <b id="all-chats-count" class="section-count">0</b>
+            <span class="all-chats-right">
+              <b id="all-chats-count" class="section-count">0</b>
+              <span id="all-chats-avatars" class="all-chats-avatars" aria-hidden="true"></span>
+            </span>
           </button>
 
           <div class="message-section-tabs" role="group" aria-label="Message queues">
@@ -2451,8 +2544,15 @@ async function loadInbox({ silent = false } = {}) {
     );
     state.lastMessages = new Map();
     state.unreadCounts = new Map();
+    state.visitorNames = new Map();
 
     for (const message of incomingMessages) {
+      if (message.sender_type === "visitor") {
+        const decodedName = decodeVisitorMessage(message).name;
+        if (decodedName && !state.visitorNames.has(message.conversation_id)) {
+          state.visitorNames.set(message.conversation_id, decodedName);
+        }
+      }
       if (!state.lastMessages.has(message.conversation_id)) {
         state.lastMessages.set(message.conversation_id, message);
       }
@@ -2610,6 +2710,7 @@ function conversationMatchesSearch(conversation) {
     conversation.visitor_city,
     conversation.visitor_region,
     conversation.visitor_country,
+    visitorName(conversation),
     owner?.display_name,
     last?.body
   ].some((value) =>
@@ -2630,7 +2731,7 @@ function renderAllChatsAvatars() {
         )
         .map((conversation) => conversation.joined_agent_id)
     )
-  ].slice(0, 3);
+  ].slice(0, 4);
 
   for (const userId of assignedIds) {
     const agent = state.agents.get(userId);
@@ -2948,10 +3049,13 @@ function renderChatShell() {
         <button id="mobile-back" class="mobile-back" type="button" aria-label="Back to messages">
           ${backIcon()}
         </button>
-        <span class="visitor-avatar">V</span>
+        <span id="chat-visitor-avatar" class="visitor-avatar">V</span>
         <div class="chat-person-copy">
-          <strong id="chat-visitor-name"></strong>
-          <span id="chat-source-path"></span>
+          <div class="chat-visitor-name-row">
+            <strong id="chat-visitor-name"></strong>
+            <button id="chat-visitor-name-edit" class="chat-visitor-name-edit" type="button" aria-label="Edit visitor name" title="Edit visitor name">✎</button>
+          </div>
+          <a id="chat-source-path" class="chat-source-path" target="_blank" rel="noopener noreferrer"></a>
         </div>
       </div>
       <div class="chat-actions">
@@ -3038,9 +3142,19 @@ function renderChatShell() {
   `;
 
   const location = visitorLocation(conversation);
-  document.querySelector("#chat-visitor-name").textContent = visitorName(conversation);
-  document.querySelector("#chat-source-path").textContent =
-    conversation.page_path || "Well College Global website";
+  const currentVisitorName = visitorName(conversation);
+  const visitorNameElement = document.querySelector("#chat-visitor-name");
+  const sourcePathElement = document.querySelector("#chat-source-path");
+  const visitorAvatar = document.querySelector("#chat-visitor-avatar");
+
+  if (visitorNameElement) visitorNameElement.textContent = currentVisitorName;
+  if (visitorAvatar) visitorAvatar.textContent = initials(currentVisitorName);
+  if (sourcePathElement) {
+    sourcePathElement.textContent =
+      conversation.page_path || "Well College Global website";
+    sourcePathElement.href = visitorSourceUrl(conversation);
+    sourcePathElement.title = `Open ${sourcePathElement.textContent}`;
+  }
   document.querySelector("#visitor-location").textContent = location;
   document.querySelector("#visitor-context-meta").textContent =
     visitorContextMeta(conversation) || "Temporary support context unavailable";
@@ -3076,6 +3190,60 @@ function renderChatShell() {
     mapWrap.hidden = false;
     if (mapCity) mapCity.textContent = location;
   }
+
+  document.querySelector("#chat-visitor-name-edit")?.addEventListener("click", () => {
+    const nameElement = document.querySelector("#chat-visitor-name");
+    if (!nameElement) return;
+
+    const original = visitorName(conversation);
+    nameElement.setAttribute("contenteditable", "plaintext-only");
+    if (nameElement.contentEditable !== "plaintext-only") {
+      nameElement.setAttribute("contenteditable", "true");
+    }
+    nameElement.classList.add("is-editing");
+    nameElement.focus();
+
+    const range = document.createRange();
+    range.selectNodeContents(nameElement);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+
+    const finish = ({ cancel = false } = {}) => {
+      if (!nameElement.hasAttribute("contenteditable")) return;
+
+      const next = cancel
+        ? original
+        : cleanVisitorDisplayName(nameElement.textContent) || "Website visitor";
+
+      if (!cancel) {
+        setVisitorNameOverride(
+          conversation.id,
+          next === "Website visitor" ? "" : next
+        );
+      }
+
+      nameElement.removeAttribute("contenteditable");
+      nameElement.classList.remove("is-editing");
+      nameElement.textContent = cancel ? original : visitorName(conversation);
+
+      const avatar = document.querySelector("#chat-visitor-avatar");
+      if (avatar) avatar.textContent = initials(visitorName(conversation));
+
+      renderConversationList();
+    };
+
+    nameElement.onblur = () => finish();
+    nameElement.onkeydown = (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        nameElement.blur();
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        finish({ cancel: true });
+      }
+    };
+  });
 
   document.querySelector("#mobile-back")?.addEventListener("click", () => {
     state.selectedId = null;
@@ -3586,6 +3754,11 @@ function sendReply(event) {
 function appendMessage(message) {
   if (!message?.id) return;
 
+  if (message.sender_type === "visitor") {
+    const decodedName = decodeVisitorMessage(message).name;
+    if (decodedName) state.visitorNames.set(message.conversation_id, decodedName);
+  }
+
   const clientMessageId = message.client_message_id || null;
 
   if (clientMessageId) {
@@ -3657,6 +3830,8 @@ async function deleteConversation() {
 
     state.conversations = state.conversations.filter((item) => item.id !== conversation.id);
     state.lastMessages.delete(conversation.id);
+    state.visitorNames.delete(conversation.id);
+    clearVisitorNameOverride(conversation.id);
     state.unread.delete(conversation.id);
     state.unreadCounts.delete(conversation.id);
     state.readAt.delete(conversation.id);
