@@ -69,7 +69,9 @@ const state = {
   editorBannerItems: [],
   editorBannerInterval: 5200,
   editorBannerDirty: false,
-  editorBannerKey: ""
+  editorBannerKey: "",
+  editorBannerOpenId: "",
+  editorBannerPendingDeleteIndex: null
 };
 
 function configured() {
@@ -874,39 +876,54 @@ function newEditorBannerItem() {
   };
 }
 
+async function commitEditorBannerItems(items, {
+  operation = "update",
+  button = null
+} = {}) {
+  const target = state.editorBannerTarget === "beta" ? "beta" : "production";
+  const branch = target === "beta" ? "beta-main" : "main";
+
+  const result = await apiRequest("/editor-banner", {
+    method: "POST",
+    body: {
+      target,
+      operation,
+      intervalMs: state.editorBannerInterval,
+      items
+    }
+  });
+
+  const statusKey = target === "beta" ? "beta" : "main";
+  if (state.editorStatus?.[statusKey]) {
+    state.editorStatus[statusKey].overrides = result.overrides;
+    if (result.commitSha) state.editorStatus[statusKey].sha = result.commitSha;
+  }
+
+  state.editorBannerItems = items.map((item) => ({ ...item }));
+  state.editorBannerDirty = false;
+  state.editorBannerKey = "";
+
+  const verb = operation === "delete" ? "deleted and committed" : "committed";
+  showToast(
+    `Rolling banner ${verb} to WellWebsite/${branch}${result.commitSha ? ` · ${result.commitSha.slice(0, 7)}` : ""}.${target === "production" ? " Cloudflare deployment is starting." : ""}`
+  );
+
+  await loadWebEditorStatus({ quiet: true });
+  return result;
+}
+
 async function publishEditorBanner() {
   const button = document.querySelector("#editor-banner-save");
   if (button) {
     button.disabled = true;
-    button.textContent = state.editorBannerTarget === "production"
-      ? "Committing…"
-      : "Committing…";
+    button.textContent = "Committing…";
   }
 
   try {
-    const result = await apiRequest("/editor-banner", {
-      method: "POST",
-      body: {
-        target: state.editorBannerTarget === "beta" ? "beta" : "production",
-        intervalMs: state.editorBannerInterval,
-        items: state.editorBannerItems
-      }
+    await commitEditorBannerItems(state.editorBannerItems, {
+      operation: "update",
+      button
     });
-
-    const branch = state.editorBannerTarget === "beta" ? "beta" : "main";
-    if (state.editorStatus?.[branch]) {
-      state.editorStatus[branch].overrides = result.overrides;
-      if (result.commitSha) state.editorStatus[branch].sha = result.commitSha;
-    }
-
-    state.editorBannerDirty = false;
-    state.editorBannerKey = "";
-    showToast(
-      state.editorBannerTarget === "production"
-        ? `Rolling banner committed to WellWebsite/main${result.commitSha ? ` · ${result.commitSha.slice(0, 7)}` : ""}. Cloudflare deployment is starting.`
-        : `Rolling banner committed to WellWebsite/beta-main${result.commitSha ? ` · ${result.commitSha.slice(0, 7)}` : ""}.`
-    );
-    await loadWebEditorStatus({ quiet: true });
   } catch (error) {
     showToast(error?.message || "Unable to commit the rolling banner.", "error");
     if (button) {
@@ -914,6 +931,42 @@ async function publishEditorBanner() {
       button.textContent = state.editorBannerTarget === "production"
         ? "Commit to production"
         : "Commit to beta-main";
+    }
+  }
+}
+
+async function deleteEditorBannerItem(index) {
+  if (!Number.isInteger(index) || !state.editorBannerItems[index]) return;
+
+  const item = state.editorBannerItems[index];
+  const nextItems = state.editorBannerItems.filter(
+    (_, itemIndex) => itemIndex !== index
+  );
+  const button = document.querySelector("#confirm-editor-banner-delete");
+
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Deleting…";
+  }
+
+  try {
+    await commitEditorBannerItems(nextItems, {
+      operation: "delete",
+      button
+    });
+
+    if (state.editorBannerOpenId === item.id) {
+      state.editorBannerOpenId = "";
+    }
+
+    state.editorBannerPendingDeleteIndex = null;
+    document.body.classList.remove("has-support-confirm-modal");
+    renderWebEditor();
+  } catch (error) {
+    showToast(error?.message || "Unable to delete the rolling banner.", "error");
+    if (button) {
+      button.disabled = false;
+      button.textContent = "Delete & commit";
     }
   }
 }
@@ -1051,6 +1104,14 @@ function renderWebEditor() {
   const betaBehind = Number(comparison.behindBy || 0) > 0;
   const betaAhead = Number(comparison.aheadBy || 0) > 0;
   const editable = state.editorMode === "beta" && connected && !betaBehind;
+  const activeBannerTarget = state.editorMode === "production" ? "production" : "beta";
+
+  if (state.editorBannerTarget !== activeBannerTarget && !state.editorBannerDirty) {
+    state.editorBannerTarget = activeBannerTarget;
+    state.editorBannerKey = "";
+    state.editorBannerOpenId = "";
+  }
+
   const config = editorPageConfig(
     state.editorMode === "beta" ? "beta" : "production",
     state.editorPage
@@ -1163,17 +1224,14 @@ function renderWebEditor() {
             <section class="editor-inspector-section editor-banner-section">
               <div class="editor-inspector-heading">
                 <span>Rolling banner</span>
-                <small>Rotate & schedule announcements</small>
+                <small>${state.editorMode === "production" ? "Production · main" : "Beta · beta-main"}</small>
               </div>
 
-              <div class="editor-banner-toolbar">
-                <label>
-                  <span>Commit to</span>
-                  <select id="editor-banner-target">
-                    <option value="production" ${state.editorBannerTarget === "production" ? "selected" : ""}>Production</option>
-                    <option value="beta" ${state.editorBannerTarget === "beta" ? "selected" : ""}>Beta</option>
-                  </select>
-                </label>
+              <div class="editor-banner-toolbar is-current-branch">
+                <div class="editor-banner-branch">
+                  <span>Current branch</span>
+                  <strong>${state.editorMode === "production" ? "WellWebsite/main" : "WellWebsite/beta-main"}</strong>
+                </div>
                 <label>
                   <span>Swap every</span>
                   <select id="editor-banner-interval">
@@ -1185,74 +1243,112 @@ function renderWebEditor() {
               </div>
 
               <div id="editor-banner-list" class="editor-banner-list">
-                ${state.editorBannerItems.map((item, index) => `
-                  <article class="editor-banner-card" data-banner-index="${index}">
-                    <div class="editor-banner-card-head">
-                      <strong>Announcement ${index + 1}</strong>
-                      <label class="editor-banner-enabled">
-                        <input type="checkbox" data-banner-field="enabled" ${item.enabled !== false ? "checked" : ""}>
-                        <span>Enabled</span>
-                      </label>
-                      <button type="button" data-banner-remove="${index}" aria-label="Remove announcement ${index + 1}">×</button>
-                    </div>
+                ${state.editorBannerItems.map((item, index) => {
+                  const isOpen = state.editorBannerOpenId === item.id;
+                  const scheduleLabel =
+                    item.startsAt || item.endsAt
+                      ? `${item.startsAt ? `From ${editorDateTimeLocal(item.startsAt).replace("T", " ")}` : "Now"} · ${item.endsAt ? `until ${editorDateTimeLocal(item.endsAt).replace("T", " ")}` : "no end"}`
+                      : "Always visible";
 
-                    <label class="editor-banner-wide">
-                      <span>Message</span>
-                      <input type="text" maxlength="150" data-banner-field="message" value="${escapeEditorAttribute(item.message)}">
-                    </label>
+                  return `
+                    <article class="editor-banner-card${isOpen ? " is-open" : ""}" data-banner-index="${index}" data-banner-id="${escapeEditorAttribute(item.id)}">
+                      <div class="editor-banner-card-head">
+                        <button
+                          class="editor-banner-card-toggle"
+                          type="button"
+                          data-banner-toggle="${index}"
+                          aria-expanded="${isOpen ? "true" : "false"}"
+                        >
+                          <span
+                            class="editor-banner-card-colour"
+                            style="--banner-preview:${/^#[0-9a-f]{6}$/i.test(item.background || "") ? item.background : "#304660"}"
+                            aria-hidden="true"
+                          ></span>
+                          <span class="editor-banner-card-summary">
+                            <strong>${escapeEditorAttribute(item.message || `Announcement ${index + 1}`)}</strong>
+                            <small>${escapeEditorAttribute(scheduleLabel)}</small>
+                          </span>
+                          <span class="editor-banner-card-chevron" aria-hidden="true">⌄</span>
+                        </button>
 
-                    <div class="editor-banner-row">
-                      <label>
-                        <span>Link label</span>
-                        <input type="text" maxlength="80" data-banner-field="cta" value="${escapeEditorAttribute(item.cta)}">
-                      </label>
-                      <label>
-                        <span>Link</span>
-                        <input type="text" maxlength="400" data-banner-field="href" value="${escapeEditorAttribute(item.href)}" placeholder="event.html">
-                      </label>
-                    </div>
+                        <button
+                          class="editor-banner-delete"
+                          type="button"
+                          data-banner-remove="${index}"
+                          aria-label="Delete ${escapeEditorAttribute(item.message || `announcement ${index + 1}`)}"
+                          title="Delete rolling banner"
+                        >
+                          <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M4 7h16M9 7V4h6v3m-9 0 1 13h10l1-13M10 11v5m4-5v5" />
+                          </svg>
+                        </button>
+                      </div>
 
-                    <div class="editor-banner-row">
-                      <label>
-                        <span>Background</span>
-                        <div class="editor-banner-colour-input">
-                          <input type="color" data-banner-field="background" value="${/^#[0-9a-f]{6}$/i.test(item.background || "") ? item.background : "#304660"}">
-                          <code>${escapeEditorAttribute((item.background || "#304660").toUpperCase())}</code>
+                      <div class="editor-banner-card-body">
+                        <label class="editor-banner-enabled">
+                          <input type="checkbox" data-banner-field="enabled" ${item.enabled !== false ? "checked" : ""}>
+                          <span>Enabled</span>
+                        </label>
+
+                        <label class="editor-banner-wide">
+                          <span>Message</span>
+                          <input type="text" maxlength="150" data-banner-field="message" value="${escapeEditorAttribute(item.message)}">
+                        </label>
+
+                        <div class="editor-banner-row">
+                          <label>
+                            <span>Link label</span>
+                            <input type="text" maxlength="80" data-banner-field="cta" value="${escapeEditorAttribute(item.cta)}">
+                          </label>
+                          <label>
+                            <span>Link</span>
+                            <input type="text" maxlength="400" data-banner-field="href" value="${escapeEditorAttribute(item.href)}" placeholder="event.html">
+                          </label>
                         </div>
-                      </label>
-                      <label>
-                        <span>Text colour</span>
-                        <div class="editor-banner-colour-input">
-                          <input type="color" data-banner-field="foreground" value="${/^#[0-9a-f]{6}$/i.test(item.foreground || "") ? item.foreground : "#FFFEFA"}">
-                          <code>${escapeEditorAttribute((item.foreground || "#FFFEFA").toUpperCase())}</code>
-                        </div>
-                      </label>
-                    </div>
 
-                    <div class="editor-banner-row">
-                      <label>
-                        <span>Show from</span>
-                        <input type="datetime-local" data-banner-field="startsAt" value="${editorDateTimeLocal(item.startsAt)}">
-                      </label>
-                      <label>
-                        <span>Hide after</span>
-                        <input type="datetime-local" data-banner-field="endsAt" value="${editorDateTimeLocal(item.endsAt)}">
-                      </label>
-                    </div>
-                  </article>
-                `).join("")}
+                        <div class="editor-banner-row">
+                          <label>
+                            <span>Background</span>
+                            <div class="editor-banner-colour-input">
+                              <input type="color" data-banner-field="background" value="${/^#[0-9a-f]{6}$/i.test(item.background || "") ? item.background : "#304660"}">
+                              <code>${escapeEditorAttribute((item.background || "#304660").toUpperCase())}</code>
+                            </div>
+                          </label>
+                          <label>
+                            <span>Text colour</span>
+                            <div class="editor-banner-colour-input">
+                              <input type="color" data-banner-field="foreground" value="${/^#[0-9a-f]{6}$/i.test(item.foreground || "") ? item.foreground : "#FFFEFA"}">
+                              <code>${escapeEditorAttribute((item.foreground || "#FFFEFA").toUpperCase())}</code>
+                            </div>
+                          </label>
+                        </div>
+
+                        <div class="editor-banner-row">
+                          <label>
+                            <span>Show from</span>
+                            <input type="datetime-local" data-banner-field="startsAt" value="${editorDateTimeLocal(item.startsAt)}">
+                          </label>
+                          <label>
+                            <span>Hide after</span>
+                            <input type="datetime-local" data-banner-field="endsAt" value="${editorDateTimeLocal(item.endsAt)}">
+                          </label>
+                        </div>
+                      </div>
+                    </article>
+                  `;
+                }).join("")}
               </div>
 
               <div class="editor-banner-actions">
-                <button id="editor-banner-add" type="button">+ Add announcement</button>
+                <button id="editor-banner-add" type="button">+ Add rolling banner</button>
                 <button id="editor-banner-save" class="is-primary" type="button" ${connected && state.editorBannerDirty ? "" : "disabled"}>
-                  ${state.editorBannerTarget === "production" ? "Commit to production" : "Commit to beta-main"}
+                  ${state.editorMode === "production" ? "Commit to production" : "Commit to beta-main"}
                 </button>
               </div>
               <small class="editor-banner-note">
-                ${state.editorBannerTarget === "production"
-                  ? "Creates a GitHub commit directly on WellWebsite/main. Cloudflare deploys that production commit."
-                  : "Creates a GitHub commit on WellWebsite/beta-main until you promote it."}
+                ${state.editorMode === "production"
+                  ? "Edits create a GitHub commit on WellWebsite/main. Deletes also commit immediately after confirmation."
+                  : "Edits create a GitHub commit on WellWebsite/beta-main. Deletes also commit immediately after confirmation."}
               </small>
             </section>
 
@@ -1382,6 +1478,24 @@ function renderWebEditor() {
       </div>
     </div>
 
+    <div id="editor-banner-delete-modal" class="confirm-modal" hidden>
+      <button
+        id="editor-banner-delete-backdrop"
+        class="confirm-modal-backdrop"
+        type="button"
+        aria-label="Cancel rolling banner deletion"
+      ></button>
+      <section class="confirm-card is-danger" role="dialog" aria-modal="true" aria-labelledby="editor-banner-delete-title">
+        <div class="confirm-icon is-danger">!</div>
+        <h2 id="editor-banner-delete-title">Delete rolling banner?</h2>
+        <p id="editor-banner-delete-copy">This removes the selected rolling banner and creates a GitHub commit on the branch you are viewing.</p>
+        <div class="confirm-actions">
+          <button id="cancel-editor-banner-delete" class="confirm-secondary" type="button">Cancel</button>
+          <button id="confirm-editor-banner-delete" class="confirm-danger" type="button">Delete &amp; commit</button>
+        </div>
+      </section>
+    </div>
+
     <div id="editor-promote-modal" class="confirm-modal" hidden>
       <button
         id="editor-promote-backdrop"
@@ -1412,7 +1526,6 @@ function renderWebEditor() {
   const pickedValue = document.querySelector("#editor-picked-colour-value");
   const pickedSwatch = document.querySelector("#editor-picked-colour-swatch");
   const applyPickedAccent = document.querySelector("#editor-apply-picked-accent");
-  const bannerTarget = document.querySelector("#editor-banner-target");
   const bannerInterval = document.querySelector("#editor-banner-interval");
   const bannerList = document.querySelector("#editor-banner-list");
   const bannerSave = document.querySelector("#editor-banner-save");
@@ -1620,6 +1733,10 @@ function renderWebEditor() {
       state.editorDraftKey = "";
       state.editorColours = [];
       state.editorSelectedText = null;
+      state.editorBannerTarget = next === "production" ? "production" : "beta";
+      state.editorBannerDirty = false;
+      state.editorBannerKey = "";
+      state.editorBannerOpenId = "";
       renderWebEditor();
     });
   });
@@ -1630,13 +1747,6 @@ function renderWebEditor() {
     state.editorDraftKey = "";
     state.editorColours = [];
     state.editorSelectedText = null;
-    renderWebEditor();
-  });
-
-  bannerTarget?.addEventListener("change", () => {
-    state.editorBannerTarget = bannerTarget.value === "beta" ? "beta" : "production";
-    state.editorBannerDirty = false;
-    state.editorBannerKey = "";
     renderWebEditor();
   });
 
@@ -1681,19 +1791,56 @@ function renderWebEditor() {
   });
 
   bannerList?.addEventListener("click", (event) => {
+    const toggle = event.target?.closest?.("[data-banner-toggle]");
+    if (toggle) {
+      const index = Number(toggle.dataset.bannerToggle);
+      const item = state.editorBannerItems[index];
+      if (!item) return;
+
+      const card = toggle.closest(".editor-banner-card");
+      const nextOpen = state.editorBannerOpenId !== item.id;
+      state.editorBannerOpenId = nextOpen ? item.id : "";
+
+      bannerList.querySelectorAll(".editor-banner-card").forEach((node) => {
+        const open = node === card && nextOpen;
+        node.classList.toggle("is-open", open);
+        node.querySelector("[data-banner-toggle]")?.setAttribute(
+          "aria-expanded",
+          open ? "true" : "false"
+        );
+      });
+      return;
+    }
+
     const button = event.target?.closest?.("[data-banner-remove]");
     if (!button) return;
 
     const index = Number(button.dataset.bannerRemove);
-    if (!Number.isInteger(index)) return;
+    const item = state.editorBannerItems[index];
+    if (!Number.isInteger(index) || !item) return;
 
-    state.editorBannerItems.splice(index, 1);
-    state.editorBannerDirty = true;
-    renderWebEditor();
+    state.editorBannerPendingDeleteIndex = index;
+
+    const modal = document.querySelector("#editor-banner-delete-modal");
+    const title = document.querySelector("#editor-banner-delete-title");
+    const copy = document.querySelector("#editor-banner-delete-copy");
+
+    if (title) title.textContent = "Delete rolling banner?";
+    if (copy) {
+      copy.textContent = `“${item.message}” will be removed and committed immediately to WellWebsite/${state.editorMode === "production" ? "main" : "beta-main"}.`;
+    }
+
+    if (modal) modal.hidden = false;
+    document.body.classList.add("has-support-confirm-modal");
+    requestAnimationFrame(() => {
+      document.querySelector("#confirm-editor-banner-delete")?.focus();
+    });
   });
 
   document.querySelector("#editor-banner-add")?.addEventListener("click", () => {
-    state.editorBannerItems.push(newEditorBannerItem());
+    const item = newEditorBannerItem();
+    state.editorBannerItems.push(item);
+    state.editorBannerOpenId = item.id;
     state.editorBannerDirty = true;
     renderWebEditor();
   });
@@ -1827,6 +1974,35 @@ function renderWebEditor() {
   document.querySelector("#web-editor-sync")?.addEventListener(
     "click",
     syncWebEditorBeta
+  );
+
+  const closeBannerDeleteConfirm = () => {
+    const modal = document.querySelector("#editor-banner-delete-modal");
+    if (modal) modal.hidden = true;
+    state.editorBannerPendingDeleteIndex = null;
+    document.body.classList.remove("has-support-confirm-modal");
+  };
+
+  document.querySelector("#editor-banner-delete-backdrop")?.addEventListener(
+    "click",
+    closeBannerDeleteConfirm
+  );
+
+  document.querySelector("#cancel-editor-banner-delete")?.addEventListener(
+    "click",
+    closeBannerDeleteConfirm
+  );
+
+  document.querySelector("#confirm-editor-banner-delete")?.addEventListener(
+    "click",
+    () => deleteEditorBannerItem(state.editorBannerPendingDeleteIndex)
+  );
+
+  document.querySelector("#editor-banner-delete-modal")?.addEventListener(
+    "keydown",
+    (event) => {
+      if (event.key === "Escape") closeBannerDeleteConfirm();
+    }
   );
 
   document.querySelector("#web-editor-promote")?.addEventListener(
