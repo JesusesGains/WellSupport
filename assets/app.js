@@ -1867,7 +1867,7 @@ function renderWebEditor() {
             class="editor-topbar-button is-primary"
             type="button"
             ${editable && state.editorDirty ? "" : "disabled"}
-          >${pendingCount > 1 ? `Push ${pendingCount} pages to beta` : "Push changes to beta"}</button>
+          >Publish beta preview</button>
         </div>
       </header>
 
@@ -1893,12 +1893,12 @@ function renderWebEditor() {
             <section class="editor-inspector-section editor-navigation-section">
               <div class="editor-inspector-heading">
                 <span>Header navigation</span>
-                <small>Direct source edit</small>
+                <small>Live draft · no commit yet</small>
               </div>
 
               <div class="editor-source-edit-note">
                 <strong>Edits website code</strong>
-                <span>Drag items here or drag them literally inside the website preview. The preview reflows immediately and the canonical order in <code>src/data/navigation.js</code> is auto-saved to <b>beta-main</b>. No CSS layers or DOM overlays are stacked.</span>
+                <span>Drag here or directly inside the website preview. Everything reflows live in the editor only. Nothing touches GitHub or Cloudflare until you click <b>Publish beta preview</b> in the top-right.</span>
               </div>
 
               <div class="editor-nav-order-group">
@@ -1937,8 +1937,19 @@ function renderWebEditor() {
                 id="editor-navigation-save"
                 class="editor-source-save"
                 type="button"
-                ${editable && state.editorNavigationDirty ? "" : "disabled"}
-              >${state.editorNavigationSaving ? "Auto-saving…" : state.editorNavigationDirty ? "Save now" : "Saved automatically"}</button>
+                disabled
+              >${state.editorNavigationDirty ? "Staged · publish top right" : "No unpublished navigation changes"}</button>
+            </section>
+
+            <section class="editor-inspector-section editor-layout-section">
+              <div class="editor-inspector-heading">
+                <span>Move sections &amp; containers</span>
+                <small>Live draft</small>
+              </div>
+              <div class="editor-layout-help">
+                <strong>Drag directly in the preview</strong>
+                <span>Blue <b>Drag</b> handles appear on supported sections, cards and containers. Drop them where you want and surrounding content reflows immediately. The order stays local until you publish the beta preview.</span>
+              </div>
             </section>
 
             <section class="editor-inspector-section editor-banner-section">
@@ -2060,15 +2071,13 @@ function renderWebEditor() {
               </div>
 
               <div class="editor-banner-actions">
-                <button id="editor-banner-add" type="button">+ Add rolling banner</button>
-                <button id="editor-banner-save" class="is-primary" type="button" ${connected && state.editorBannerDirty ? "" : "disabled"}>
-                  ${state.editorMode === "production" ? "Save live banner" : "Save preview banner"}
+                <button id="editor-banner-add" type="button" ${editable ? "" : "disabled"}>+ Add rolling banner</button>
+                <button id="editor-banner-save" class="is-primary" type="button" disabled>
+                  ${state.editorBannerDirty ? "Staged · publish top right" : "No unpublished banner changes"}
                 </button>
               </div>
               <small class="editor-banner-note">
-                ${state.editorMode === "production"
-                  ? "Changes here update the live website after you save."
-                  : "Changes here update only the preview website until you publish it live."}
+                Changes update this live editor immediately. GitHub and Cloudflare are untouched until <b>Publish beta preview</b>.
               </small>
             </section>
 
@@ -2125,6 +2134,54 @@ function renderWebEditor() {
               >Use as page accent</button>
             </section>
 
+            <section class="editor-inspector-section editor-assets-section">
+              <button id="editor-assets-toggle" class="editor-assets-toggle" type="button" aria-expanded="${state.editorAssetsOpen ? "true" : "false"}">
+                <span>
+                  <strong>Assets</strong>
+                  <small>${state.editorAssetDrafts.length ? `${state.editorAssetDrafts.length} staged · ` : ""}${state.editorAssets.length} existing</small>
+                </span>
+                <b aria-hidden="true">${state.editorAssetsOpen ? "−" : "+"}</b>
+              </button>
+
+              ${state.editorAssetsOpen ? `
+                <div class="editor-assets-panel">
+                  <input id="editor-assets-input" type="file" multiple hidden>
+                  <button id="editor-assets-upload" class="editor-assets-upload" type="button" ${editable && !state.editorAssetUploadBusy ? "" : "disabled"}>
+                    + Upload assets
+                  </button>
+                  <small class="editor-assets-note">Uploads remain a local draft. They are written to <code>assets/uploads/</code> only when you publish the beta preview.</small>
+                  <div id="editor-assets-grid" class="editor-assets-grid">
+                    ${[
+                      ...state.editorAssetDrafts.map((asset) => ({ ...asset, draft: true, url: asset.publicUrl })),
+                      ...state.editorAssets.map((asset) => ({ ...asset, draft: false }))
+                    ].map((asset) => {
+                      const isImage = asset.kind === "image";
+                      const preview = asset.draft ? asset.previewUrl : asset.url;
+                      return `
+                        <article class="editor-asset-card${asset.draft ? " is-draft" : ""}" data-editor-asset-path="${escapeEditorAttribute(asset.path)}">
+                          <div class="editor-asset-preview">
+                            ${isImage
+                              ? `<img src="${escapeEditorAttribute(preview)}" alt="" loading="lazy">`
+                              : `<span>${escapeEditorAttribute(String(asset.kind || "file").toUpperCase())}</span>`}
+                          </div>
+                          <div class="editor-asset-copy">
+                            <strong title="${escapeEditorAttribute(asset.path)}">${escapeEditorAttribute(asset.name || asset.path.split("/").pop())}</strong>
+                            <small>${asset.draft ? "Draft · publishes with beta" : escapeEditorAttribute(asset.path)}</small>
+                          </div>
+                          <div class="editor-asset-actions">
+                            <button type="button" data-editor-asset-copy="${escapeEditorAttribute(asset.url || asset.publicUrl)}">Copy link</button>
+                            ${state.editorSelectedObject?.tag === "img"
+                              ? `<button type="button" data-editor-asset-use="${escapeEditorAttribute(asset.url || asset.publicUrl)}">Use</button>`
+                              : ""}
+                          </div>
+                        </article>
+                      `;
+                    }).join("")}
+                  </div>
+                </div>
+              ` : ""}
+            </section>
+
             ${!connected ? `
               <section class="editor-inspector-section">
                 <div class="editor-secret-callout">
@@ -2137,7 +2194,7 @@ function renderWebEditor() {
 
           <div class="editor-simple-help">
             <strong>How to edit</strong>
-            <span>Click an item in the preview, make the change, then use <b>Push changes to beta</b>. Draft snapshots replace the previous state instead of stacking visual layers; structural header ordering writes source code directly.</span>
+            <span>Edit directly in the preview. Text, links, images, navigation, banners and layout changes stay local and reflow live. Only <b>Publish beta preview</b> creates a GitHub commit and Cloudflare build.</span>
           </div>
         </aside>
 
@@ -2258,6 +2315,18 @@ function renderWebEditor() {
     window.setTimeout(() => loadEditorNavigation({ quiet: true }), 0);
   }
 
+  if (
+    connected &&
+    state.editorLayoutTarget !== navigationTarget &&
+    !state.editorLayoutLoading
+  ) {
+    window.setTimeout(() => loadEditorLayout({ quiet: true }), 0);
+  }
+
+  if (connected && !state.editorAssetsLoaded && !state.editorAssetsLoading) {
+    window.setTimeout(() => loadEditorAssets({ quiet: true }), 0);
+  }
+
   // Draft editing should not depend on a Cloudflare beta deployment being
   // available. Use the current production build as the in-browser canvas,
   // then apply beta/draft overrides over it with postMessage. The beta URL is
@@ -2291,6 +2360,17 @@ function renderWebEditor() {
     attributes: cloneEditorAttributeDrafts(state.editorAttributeDrafts),
     headerOrder: [...state.editorNavigationHeaderOrder],
     shortCourseGroupOrder: [...state.editorNavigationGroupOrder],
+    layoutOrders: Object.fromEntries(
+      Object.entries(state.editorLayoutOrders || {}).map(([scope, order]) => [
+        scope,
+        Array.isArray(order) ? [...order] : []
+      ])
+    ),
+    banner: {
+      intervalMs: Number(state.editorBannerInterval || 5200),
+      items: state.editorBannerItems.map((item) => ({ ...item }))
+    },
+    assetPreviewMap: editorAssetPreviewMap(),
     editable
   });
 
