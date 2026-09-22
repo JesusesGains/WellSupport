@@ -1595,6 +1595,35 @@ function editorAssetPreviewMap() {
   );
 }
 
+function editorImageAssetOptions() {
+  const draftOptions = state.editorAssetDrafts
+    .filter((asset) => asset.kind === "image")
+    .map((asset) => ({
+      path: asset.path,
+      value: `/${asset.path}`,
+      preview: asset.previewUrl,
+      name: asset.name || asset.path.split("/").pop() || "Image",
+      draft: true
+    }));
+
+  const existingOptions = state.editorAssets
+    .filter((asset) => asset.kind === "image")
+    .map((asset) => ({
+      path: asset.path,
+      value: `/${asset.path}`,
+      preview: asset.url || editorAssetPublicUrl(asset.path),
+      name: asset.name || asset.path.split("/").pop() || "Image",
+      draft: false
+    }));
+
+  const seen = new Set();
+  return [...draftOptions, ...existingOptions].filter((asset) => {
+    if (!asset.path || seen.has(asset.path)) return false;
+    seen.add(asset.path);
+    return true;
+  });
+}
+
 function editorAssetKind(path = "") {
   const value = String(path).toLowerCase();
   if (/\.(png|jpe?g|webp|gif|svg|avif)$/.test(value)) return "image";
@@ -2494,6 +2523,7 @@ function renderWebEditor() {
       items: state.editorBannerItems.map((item) => ({ ...item }))
     },
     assetPreviewMap: editorAssetPreviewMap(),
+    assetOptions: editorImageAssetOptions(),
     editable
   });
 
