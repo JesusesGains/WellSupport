@@ -88,9 +88,17 @@ const state = {
   editorNavigationGroupOrder: [],
   editorNavigationDirty: false,
   editorNavigationLoading: false,
-  editorNavigationSaving: false,
-  editorNavigationSaveQueued: false,
   editorNavigationDrag: null,
+  editorLayoutTarget: "",
+  editorLayoutOrders: {},
+  editorLayoutDirty: false,
+  editorLayoutLoading: false,
+  editorAssetsOpen: false,
+  editorAssets: [],
+  editorAssetsLoaded: false,
+  editorAssetsLoading: false,
+  editorAssetDrafts: [],
+  editorAssetUploadBusy: false,
   supportPagePickerSection: ""
 };
 
@@ -1118,7 +1126,12 @@ function editorCanRedo() {
 }
 
 function editorPendingChangeCount() {
-  return Object.keys(state.editorPendingPages || {}).length;
+  let count = Object.keys(state.editorPendingPages || {}).length;
+  if (state.editorNavigationDirty) count += 1;
+  if (state.editorLayoutDirty) count += 1;
+  if (state.editorBannerDirty) count += 1;
+  count += state.editorAssetDrafts.length;
+  return count;
 }
 
 const DEFAULT_EDITOR_BANNERS = [
@@ -1446,6 +1459,158 @@ function sameStringSet(value, allowed) {
 }
 
 
+async function loadEditorLayout({ quiet = false } = {}) {
+  if (state.editorLayoutLoading || !state.editorStatus?.connected) return;
+
+  const target = state.editorMode === "production" ? "production" : "beta";
+  state.editorLayoutLoading = true;
+
+  try {
+    const result = await apiRequest(
+      `/editor-layout?target=${encodeURIComponent(target)}`
+    );
+    state.editorLayoutTarget = target;
+    state.editorLayoutOrders =
+      result.layoutOrders && typeof result.layoutOrders === "object"
+        ? Object.fromEntries(
+            Object.entries(result.layoutOrders).map(([scope, order]) => [
+              scope,
+              Array.isArray(order) ? [...order] : []
+            ])
+          )
+        : {};
+    state.editorLayoutDirty = false;
+  } catch (error) {
+    if (!quiet) showToast(error?.message || "Unable to load website layout source.", "error");
+  } finally {
+    state.editorLayoutLoading = false;
+    if (state.currentView === "editor") renderWebEditor();
+  }
+}
+
+async function loadEditorAssets({ quiet = false } = {}) {
+  if (state.editorAssetsLoading || !state.editorStatus?.connected) return;
+
+  state.editorAssetsLoading = true;
+  try {
+    const target = state.editorMode === "production" ? "production" : "beta";
+    const result = await apiRequest(
+      `/editor-assets?target=${encodeURIComponent(target)}`
+    );
+    state.editorAssets = Array.isArray(result.assets) ? result.assets : [];
+    state.editorAssetsLoaded = true;
+  } catch (error) {
+    if (!quiet) showToast(error?.message || "Unable to load website assets.", "error");
+  } finally {
+    state.editorAssetsLoading = false;
+    if (state.currentView === "editor") renderWebEditor();
+  }
+}
+
+function editorAssetPublicUrl(path) {
+  return new URL(
+    String(path || "").replace(/^\/+/, ""),
+    "https://www.wellcollegeglobal.com/"
+  ).toString();
+}
+
+function editorAssetPreviewMap() {
+  return Object.fromEntries(
+    state.editorAssetDrafts.flatMap((asset) => [
+      [asset.publicUrl, asset.previewUrl],
+      [`/${asset.path}`, asset.previewUrl]
+    ])
+  );
+}
+
+function editorAssetKind(path = "") {
+  const value = String(path).toLowerCase();
+  if (/\.(png|jpe?g|webp|gif|svg|avif)$/.test(value)) return "image";
+  if (/\.(mp4|webm|mov)$/.test(value)) return "video";
+  if (/\.pdf$/.test(value)) return "pdf";
+  return "file";
+}
+
+function cleanEditorAssetName(name) {
+  const source = String(name || "asset").normalize("NFKD");
+  const dot = source.lastIndexOf(".");
+  const extension = dot > 0
+    ? source.slice(dot + 1).replace(/[^a-z0-9]/gi, "").toLowerCase().slice(0, 10)
+    : "";
+  const base = (dot > 0 ? source.slice(0, dot) : source)
+    .replace(/[^a-z0-9]+/gi, "-")
+    .replace(/^-+|-+$/g, "")
+    .toLowerCase()
+    .slice(0, 80) || "asset";
+  return { base, extension };
+}
+
+async function stageEditorAssetFiles(fileList) {
+  const files = [...(fileList || [])];
+  if (!files.length) return;
+
+  let runningBytes = state.editorAssetDrafts.reduce(
+    (total, item) => total + Number(item.size || 0),
+    0
+  );
+  const staged = [];
+  state.editorAssetUploadBusy = true;
+
+  try {
+    for (const [index, file] of files.entries()) {
+      if (!(file instanceof File)) continue;
+
+      if (file.size > 6 * 1024 * 1024) {
+        showToast(`${file.name} is larger than the 6 MB asset limit.`, "error");
+        continue;
+      }
+      if (runningBytes + file.size > 20 * 1024 * 1024) {
+        showToast("Draft assets are limited to 20 MB per publish.", "error");
+        break;
+      }
+
+      const dataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onerror = () => reject(reader.error || new Error("Unable to read asset."));
+        reader.onload = () => resolve(String(reader.result || ""));
+        reader.readAsDataURL(file);
+      });
+
+      const comma = dataUrl.indexOf(",");
+      if (comma < 0) continue;
+
+      const { base, extension } = cleanEditorAssetName(file.name);
+      const suffix = `${Date.now().toString(36)}-${index + 1}`;
+      const path = `assets/uploads/${suffix}-${base}${extension ? `.${extension}` : ""}`;
+
+      staged.push({
+        path,
+        name: file.name,
+        type: file.type || "",
+        size: file.size,
+        contentBase64: dataUrl.slice(comma + 1),
+        previewUrl: dataUrl,
+        publicUrl: editorAssetPublicUrl(path),
+        kind: editorAssetKind(path)
+      });
+      runningBytes += file.size;
+    }
+
+    if (staged.length) {
+      state.editorAssetDrafts = [...state.editorAssetDrafts, ...staged];
+      state.editorDirty = editorPendingChangeCount() > 0;
+      showToast(
+        `${staged.length} asset${staged.length === 1 ? "" : "s"} staged locally. Publish beta preview to upload.`
+      );
+      renderWebEditor();
+    }
+  } catch (error) {
+    showToast(error?.message || "Unable to stage that asset.", "error");
+  } finally {
+    state.editorAssetUploadBusy = false;
+  }
+}
+
 async function loadEditorNavigation({ quiet = false } = {}) {
   if (state.editorNavigationLoading || !state.editorStatus?.connected) return;
 
@@ -1478,96 +1643,12 @@ async function loadEditorNavigation({ quiet = false } = {}) {
   }
 }
 
-async function saveEditorNavigationOrder({ automatic = false } = {}) {
-  if (
-    state.editorMode !== "beta" ||
-    !state.editorStatus?.connected ||
-    !state.editorNavigationDirty
-  ) {
-    return;
-  }
-
-  if (state.editorNavigationSaving) {
-    state.editorNavigationSaveQueued = true;
-    return;
-  }
-
-  const headerOrder = [...state.editorNavigationHeaderOrder];
-  const shortCourseGroupOrder = [...state.editorNavigationGroupOrder];
-
-  if (
-    !sameStringSet(headerOrder, Object.keys(EDITOR_HEADER_NAV_LABELS)) ||
-    !sameStringSet(shortCourseGroupOrder, EDITOR_SHORT_COURSE_GROUPS)
-  ) {
-    showToast("Navigation order is incomplete. Refresh the editor and try again.", "error");
-    return;
-  }
-
-  state.editorNavigationSaving = true;
-  state.editorNavigationSaveQueued = false;
-
-  const button = document.querySelector("#editor-navigation-save");
-  if (button) {
-    button.disabled = true;
-    button.textContent = automatic ? "Auto-saving…" : "Saving source…";
-  }
-
-  try {
-    const result = await apiRequest("/editor-navigation", {
-      method: "POST",
-      body: {
-        target: "beta",
-        headerOrder,
-        shortCourseGroupOrder
-      }
-    });
-
-    const stillMatches =
-      JSON.stringify(state.editorNavigationHeaderOrder) ===
-        JSON.stringify(headerOrder) &&
-      JSON.stringify(state.editorNavigationGroupOrder) ===
-        JSON.stringify(shortCourseGroupOrder);
-
-    if (stillMatches) {
-      state.editorNavigationHeaderOrder = [...result.headerOrder];
-      state.editorNavigationGroupOrder = [...result.shortCourseGroupOrder];
-      state.editorNavigationDirty = false;
-    }
-
-    showToast(
-      automatic
-        ? "Header order auto-saved to beta-main."
-        : "Header order saved directly to website source code on beta-main."
-    );
-
-    await loadWebEditorStatus({ quiet: true });
-
-    if (!state.editorNavigationDirty) {
-      state.editorNavigationTarget = "";
-      await loadEditorNavigation({ quiet: true });
-    }
-  } catch (error) {
-    state.editorNavigationDirty = true;
-    showToast(
-      error?.message || "Unable to save header navigation source.",
-      "error"
-    );
-    if (button) {
-      button.disabled = false;
-      button.textContent = "Save header order to beta";
-    }
-  } finally {
-    state.editorNavigationSaving = false;
-
-    if (state.editorNavigationSaveQueued || state.editorNavigationDirty) {
-      state.editorNavigationSaveQueued = false;
-      window.setTimeout(
-        () => saveEditorNavigationOrder({ automatic: true }),
-        120
-      );
-    }
-  }
+function saveEditorNavigationOrder() {
+  if (state.editorMode !== "beta" || !state.editorNavigationDirty) return;
+  state.editorDirty = editorPendingChangeCount() > 0;
+  showToast("Header order is staged locally. Publish beta preview to build it.");
 }
+
 
 function editorNavigationItemMarkup(key, label, editable) {
   return `
@@ -1632,16 +1713,15 @@ function bindEditorNavigationSortable(list, orderKey, editable) {
     state.editorNavigationDrag = null;
     state.editorNavigationDirty = true;
 
+    state.editorDirty = editorPendingChangeCount() > 0;
+
     const save = document.querySelector("#editor-navigation-save");
     if (save) {
       save.disabled = true;
-      save.textContent = "Auto-saving…";
+      save.textContent = "Staged · publish top right";
     }
 
-    window.setTimeout(
-      () => saveEditorNavigationOrder({ automatic: true }),
-      0
-    );
+    document.querySelector("#web-editor-preview-submit")?.removeAttribute("disabled");
   };
 
   list.addEventListener("drop", (event) => {
@@ -2482,6 +2562,7 @@ function renderWebEditor() {
       }
 
       state.editorNavigationDirty = true;
+      state.editorDirty = editorPendingChangeCount() > 0;
 
       const list =
         kind === "header"
@@ -2502,16 +2583,35 @@ function renderWebEditor() {
       }
 
       const save = document.querySelector("#editor-navigation-save");
-      if (save) {
-        save.disabled = true;
-        save.textContent = "Auto-saving…";
+      if (save) save.textContent = "Staged · publish top right";
+
+      const publish = document.querySelector("#web-editor-preview-submit");
+      if (publish) publish.disabled = false;
+      postDraft();
+      return;
+    }
+
+    if (event.data.type === "WCG_EDITOR_LAYOUT_ORDER" && editable) {
+      const scope = String(event.data.scope || "");
+      const order = Array.isArray(event.data.order)
+        ? event.data.order.map((item) => String(item || ""))
+        : [];
+      const baseline = state.editorLayoutOrders?.[scope];
+
+      if (!scope || !Array.isArray(baseline) || !sameStringSet(order, baseline)) {
+        return;
       }
 
+      state.editorLayoutOrders = {
+        ...state.editorLayoutOrders,
+        [scope]: [...order]
+      };
+      state.editorLayoutDirty = true;
+      state.editorDirty = editorPendingChangeCount() > 0;
+
+      const publish = document.querySelector("#web-editor-preview-submit");
+      if (publish) publish.disabled = false;
       postDraft();
-      window.setTimeout(
-        () => saveEditorNavigationOrder({ automatic: true }),
-        0
-      );
       return;
     }
 
