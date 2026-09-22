@@ -1545,8 +1545,8 @@ function renderWebEditor() {
           <div class="editor-inspector-scroll">
             <section class="editor-inspector-section is-first">
               <div class="editor-inspector-heading">
-                <span>Page</span>
-                <small>${state.editorMode === "beta" ? "Editable preview" : "Read-only reference"}</small>
+                <span>Choose a page</span>
+                <small>${state.editorMode === "beta" ? "Changes stay in preview until you publish" : "Live site is view-only"}</small>
               </div>
               <select id="web-editor-page" class="editor-inspector-select">
                 <option value="/">Home</option>
@@ -1562,13 +1562,13 @@ function renderWebEditor() {
             <section class="editor-inspector-section editor-banner-section">
               <div class="editor-inspector-heading">
                 <span>Rolling banner</span>
-                <small>${state.editorMode === "production" ? "Production · main" : "Beta · beta-main"}</small>
+                <small>${state.editorMode === "production" ? "Live website" : "Preview website"}</small>
               </div>
 
               <div class="editor-banner-toolbar is-current-branch">
                 <div class="editor-banner-branch">
-                  <span>Current branch</span>
-                  <strong>${state.editorMode === "production" ? "WellWebsite/main" : "WellWebsite/beta-main"}</strong>
+                  <span>Where this appears</span>
+                  <strong>${state.editorMode === "production" ? "Live website" : "Preview website"}</strong>
                 </div>
                 <label>
                   <span>Swap every</span>
@@ -1680,48 +1680,49 @@ function renderWebEditor() {
               <div class="editor-banner-actions">
                 <button id="editor-banner-add" type="button">+ Add rolling banner</button>
                 <button id="editor-banner-save" class="is-primary" type="button" ${connected && state.editorBannerDirty ? "" : "disabled"}>
-                  ${state.editorMode === "production" ? "Commit to production" : "Commit to beta-main"}
+                  ${state.editorMode === "production" ? "Save live banner" : "Save preview banner"}
                 </button>
               </div>
               <small class="editor-banner-note">
                 ${state.editorMode === "production"
-                  ? "Edits create a GitHub commit on WellWebsite/main. Deletes also commit immediately after confirmation."
-                  : "Edits create a GitHub commit on WellWebsite/beta-main. Deletes also commit immediately after confirmation."}
+                  ? "Changes here update the live website after you save."
+                  : "Changes here update only the preview website until you publish it live."}
               </small>
             </section>
 
-            <section class="editor-inspector-section">
+            <section class="editor-inspector-section editor-selection-section">
               <div class="editor-inspector-heading">
-                <span>Text editing</span>
-                <small>Click text in the page</small>
+                <span>Selected item</span>
+                <small>Click text, an image or a link</small>
               </div>
-              <div id="editor-selected-text" class="editor-selected-text ${state.editorSelectedText ? "has-selection" : ""}">
-                <strong>${state.editorSelectedText ? "Selected text" : "Nothing selected"}</strong>
-                <span></span>
-                <small>${editable
-                  ? "Click any highlighted text in the beta preview and type directly on the page."
-                  : "Switch to Beta to edit text directly on the page."}</small>
+              <div id="editor-selected-item" class="editor-selected-item">
+                <div class="editor-selection-empty">
+                  <strong>Nothing selected</strong>
+                  <span>${editable
+                    ? "Move over the website preview and click the item you want to change."
+                    : "Choose Edit preview above to make changes."}</span>
+                </div>
               </div>
             </section>
 
             <section class="editor-inspector-section">
               <div class="editor-inspector-heading">
-                <span>Colours used</span>
-                <small id="editor-colour-count">${state.editorColours.length ? `${state.editorColours.length} detected` : "Scanning page…"}</small>
+                <span>Page colours</span>
+                <small id="editor-colour-count">${state.editorColours.length ? `${state.editorColours.length} found` : "Finding colours…"}</small>
               </div>
               <div id="editor-colour-swatches" class="editor-colour-swatches"></div>
             </section>
 
             <section class="editor-inspector-section">
               <div class="editor-inspector-heading">
-                <span>Colour analyser</span>
-                <small>Exact screen colour</small>
+                <span>Pick a colour</span>
+                <small>Sample any colour on screen</small>
               </div>
               <button id="editor-eyedropper" class="editor-eyedropper-button" type="button">
                 <span class="editor-eyedropper-icon">⌾</span>
                 <span>
-                  <strong>Pick a colour</strong>
-                  <small>Hover anywhere on screen, then click to capture the exact hex.</small>
+                  <strong>Choose from the screen</strong>
+                  <small>Click anywhere on screen to copy that exact colour.</small>
                 </span>
               </button>
 
@@ -1745,23 +1746,16 @@ function renderWebEditor() {
             ${!connected ? `
               <section class="editor-inspector-section">
                 <div class="editor-secret-callout">
-                  <strong>GitHub connection required</strong>
-                  <span>Add the production Cloudflare secret:</span>
-                  <code>WELLWEBSITE_GITHUB_TOKEN</code>
+                  <strong>Publishing is temporarily unavailable</strong>
+                  <span>The website publishing connection needs administrator attention.</span>
                 </div>
               </section>
             ` : ""}
           </div>
 
-          <div class="editor-devtools-chatbox">
-            <div>
-              <span class="editor-devtools-mark">&lt;/&gt;</span>
-              <div>
-                <strong>Chrome DevTools</strong>
-                <small>Inspect DOM, network and performance for the page currently shown.</small>
-              </div>
-            </div>
-            <button id="web-editor-inspect" type="button">Open current page in Chrome</button>
+          <div class="editor-simple-help">
+            <strong>How to edit</strong>
+            <span>Click an item in the preview, make the change, then use <b>Push changes to beta</b> when you are ready to review it.</span>
           </div>
         </aside>
 
@@ -1770,7 +1764,7 @@ function renderWebEditor() {
             <div class="editor-live-location">
               <span class="editor-status-dot"></span>
               <div>
-                <strong id="web-editor-preview-title">${state.editorMode === "beta" ? "Beta Preview" : "Production Preview"}</strong>
+                <strong id="web-editor-preview-title">${state.editorMode === "beta" ? "Preview website" : "Live website"}</strong>
                 <small id="web-editor-preview-path"></small>
               </div>
             </div>
@@ -1782,7 +1776,7 @@ function renderWebEditor() {
             </div>
 
             <div class="editor-live-help">
-              ${editable ? "Click text to edit · changes stay draft until published" : "Production is read-only"}
+              ${editable ? "Hover and click anything you want to change" : "Live website preview · view only"}
             </div>
           </div>
 
@@ -1805,12 +1799,12 @@ function renderWebEditor() {
 
           <footer class="editor-fullscreen-footer">
             <div>
-              <strong>${state.editorMode === "beta" ? "beta-main draft" : "main production reference"}</strong>
+              <strong>${state.editorMode === "beta" ? "Preview changes" : "Live website"}</strong>
               <span>${state.editorMode === "beta"
-                ? "Direct text edits and page accent changes are committed only when Push changes to beta is pressed."
-                : "Switch to Beta to make changes."}</span>
+                ? `${pendingCount || 0} page${pendingCount === 1 ? "" : "s"} with changes · nothing reaches the live site until you approve the preview`
+                : "Choose Edit preview to make website changes."}</span>
             </div>
-            <button id="web-editor-discard" class="editor-topbar-button" type="button" ${state.editorMode === "beta" ? "" : "disabled"}>Reset draft</button>
+            <button id="web-editor-discard" class="editor-topbar-button" type="button" ${state.editorMode === "beta" ? "" : "disabled"}>Discard page changes</button>
           </footer>
         </main>
       </div>
@@ -1844,7 +1838,7 @@ function renderWebEditor() {
       <section class="confirm-card" role="dialog" aria-modal="true" aria-labelledby="editor-promote-title">
         <div class="confirm-icon">${editorIcon()}</div>
         <h2 id="editor-promote-title">Publish preview to the live website?</h2>
-        <p>This merges <strong>beta-main</strong> into <strong>main</strong>.</p>
+        <p>This publishes the preview version to the live Well College Global website.</p>
         <div class="confirm-actions">
           <button id="cancel-editor-promote" class="confirm-secondary" type="button">Cancel</button>
           <button id="confirm-editor-promote" class="confirm-danger" type="button">Publish preview to live site</button>
