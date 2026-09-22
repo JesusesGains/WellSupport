@@ -1466,49 +1466,77 @@ function renderWebEditor() {
     state.editorBannerInterval = bannerSource.intervalMs;
   }
 
+  const pendingCount = editorPendingChangeCount();
+  const canUndo = editable && editorCanUndo();
+  const canRedo = editable && editorCanRedo();
+
   panel.className = "chat-panel web-editor-panel is-fullscreen";
   panel.innerHTML = `
     <div class="web-editor-fullscreen">
       <header class="editor-fullscreen-topbar">
         <div class="editor-fullscreen-topbar-left">
-          <button id="web-editor-exit" class="editor-topbar-icon-button" type="button" aria-label="Exit web editor">←</button>
+          <button id="web-editor-exit" class="editor-topbar-icon-button" type="button" aria-label="Exit website editor">←</button>
           <div class="editor-fullscreen-title">
             <span>Well College Global</span>
-            <strong>Live Editor</strong>
+            <strong>Website Editor</strong>
           </div>
-          <div class="editor-mode-switcher" role="group" aria-label="Website environment">
-            <button
-              type="button"
-              data-editor-environment="production"
-              class="${state.editorMode === "production" ? "is-active" : ""}"
-            >Production</button>
+
+          <div class="editor-mode-switcher" role="group" aria-label="Website view">
             <button
               type="button"
               data-editor-environment="beta"
               class="${state.editorMode === "beta" ? "is-active" : ""}"
-            >Beta</button>
+            >Edit preview</button>
+            <button
+              type="button"
+              data-editor-environment="production"
+              class="${state.editorMode === "production" ? "is-active" : ""}"
+            >View live site</button>
           </div>
+
           <span class="editor-connection-pill ${connected ? "is-connected" : "is-disconnected"}">
             <i></i>
-            ${connected ? editorBranchSummary() : "GitHub not connected"}
+            ${connected ? editorBranchSummary() : "Publishing unavailable"}
           </span>
         </div>
 
         <div class="editor-fullscreen-topbar-right">
+          <div class="editor-history-actions" role="group" aria-label="Undo and redo">
+            <button
+              id="web-editor-undo"
+              class="editor-topbar-icon-button"
+              type="button"
+              aria-label="Undo last change"
+              title="Undo"
+              ${canUndo ? "" : "disabled"}
+            >↶</button>
+            <button
+              id="web-editor-redo"
+              class="editor-topbar-icon-button"
+              type="button"
+              aria-label="Redo change"
+              title="Redo"
+              ${canRedo ? "" : "disabled"}
+            >↷</button>
+          </div>
+
           ${connected && betaBehind ? `
             <button id="web-editor-sync" class="editor-topbar-button" type="button">Update preview</button>
           ` : ""}
+
           ${connected && betaAhead && !betaBehind ? `
-            <button id="web-editor-promote" class="editor-topbar-button is-promote" type="button">Promote</button>
+            <button id="web-editor-promote" class="editor-topbar-button is-promote" type="button">Publish preview live</button>
           ` : ""}
-          <button id="web-editor-refresh" class="editor-topbar-button" type="button">Refresh</button>
-          <a id="web-editor-open-page" class="editor-topbar-button" target="_blank" rel="noopener noreferrer">Open ↗</a>
+
+          <button id="web-editor-refresh" class="editor-topbar-button" type="button">Refresh preview</button>
+          <a id="web-editor-open-page" class="editor-topbar-button" target="_blank" rel="noopener noreferrer">Open page ↗</a>
+
           <button
             id="web-editor-preview-submit"
             class="editor-topbar-button is-primary"
             type="button"
             ${editable && state.editorDirty ? "" : "disabled"}
-          >Push changes to beta</button>
+          >${pendingCount > 1 ? `Push ${pendingCount} pages to beta` : "Push changes to beta"}</button>
         </div>
       </header>
 
