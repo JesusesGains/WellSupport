@@ -99,8 +99,9 @@ export async function onRequestPost({ request, env }) {
 
     const current = await readOverrides(env, BETA_BRANCH);
     const next = {
-      version: 1,
-      pages: { ...(current.data.pages || {}) }
+      version: 2,
+      pages: { ...(current.data.pages || {}) },
+      ...(current.data.banner ? { banner: current.data.banner } : {})
     };
 
     const existing =
