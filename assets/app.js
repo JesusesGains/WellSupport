@@ -952,7 +952,7 @@ async function loadWebEditorStatus({ quiet = false } = {}) {
   } catch (error) {
     state.editorStatus = {
       connected: false,
-      error: error?.message || "Unable to load GitHub editor status."
+      error: error?.message || "Unable to load website publishing status."
     };
     if (!quiet) showToast(state.editorStatus.error, "error");
   } finally {
@@ -1203,8 +1203,6 @@ async function commitEditorBannerItems(items, {
   button = null
 } = {}) {
   const target = state.editorBannerTarget === "beta" ? "beta" : "production";
-  const branch = target === "beta" ? "beta-main" : "main";
-
   const result = await apiRequest("/editor-banner", {
     method: "POST",
     body: {
@@ -1225,9 +1223,11 @@ async function commitEditorBannerItems(items, {
   state.editorBannerDirty = false;
   state.editorBannerKey = "";
 
-  const verb = operation === "delete" ? "deleted and committed" : "committed";
+  const destination =
+    target === "production" ? "live website" : "preview website";
+  const verb = operation === "delete" ? "deleted" : "saved";
   showToast(
-    `Rolling banner ${verb} to WellWebsite/${branch}${result.commitSha ? ` · ${result.commitSha.slice(0, 7)}` : ""}.${target === "production" ? " Cloudflare deployment is starting." : ""}`
+    `Rolling banner ${verb} on the ${destination}.${target === "production" ? " The website update is starting." : ""}`
   );
 
   await loadWebEditorStatus({ quiet: true });
@@ -1238,7 +1238,7 @@ async function publishEditorBanner() {
   const button = document.querySelector("#editor-banner-save");
   if (button) {
     button.disabled = true;
-    button.textContent = "Committing…";
+    button.textContent = "Saving…";
   }
 
   try {
@@ -1247,12 +1247,12 @@ async function publishEditorBanner() {
       button
     });
   } catch (error) {
-    showToast(error?.message || "Unable to commit the rolling banner.", "error");
+    showToast(error?.message || "Unable to save the rolling banner.", "error");
     if (button) {
       button.disabled = false;
       button.textContent = state.editorBannerTarget === "production"
-        ? "Commit to production"
-        : "Commit to beta-main";
+        ? "Save live banner"
+        : "Save preview banner";
     }
   }
 }
@@ -1288,7 +1288,7 @@ async function deleteEditorBannerItem(index) {
     showToast(error?.message || "Unable to delete the rolling banner.", "error");
     if (button) {
       button.disabled = false;
-      button.textContent = "Delete & commit";
+      button.textContent = "Delete banner";
     }
   }
 }
@@ -1328,7 +1328,7 @@ async function syncWebEditorBeta() {
     showToast("Preview updated from the live website.");
     renderWebEditor();
   } catch (error) {
-    showToast(error?.message || "Unable to sync beta-main.", "error");
+    showToast(error?.message || "Unable to update the preview website.", "error");
     if (button) {
       button.disabled = false;
       button.textContent = "Update preview from live site";
@@ -1406,7 +1406,7 @@ async function promoteWebEditorBeta() {
     showToast("Preview approved. The live website deployment is starting.");
     renderWebEditor();
   } catch (error) {
-    showToast(error?.message || "Unable to promote beta-main.", "error");
+    showToast(error?.message || "Unable to publish the preview website.", "error");
     if (button) {
       button.disabled = false;
       button.textContent = "Publish preview to live site";
@@ -1834,10 +1834,10 @@ function renderWebEditor() {
       <section class="confirm-card is-danger" role="dialog" aria-modal="true" aria-labelledby="editor-banner-delete-title">
         <div class="confirm-icon is-danger">!</div>
         <h2 id="editor-banner-delete-title">Delete rolling banner?</h2>
-        <p id="editor-banner-delete-copy">This removes the selected rolling banner and creates a GitHub commit on the branch you are viewing.</p>
+        <p id="editor-banner-delete-copy">This removes the selected rolling banner from the website view you are editing.</p>
         <div class="confirm-actions">
           <button id="cancel-editor-banner-delete" class="confirm-secondary" type="button">Cancel</button>
-          <button id="confirm-editor-banner-delete" class="confirm-danger" type="button">Delete &amp; commit</button>
+          <button id="confirm-editor-banner-delete" class="confirm-danger" type="button">Delete banner</button>
         </div>
       </section>
     </div>
