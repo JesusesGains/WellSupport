@@ -6232,3 +6232,9 @@ body.has-support-confirm-modal {
     grid-template-columns: 38px minmax(0,1fr) 42px;
   }
 }
+
+
+.nav-badge.has-waiting {
+  background: #c84a42;
+  box-shadow: 0 0 0 3px rgba(200,74,66,.10);
+}
