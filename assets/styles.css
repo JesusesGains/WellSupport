@@ -6474,7 +6474,8 @@ body.has-support-confirm-modal {
   text-transform: uppercase;
 }
 
-.editor-selection-field input {
+.editor-selection-field input,
+.editor-selection-field select {
   width: 100%;
   min-height: 36px;
   padding: 0 9px;
@@ -6487,13 +6488,15 @@ body.has-support-confirm-modal {
   font-size: .58rem;
 }
 
-.editor-selection-field input:focus {
+.editor-selection-field input:focus,
+.editor-selection-field select:focus {
   border-color: rgba(48,70,96,.28);
   background: #fff;
   box-shadow: 0 0 0 3px rgba(48,70,96,.05);
 }
 
-.editor-selection-field input:disabled {
+.editor-selection-field input:disabled,
+.editor-selection-field select:disabled {
   color: #9da39f;
   background: #f1f3f2;
 }
@@ -6877,4 +6880,16 @@ body.has-support-confirm-modal {
 
 .editor-banner-actions {
   grid-template-columns: 1fr;
+}
+
+
+.editor-selection-field select {
+  appearance: auto;
+  cursor: pointer;
+}
+
+.editor-selection-field-hint {
+  color: #9aa19d;
+  font-size: .49rem;
+  line-height: 1.45;
 }

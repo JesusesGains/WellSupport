@@ -1134,6 +1134,105 @@ function editorPendingChangeCount() {
   return count;
 }
 
+const EDITOR_LINK_DESTINATIONS = [
+  ["index.html", "Home"],
+  ["qualifications.html", "Qualifications"],
+  ["short-courses.html", "Short Courses"],
+  ["enrol.html", "Enrol & Pay"],
+  ["enrol.html#enrol-free-courses", "Enrol & Pay · Free courses section"],
+  ["free-courses.html", "Free Courses & Samplers"],
+  ["pathways-to-health-coaching.html", "Pathways to Health Coaching · Free live session"],
+  ["free-coaching-webinar-series.html", "Free Coaching Webinar Series"],
+  ["about.html", "About Well College Global"],
+  ["testimonials.html", "Graduate Stories"],
+  ["faqs.html", "Frequently Asked Questions"],
+  ["contact.html", "Contact"],
+  ["questionnaire.html", "Could Health Coaching Fit You?"],
+  ["apply.html", "Request Course Details"],
+  ["session-bookings.html", "Book a Free Clarity Session"],
+  ["well-collective-blog.html", "Well Collective Blog"],
+  ["find-a-coach.html", "Find a Health Coach"],
+  ["study-pathways.html", "Study Pathways"],
+  ["accreditation-registration--insurance-options.html", "Accreditation, Registration & Insurance"],
+  ["health-coaching-electives.html", "Health Coaching Electives"],
+  ["nutrition-and-health.html", "Nutrition & Health Courses"],
+  ["holistic-health-courses.html", "Holistic Health Courses"],
+  ["psychology-and-coaching-courses.html", "Psychology & Coaching Courses"],
+  ["business-courses.html", "Business Courses for Coaches"],
+  ["diploma-in-nutrition-and-health-coaching.html", "Diploma in Nutrition & Health Coaching"],
+  ["womens-health-and-wellness-coach-certification.html", "Women’s Health & Wellness Coach Certification"],
+  ["icf-certified-coaching-professional-program.html", "ICF Certified Coaching Professional Program"],
+  ["diploma-lifestyle-coaching.html", "Diploma in Coaching for Lifestyle & Wellbeing"],
+  ["holisticwellnesspractitioner.html", "Bio Optimise Holistic Wellness Practitioner"],
+  ["the-ultimate-triple-qualification.html", "The Ultimate Triple Qualification"],
+  ["wellness-coaching-for-professionals.html", "Wellness Coaching for Professionals"],
+  ["professional-certificate-in-meal-planning.html", "Professional Certificate in Meal Planning"],
+  ["coach-gap-training.html", "Coach Gap Training"],
+  ["elcas-approved-provider.html", "ELCAS Approved Courses"],
+  ["vedicwellnessstudies.html", "Vedic Wellness Studies"],
+  ["human-nutrition.html", "Human Nutrition"],
+  ["biomarkers.html", "Biomarker & Functional Tests"],
+  ["ayurvedic-lifestyle.html", "Ayurvedic Lifestyle"],
+  ["sports-nutrition-for-optimal-performance.html", "Sports Nutrition for Optimal Performance"],
+  ["pregnancynutrition.html", "Nutrition for Conception, Pregnancy & Lactation"],
+  ["early-childhood-nutrition.html", "Early Childhood Nutrition"],
+  ["gut--microbiome-online-course.html", "Gut & Microbiome"],
+  ["botanical-healing.html", "Botanical Healing"],
+  ["meal-planning-for-healthy-living.html", "Meal Planning for Healthy Living"],
+  ["non-diet-approach.html", "Non-Diet Approach"],
+  ["nutrition-psychology.html", "Nutrition Psychology"],
+  ["super-nutrition.html", "Super Nutrition"],
+  ["womens-health-and-hormones.html", "Women’s Health & Hormones"],
+  ["weight-management-nutrition.html", "Weight Management Nutrition"],
+  ["integrative-wellness-techniques.html", "Integrative Wellness Techniques"],
+  ["coaching-clients-holistically.html", "Coaching Clients Holistically"],
+  ["holistic_wellness_intro.html", "Introduction to Holistic Wellness"],
+  ["mental-health--trauma-awareness.html", "Mental Health & Trauma Awareness"],
+  ["wellbeing-management-and-coaching-practices.html", "Wellbeing Management & Coaching Practices"],
+  ["cultivating-confidence.html", "Cultivating Confidence"],
+  ["psychology-and-wellbeing-foundations.html", "Psychology & Wellbeing Foundations"],
+  ["coaching-supervision-and-mentoring.html", "Coach Supervision & Mentoring"],
+  ["coaching-practicum.html", "Coaching Practicum"],
+  ["motivational-techniques.html", "Motivational Techniques"],
+  ["creating-healthy-lifestyle-courses-and-programs.html", "Creating Healthy Lifestyle Courses & Programs"],
+  ["grow-your-coaching-business.html", "Grow Your Coaching Business"],
+  ["professional-practice-and-business-ready-workshops.html", "Professional Practice & Business Ready Workshops"],
+  ["continuing-ed-courses.html", "Continuing Education Courses"],
+  ["construction-wellbeing.html", "Construction Wellbeing"],
+  ["feel-look-live-well.html", "Feel Well. Look Well. Live Well."],
+  ["terms-and-conditions.html", "Terms, Privacy & Enrolment Conditions"]
+];
+
+function normaliseEditorLinkDestination(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  if (/^(?:https?:|mailto:|tel:|#)/i.test(raw)) return raw;
+  if (raw === "/") return "index.html";
+  return raw.replace(/^\/+/, "");
+}
+
+function editorLinkDestinationOptions(currentValue) {
+  const current = normaliseEditorLinkDestination(currentValue);
+  const known = new Set(EDITOR_LINK_DESTINATIONS.map(([href]) => href));
+  const options = [
+    '<option value="">Choose a page…</option>'
+  ];
+
+  if (current && !known.has(current)) {
+    options.push(
+      `<option value="${escapeEditorAttribute(current)}" selected>Current custom link · ${escapeEditorAttribute(current)}</option>`
+    );
+  }
+
+  for (const [href, label] of EDITOR_LINK_DESTINATIONS) {
+    options.push(
+      `<option value="${escapeEditorAttribute(href)}" ${current === href ? "selected" : ""}>${escapeEditorAttribute(label)}</option>`
+    );
+  }
+
+  return options.join("");
+}
+
 const DEFAULT_EDITOR_BANNERS = [
   {
     id: "clarity-session",
@@ -2419,12 +2518,13 @@ function renderWebEditor() {
         </div>
         <label class="editor-selection-field">
           <span>Link destination</span>
-          <input
-            type="text"
+          <select
             data-editor-object-field="href"
-            value="${escapeEditorAttribute(attributes.href || "")}"
             ${editable ? "" : "disabled"}
           >
+            ${editorLinkDestinationOptions(attributes.href || "")}
+          </select>
+          <small class="editor-selection-field-hint">Choose a Well College page. The link updates instantly in the live draft.</small>
         </label>
       `;
     }
@@ -2437,7 +2537,7 @@ function renderWebEditor() {
         }
       });
 
-      input.addEventListener("input", () => {
+      const applyObjectFieldChange = () => {
         if (!editable || !selector) return;
 
         const field = input.dataset.editorObjectField;
@@ -2459,7 +2559,12 @@ function renderWebEditor() {
 
         setDirty();
         postDraft();
-      });
+      };
+
+      input.addEventListener("input", applyObjectFieldChange);
+      if (input.tagName === "SELECT") {
+        input.addEventListener("change", applyObjectFieldChange);
+      }
     });
   };
 
