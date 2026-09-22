@@ -2679,43 +2679,204 @@ function renderAnalyticsList(id, rows, mapper) {
   });
 }
 
-function renderTrafficBars(rows) {
-  const container = document.querySelector("#analytics-traffic-bars");
+function analyticsDateLabel(value) {
+  const date = new Date(`${value}T00:00:00Z`);
+  if (Number.isNaN(date.getTime())) return String(value || "");
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric"
+  }).format(date);
+}
+
+function normaliseAnalyticsDaily(rows, days) {
+  const lookup = new Map(
+    (rows || []).map((row) => [String(row?.date || ""), row])
+  );
+  const values = [];
+  const end = new Date();
+  end.setUTCHours(0, 0, 0, 0);
+
+  for (let offset = Math.max(0, Number(days || 30) - 1); offset >= 0; offset -= 1) {
+    const date = new Date(end);
+    date.setUTCDate(end.getUTCDate() - offset);
+    const key = date.toISOString().slice(0, 10);
+    const row = lookup.get(key) || {};
+    const visits = Number(row.visits ?? row.visitors ?? 0);
+    const views = Number(row.views ?? 0);
+
+    values.push({
+      date: key,
+      visits,
+      views,
+      pagesPerVisit: visits > 0 ? views / visits : 0
+    });
+  }
+
+  return values;
+}
+
+function createSvgElement(name, attributes = {}) {
+  const node = document.createElementNS("http://www.w3.org/2000/svg", name);
+  Object.entries(attributes).forEach(([key, value]) => {
+    node.setAttribute(key, String(value));
+  });
+  return node;
+}
+
+function smoothChartPath(points) {
+  if (!points.length) return "";
+  if (points.length === 1) return `M ${points[0][0]} ${points[0][1]}`;
+
+  let path = `M ${points[0][0]} ${points[0][1]}`;
+  for (let index = 1; index < points.length; index += 1) {
+    const previous = points[index - 1];
+    const current = points[index];
+    const midpoint = (previous[0] + current[0]) / 2;
+    path += ` C ${midpoint} ${previous[1]}, ${midpoint} ${current[1]}, ${current[0]} ${current[1]}`;
+  }
+  return path;
+}
+
+function renderCloudflareTrendChart(id, rows, {
+  value,
+  formatValue = formatNumber
+}) {
+  const container = document.querySelector(id);
   if (!container) return;
   container.replaceChildren();
 
   if (!rows?.length) {
     const empty = document.createElement("div");
-    empty.className = "analytics-empty";
-    empty.textContent = "Traffic will appear here once visits are recorded.";
+    empty.className = "cloudflare-chart-empty";
+    empty.textContent = "No Cloudflare data yet.";
     container.appendChild(empty);
     return;
   }
 
-  const max = Math.max(...rows.map((row) => Number(row.views || 0)), 1);
+  const width = 640;
+  const height = 220;
+  const padding = { top: 18, right: 12, bottom: 30, left: 12 };
+  const plotWidth = width - padding.left - padding.right;
+  const plotHeight = height - padding.top - padding.bottom;
+  const values = rows.map((row) => Math.max(0, Number(value(row) || 0)));
+  const max = Math.max(...values, 1);
 
-  rows.forEach((row) => {
-    const item = document.createElement("div");
-    item.className = "traffic-bar-item";
+  const points = rows.map((row, index) => {
+    const x = rows.length === 1
+      ? padding.left + plotWidth / 2
+      : padding.left + (index / (rows.length - 1)) * plotWidth;
+    const y = padding.top + plotHeight - (values[index] / max) * plotHeight;
+    return [x, y, row];
+  });
 
-    const bar = document.createElement("div");
-    bar.className = "traffic-bar-track";
+  const svg = createSvgElement("svg", {
+    viewBox: `0 0 ${width} ${height}`,
+    preserveAspectRatio: "none",
+    role: "img",
+    "aria-label": "Cloudflare traffic trend"
+  });
+  svg.classList.add("cloudflare-line-svg");
+
+  [0, 0.5, 1].forEach((ratio) => {
+    const y = padding.top + plotHeight * ratio;
+    svg.appendChild(createSvgElement("line", {
+      x1: padding.left,
+      x2: width - padding.right,
+      y1: y,
+      y2: y,
+      class: "cloudflare-chart-gridline"
+    }));
+  });
+
+  const path = smoothChartPath(points);
+  const area = `${path} L ${points[points.length - 1][0]} ${padding.top + plotHeight} L ${points[0][0]} ${padding.top + plotHeight} Z`;
+
+  svg.appendChild(createSvgElement("path", {
+    d: area,
+    class: "cloudflare-chart-area"
+  }));
+  svg.appendChild(createSvgElement("path", {
+    d: path,
+    class: "cloudflare-chart-line"
+  }));
+
+  const markerIndexes = new Set([0, Math.floor((points.length - 1) / 2), points.length - 1]);
+  points.forEach(([x, y, row], index) => {
+    if (!markerIndexes.has(index)) return;
+    const dot = createSvgElement("circle", {
+      cx: x,
+      cy: y,
+      r: 3.4,
+      class: "cloudflare-chart-dot"
+    });
+    const title = createSvgElement("title");
+    title.textContent = `${analyticsDateLabel(row.date)}: ${formatValue(value(row))}`;
+    dot.appendChild(title);
+    svg.appendChild(dot);
+  });
+
+  const axis = document.createElement("div");
+  axis.className = "cloudflare-chart-axis";
+  [rows[0], rows[Math.floor((rows.length - 1) / 2)], rows[rows.length - 1]].forEach((row) => {
+    const label = document.createElement("span");
+    label.textContent = analyticsDateLabel(row.date);
+    axis.appendChild(label);
+  });
+
+  container.append(svg, axis);
+}
+
+function renderCloudflareBars(id, rows, {
+  label,
+  value,
+  limit = 6
+}) {
+  const container = document.querySelector(id);
+  if (!container) return;
+  container.replaceChildren();
+
+  const data = (rows || [])
+    .map((row) => ({
+      row,
+      label: String(label(row) || "Unknown"),
+      value: Math.max(0, Number(value(row) || 0))
+    }))
+    .sort((a, b) => b.value - a.value)
+    .slice(0, limit);
+
+  if (!data.length) {
+    const empty = document.createElement("div");
+    empty.className = "cloudflare-chart-empty";
+    empty.textContent = "No Cloudflare data yet.";
+    container.appendChild(empty);
+    return;
+  }
+
+  const max = Math.max(...data.map((item) => item.value), 1);
+
+  data.forEach((item) => {
+    const row = document.createElement("div");
+    row.className = "cloudflare-bar-row";
+
+    const head = document.createElement("div");
+    head.className = "cloudflare-bar-head";
+
+    const copy = document.createElement("strong");
+    copy.textContent = item.label;
+
+    const metric = document.createElement("b");
+    metric.textContent = formatNumber(item.value);
+
+    const track = document.createElement("div");
+    track.className = "cloudflare-bar-track";
 
     const fill = document.createElement("span");
-    fill.style.height = `${Math.max(6, Math.round((Number(row.views || 0) / max) * 100))}%`;
-    bar.appendChild(fill);
+    fill.style.width = `${Math.max(4, Math.round((item.value / max) * 100))}%`;
+    track.appendChild(fill);
 
-    const label = document.createElement("small");
-    const date = new Date(`${row.date}T00:00:00`);
-    label.textContent = Number.isNaN(date.getTime())
-      ? row.date
-      : new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(date);
-
-    const value = document.createElement("b");
-    value.textContent = formatNumber(row.views);
-
-    item.append(value, bar, label);
-    container.appendChild(item);
+    head.append(copy, metric);
+    row.append(head, track);
+    container.appendChild(row);
   });
 }
 
@@ -2818,26 +2979,51 @@ function renderAnalyticsDashboard() {
         <article><span>Avg. engagement</span><strong id="metric-duration">0s</strong><small>first-party time until page exit</small></article>
       </section>
 
-      <section class="analytics-grid">
-        <article class="analytics-card is-wide">
+      <section class="cloudflare-chart-grid" aria-label="Cloudflare website graphs">
+        <article class="analytics-card cloudflare-chart-card">
+          <div class="analytics-card-head">
+            <div><span>Cloudflare</span><h2>Visits</h2></div>
+            <strong id="chart-total-visits" class="cloudflare-chart-total">0</strong>
+          </div>
+          <div id="analytics-visits-chart" class="cloudflare-chart"></div>
+        </article>
+
+        <article class="analytics-card cloudflare-chart-card">
+          <div class="analytics-card-head">
+            <div><span>Cloudflare</span><h2>Page views</h2></div>
+            <strong id="chart-total-pageviews" class="cloudflare-chart-total">0</strong>
+          </div>
+          <div id="analytics-pageviews-chart" class="cloudflare-chart"></div>
+        </article>
+
+        <article class="analytics-card cloudflare-chart-card">
+          <div class="analytics-card-head">
+            <div><span>Cloudflare</span><h2>Top countries</h2></div>
+          </div>
+          <div id="analytics-countries-chart" class="cloudflare-bars"></div>
+        </article>
+
+        <article class="analytics-card cloudflare-chart-card">
+          <div class="analytics-card-head">
+            <div><span>Cloudflare</span><h2>Devices</h2></div>
+          </div>
+          <div id="analytics-devices-chart" class="cloudflare-bars"></div>
+        </article>
+      </section>
+
+      <section class="analytics-grid analytics-detail-grid">
+        <article class="analytics-card">
           <div class="analytics-card-head">
             <div><span>Content</span><h2>Most viewed pages</h2></div>
           </div>
           <div id="analytics-top-pages" class="rank-bars"></div>
         </article>
 
-        <article class="analytics-card is-wide">
+        <article class="analytics-card">
           <div class="analytics-card-head">
             <div><span>Click off</span><h2>Where visitors leave</h2></div>
           </div>
           <div id="analytics-exit-pages" class="rank-bars"></div>
-        </article>
-
-        <article class="analytics-card is-wide">
-          <div class="analytics-card-head">
-            <div><span>Traffic</span><h2>Page views over time</h2></div>
-          </div>
-          <div id="analytics-traffic-bars" class="traffic-bars"></div>
         </article>
 
         <article class="analytics-card">
@@ -2846,18 +3032,8 @@ function renderAnalyticsDashboard() {
         </article>
 
         <article class="analytics-card">
-          <div class="analytics-card-head"><div><span>Audience</span><h2>Top countries</h2></div></div>
-          <div id="analytics-locations" class="analytics-list"></div>
-        </article>
-
-        <article class="analytics-card">
           <div class="analytics-card-head"><div><span>Acquisition</span><h2>Referrers</h2></div></div>
           <div id="analytics-referrers" class="analytics-list"></div>
-        </article>
-
-        <article class="analytics-card">
-          <div class="analytics-card-head"><div><span>Devices</span><h2>Visitor devices</h2></div></div>
-          <div id="analytics-devices" class="analytics-list"></div>
         </article>
 
         <article class="analytics-card">
@@ -2875,7 +3051,7 @@ function renderAnalyticsDashboard() {
           <div id="analytics-campaigns" class="analytics-list"></div>
         </article>
 
-        <article class="analytics-card is-wide privacy-card">
+        <article class="analytics-card privacy-card">
           <div class="analytics-card-head"><div><span>Privacy</span><h2>Tracking & storage inventory</h2></div></div>
           <div class="privacy-grid">
             <div><strong>Traffic source</strong><span>Cloudflare Web Analytics aggregated RUM data</span></div>
@@ -2950,6 +3126,31 @@ function paintAnalytics() {
     }
   }
 
+  const daily = normaliseAnalyticsDaily(summary.daily || [], state.analyticsDays);
+  const chartTotals = {
+    "#chart-total-visits": formatNumber(metrics.visits),
+    "#chart-total-pageviews": formatNumber(metrics.pageViews)
+  };
+  Object.entries(chartTotals).forEach(([selector, value]) => {
+    const element = document.querySelector(selector);
+    if (element) element.textContent = value;
+  });
+
+  renderCloudflareTrendChart("#analytics-visits-chart", daily, {
+    value: (row) => row.visits
+  });
+  renderCloudflareTrendChart("#analytics-pageviews-chart", daily, {
+    value: (row) => row.views
+  });
+  renderCloudflareBars("#analytics-countries-chart", summary.locations || [], {
+    label: (row) => row.country || "Unknown",
+    value: (row) => row.visitors
+  });
+  renderCloudflareBars("#analytics-devices-chart", summary.devices || [], {
+    label: (row) => String(row.device || "unknown").replace(/^./, (letter) => letter.toUpperCase()),
+    value: (row) => row.visitors
+  });
+
   renderRankBars("#analytics-top-pages", summary.topPages || [], {
     labelKey: "path",
     valueKey: "views",
@@ -2960,24 +3161,13 @@ function paintAnalytics() {
     valueKey: "exits",
     secondary: (row) => `Avg. ${formatDuration(row.avgDurationMs)} before exit`
   });
-  renderTrafficBars(summary.daily || []);
   renderAnalyticsList("#analytics-top-clicks", summary.topClicks, (row) => ({
     primary: row.label,
     secondary: row.href || row.kind || "",
     value: formatNumber(row.clicks)
   }));
-  renderAnalyticsList("#analytics-locations", summary.locations, (row) => ({
-    primary: row.country || "Unknown",
-    secondary: "Cloudflare visits",
-    value: formatNumber(row.visitors)
-  }));
   renderAnalyticsList("#analytics-referrers", summary.referrers, (row) => ({
     primary: row.host,
-    secondary: "Cloudflare visits",
-    value: formatNumber(row.visitors)
-  }));
-  renderAnalyticsList("#analytics-devices", summary.devices, (row) => ({
-    primary: String(row.device || "unknown").replace(/^./, (letter) => letter.toUpperCase()),
     secondary: "Cloudflare visits",
     value: formatNumber(row.visitors)
   }));
