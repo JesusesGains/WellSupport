@@ -64,6 +64,7 @@ const state = {
   editorTextDrafts: {},
   editorAttributeDrafts: {},
   editorStyleDrafts: {},
+  editorOrderDrafts: {},
   editorAccentDraft: "",
   editorFontDraft: "",
   editorHeadingDraft: "",
@@ -1017,6 +1018,17 @@ function cloneEditorStyleDrafts(value) {
 }
 
 
+function cloneEditorOrderDrafts(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value).map(([parent, children]) => [
+      parent,
+      Array.isArray(children) ? [...children] : []
+    ])
+  );
+}
+
+
 function editorDraftFromConfig(config = {}) {
   return {
     heading: String(config.heading || ""),
@@ -1028,7 +1040,8 @@ function editorDraftFromConfig(config = {}) {
         ? { ...config.text }
         : {},
     attributes: cloneEditorAttributeDrafts(config.attributes),
-    styles: cloneEditorStyleDrafts(config.styles)
+    styles: cloneEditorStyleDrafts(config.styles),
+    order: cloneEditorOrderDrafts(config.order)
   };
 }
 
@@ -1040,7 +1053,8 @@ function currentEditorDraftSnapshot() {
     font: state.editorFontDraft || "",
     text: { ...state.editorTextDrafts },
     attributes: cloneEditorAttributeDrafts(state.editorAttributeDrafts),
-    styles: cloneEditorStyleDrafts(state.editorStyleDrafts)
+    styles: cloneEditorStyleDrafts(state.editorStyleDrafts),
+    order: cloneEditorOrderDrafts(state.editorOrderDrafts)
   };
 }
 
@@ -1053,6 +1067,7 @@ function applyEditorDraftSnapshot(snapshot = {}) {
   state.editorTextDrafts = draft.text;
   state.editorAttributeDrafts = draft.attributes;
   state.editorStyleDrafts = draft.styles;
+  state.editorOrderDrafts = draft.order;
 }
 
 function storeCurrentEditorDraft() {
@@ -2465,6 +2480,7 @@ function renderWebEditor() {
     text: { ...state.editorTextDrafts },
     attributes: cloneEditorAttributeDrafts(state.editorAttributeDrafts),
     styles: cloneEditorStyleDrafts(state.editorStyleDrafts),
+    order: cloneEditorOrderDrafts(state.editorOrderDrafts),
     linkDestinations: EDITOR_LINK_DESTINATIONS.map(([href, label]) => ({ href, label })),
     headerOrder: [...state.editorNavigationHeaderOrder],
     shortCourseGroupOrder: [...state.editorNavigationGroupOrder],
@@ -2903,6 +2919,27 @@ function renderWebEditor() {
       return;
     }
 
+    if (event.data.type === "WCG_EDITOR_DOM_ORDER" && editable) {
+      const parentSelector = String(event.data.parentSelector || "");
+      const childSelectors = Array.isArray(event.data.childSelectors)
+        ? event.data.childSelectors.map((item) => String(item || "")).filter(Boolean)
+        : [];
+
+      if (!parentSelector || childSelectors.length < 2) return;
+
+      recordEditorHistory();
+      state.editorOrderDrafts = {
+        ...state.editorOrderDrafts,
+        [parentSelector]: childSelectors
+      };
+      storeCurrentEditorDraft();
+      state.editorDirty = editorPendingChangeCount() > 0;
+
+      const publish = document.querySelector("#web-editor-preview-submit");
+      if (publish) publish.disabled = false;
+      return;
+    }
+
     if (event.data.type === "WCG_EDITOR_TEXT_CHANGE" && editable) {
       const selector = String(event.data.selector || "");
       const text = String(event.data.text || "").slice(0, 4000);
@@ -3279,6 +3316,7 @@ function renderWebEditor() {
       Object.keys(state.editorTextDrafts || {}).length ||
       Object.keys(state.editorAttributeDrafts || {}).length ||
       Object.keys(state.editorStyleDrafts || {}).length ||
+      Object.keys(state.editorOrderDrafts || {}).length ||
       state.editorHeadingDraft ||
       state.editorCopyDraft ||
       state.editorAccentDraft ||
