@@ -2422,13 +2422,12 @@ function renderWebEditor() {
     window.setTimeout(() => loadEditorAssets({ quiet: true }), 0);
   }
 
-  // Use the actual deployed branch as the editing canvas so the visual editor
-  // matches the exact code users will review. Local drafts are still applied
-  // in-memory and do not publish until the top-right beta publish action.
-  const frameOrigin = () =>
-    state.editorMode === "beta"
-      ? betaPreviewOrigin
-      : productionPreviewOrigin;
+  // Keep the in-editor canvas on the public website origin. Cloudflare preview
+  // deployments can be protected by Access / anti-framing headers, which makes
+  // beta-main unreliable inside an iframe. Draft changes are applied locally
+  // over this canvas; the real beta deployment remains available through
+  // "Open beta review" after the user explicitly publishes.
+  const frameOrigin = () => productionPreviewOrigin;
 
   const reviewOrigin = () =>
     state.editorMode === "beta"
