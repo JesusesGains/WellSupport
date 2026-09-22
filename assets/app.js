@@ -2124,17 +2124,10 @@ function renderWebEditor() {
         : parsed.hostname + parsed.pathname;
 
     if (openPage) {
-      if (state.editorMode === "beta") {
-        // The dashboard's in-browser canvas is the authoritative editor review.
-        // Do not send staff to a Cloudflare branch alias unless preview branch
-        // deployments are explicitly configured for the Pages project.
-        openPage.hidden = true;
-        openPage.removeAttribute("href");
-      } else {
-        openPage.hidden = false;
-        openPage.href = reviewUrl;
-        openPage.textContent = "Open page ↗";
-      }
+      openPage.hidden = false;
+      openPage.href = reviewUrl;
+      openPage.textContent =
+        state.editorMode === "beta" ? "Open beta review ↗" : "Open page ↗";
     }
     if (previewPath) previewPath.textContent = display;
     if (browserUrl) browserUrl.textContent = display;
