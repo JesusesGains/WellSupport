@@ -35,7 +35,18 @@ const state = {
   editorMode: "beta",
   editorPage: "/",
   editorDirty: false,
-  editorLoading: false
+  editorLoading: false,
+  editorDraftKey: "",
+  editorTextDrafts: {},
+  editorAccentDraft: "",
+  editorFontDraft: "",
+  editorHeadingDraft: "",
+  editorCopyDraft: "",
+  editorColours: [],
+  editorSelectedText: null,
+  editorPickedColour: "",
+  editorDevice: "desktop",
+  editorMessageHandler: null
 };
 
 function configured() {
