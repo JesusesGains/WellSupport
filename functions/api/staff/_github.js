@@ -79,16 +79,20 @@ export async function readOverrides(env, branch) {
     return {
       sha: file.sha,
       data: {
-        version: 1,
+        version: Number(parsed?.version || 2),
         pages:
           parsed?.pages && typeof parsed.pages === "object"
             ? parsed.pages
-            : {}
+            : {},
+        banner:
+          parsed?.banner && typeof parsed.banner === "object"
+            ? parsed.banner
+            : null
       }
     };
   } catch (error) {
     if (error.status === 404) {
-      return { sha: null, data: { version: 1, pages: {} } };
+      return { sha: null, data: { version: 2, pages: {}, banner: null } };
     }
     throw error;
   }
