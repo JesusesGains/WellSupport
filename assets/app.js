@@ -46,7 +46,12 @@ const state = {
   editorSelectedText: null,
   editorPickedColour: "",
   editorDevice: "desktop",
-  editorMessageHandler: null
+  editorMessageHandler: null,
+  editorBannerTarget: "production",
+  editorBannerItems: [],
+  editorBannerInterval: 5200,
+  editorBannerDirty: false,
+  editorBannerKey: ""
 };
 
 function configured() {
