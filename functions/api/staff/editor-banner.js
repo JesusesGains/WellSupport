@@ -91,6 +91,7 @@ export async function onRequestPost({ request, env }) {
 
   const input = await request.json().catch(() => ({}));
   const target = input.target === "beta" ? BETA_BRANCH : MAIN_BRANCH;
+  const operation = input.operation === "delete" ? "delete" : "update";
   const items = cleanItems(input.items);
   const intervalMs = Math.max(
     3200,
@@ -113,7 +114,9 @@ export async function onRequestPost({ request, env }) {
       target,
       next,
       current.sha,
-      `Web Editor: update announcement banner (${target})`
+      operation === "delete"
+        ? `Rolling banner: delete announcement (${target})`
+        : `Rolling banner: update settings (${target})`
     );
 
     return sessionResponse({
