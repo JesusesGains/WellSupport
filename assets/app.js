@@ -843,9 +843,17 @@ function renderMessageBadge() {
   const badge = document.querySelector("#messages-nav-badge");
   if (!badge) return;
 
+  const waitingCount = state.conversations.filter(
+    (conversation) =>
+      conversation.status === "open" && !conversation.joined_agent_id
+  ).length;
+
   const count = totalUnreadMessages();
-  badge.textContent = count > 99 ? "99+" : String(count);
-  badge.hidden = count < 1;
+  const displayCount = Math.max(count, waitingCount);
+
+  badge.textContent = displayCount > 99 ? "99+" : String(displayCount);
+  badge.hidden = displayCount < 1;
+  badge.classList.toggle("has-waiting", waitingCount > 0);
 }
 
 function updatePrimaryNavigation() {
