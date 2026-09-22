@@ -2172,6 +2172,152 @@ textarea {
   font-size: .59rem;
 }
 
+.cloudflare-chart-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.cloudflare-chart-card {
+  min-height: 330px;
+  overflow: hidden;
+}
+
+.cloudflare-chart-card .analytics-card-head {
+  min-height: 50px;
+  margin-bottom: 10px;
+}
+
+.cloudflare-chart-total {
+  color: var(--wcg-navy);
+  font-family: "DM Serif Display", Georgia, serif;
+  font-size: 1.65rem;
+  font-weight: 400;
+  line-height: 1;
+}
+
+.cloudflare-chart {
+  display: grid;
+  min-height: 235px;
+  grid-template-rows: minmax(0, 1fr) auto;
+  align-items: stretch;
+}
+
+.cloudflare-line-svg {
+  width: 100%;
+  height: 205px;
+  overflow: visible;
+}
+
+.cloudflare-chart-gridline {
+  stroke: rgba(48,70,96,.075);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.cloudflare-chart-area {
+  fill: rgba(66,81,76,.09);
+}
+
+.cloudflare-chart-line {
+  fill: none;
+  stroke: var(--wcg-forest);
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.cloudflare-chart-dot {
+  fill: #fff;
+  stroke: var(--wcg-forest);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.cloudflare-chart-axis {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  margin-top: 3px;
+  color: #9ba29e;
+  font-size: .53rem;
+  font-weight: 700;
+}
+
+.cloudflare-chart-axis span:nth-child(2) {
+  text-align: center;
+}
+
+.cloudflare-chart-axis span:last-child {
+  text-align: right;
+}
+
+.cloudflare-bars {
+  display: grid;
+  gap: 15px;
+  min-height: 235px;
+  align-content: start;
+  padding-top: 6px;
+}
+
+.cloudflare-bar-row {
+  display: grid;
+  gap: 7px;
+}
+
+.cloudflare-bar-head {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.cloudflare-bar-head strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #59646e;
+  font-size: .68rem;
+  font-weight: 760;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cloudflare-bar-head b {
+  flex: 0 0 auto;
+  color: var(--wcg-navy);
+  font-size: .68rem;
+  font-weight: 850;
+}
+
+.cloudflare-bar-track {
+  height: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(48,70,96,.055);
+}
+
+.cloudflare-bar-track > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--wcg-forest);
+}
+
+.cloudflare-chart-empty {
+  display: grid;
+  min-height: 220px;
+  place-items: center;
+  color: #a1a6a3;
+  font-size: .66rem;
+  text-align: center;
+}
+
+.analytics-detail-grid {
+  margin-top: 0;
+}
+
 .analytics-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2375,6 +2521,10 @@ textarea {
 }
 
 @media (max-width: 940px) {
+  .cloudflare-chart-grid {
+    grid-template-columns: 1fr;
+  }
+
   .analytics-header {
     align-items: flex-start;
     flex-direction: column;
