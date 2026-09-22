@@ -1854,7 +1854,7 @@ function renderWebEditor() {
   const previewPath = document.querySelector("#web-editor-preview-path");
   const browserUrl = document.querySelector("#web-editor-browser-url");
   const publishButton = document.querySelector("#web-editor-preview-submit");
-  const selectedText = document.querySelector("#editor-selected-text");
+  const selectedItem = document.querySelector("#editor-selected-item");
   const pickedValue = document.querySelector("#editor-picked-colour-value");
   const pickedSwatch = document.querySelector("#editor-picked-colour-swatch");
   const applyPickedAccent = document.querySelector("#editor-apply-picked-accent");
@@ -1885,13 +1885,24 @@ function renderWebEditor() {
     accent: state.editorAccentDraft || "",
     font: state.editorFontDraft || "",
     text: { ...state.editorTextDrafts },
+    attributes: cloneEditorAttributeDrafts(state.editorAttributeDrafts),
     editable
   });
 
   const setDirty = () => {
     if (!editable) return;
-    state.editorDirty = true;
-    if (publishButton) publishButton.disabled = false;
+
+    storeCurrentEditorDraft();
+    state.editorDirty = editorPendingChangeCount() > 0;
+
+    if (publishButton) {
+      const count = editorPendingChangeCount();
+      publishButton.disabled = count < 1;
+      publishButton.textContent =
+        count > 1
+          ? `Push ${count} pages to beta`
+          : "Push changes to beta";
+    }
   };
 
   const postDraft = () => {
@@ -1912,20 +1923,123 @@ function renderWebEditor() {
     );
   };
 
-  const renderSelectedText = () => {
-    if (!selectedText) return;
-    const strong = selectedText.querySelector("strong");
-    const value = selectedText.querySelector("span");
+  const renderSelectedItem = () => {
+    if (!selectedItem) return;
 
-    selectedText.classList.toggle("has-selection", Boolean(state.editorSelectedText));
-    if (strong) {
-      strong.textContent = state.editorSelectedText
-        ? `${String(state.editorSelectedText.tag || "text").toUpperCase()} selected`
-        : "Nothing selected";
+    const selectedText = state.editorSelectedText;
+    const selectedObject = state.editorSelectedObject;
+
+    if (!selectedText && !selectedObject) {
+      selectedItem.innerHTML = `
+        <div class="editor-selection-empty">
+          <strong>Nothing selected</strong>
+          <span>${editable
+            ? "Move over the website preview and click the item you want to change."
+            : "Choose Edit preview above to make changes."}</span>
+        </div>
+      `;
+      return;
     }
-    if (value) {
-      value.textContent = state.editorSelectedText?.text || "";
+
+    if (selectedText) {
+      selectedItem.innerHTML = `
+        <div class="editor-selection-summary">
+          <span class="editor-selection-type">Text</span>
+          <strong>${escapeEditorAttribute(
+            String(selectedText.text || "").trim().slice(0, 120) || "Selected text"
+          )}</strong>
+          <small>${editable
+            ? "Type directly on the selected text in the website preview."
+            : "This is a read-only view of the live website."}</small>
+        </div>
+      `;
+      return;
     }
+
+    const selector = String(selectedObject.selector || "");
+    const tag = String(selectedObject.tag || "").toLowerCase();
+    const attributes =
+      state.editorAttributeDrafts?.[selector] ||
+      selectedObject.attributes ||
+      {};
+
+    if (tag === "img") {
+      selectedItem.innerHTML = `
+        <div class="editor-selection-summary">
+          <span class="editor-selection-type">Image</span>
+          <strong>Image selected</strong>
+          <small>Change the image address or its accessibility description.</small>
+        </div>
+        <label class="editor-selection-field">
+          <span>Image URL</span>
+          <input
+            type="text"
+            data-editor-object-field="src"
+            value="${escapeEditorAttribute(attributes.src || "")}"
+            ${editable ? "" : "disabled"}
+          >
+        </label>
+        <label class="editor-selection-field">
+          <span>Image description</span>
+          <input
+            type="text"
+            data-editor-object-field="alt"
+            value="${escapeEditorAttribute(attributes.alt || "")}"
+            ${editable ? "" : "disabled"}
+          >
+        </label>
+      `;
+    } else {
+      selectedItem.innerHTML = `
+        <div class="editor-selection-summary">
+          <span class="editor-selection-type">Link</span>
+          <strong>Link selected</strong>
+          <small>Change where this button or link sends visitors.</small>
+        </div>
+        <label class="editor-selection-field">
+          <span>Link destination</span>
+          <input
+            type="text"
+            data-editor-object-field="href"
+            value="${escapeEditorAttribute(attributes.href || "")}"
+            ${editable ? "" : "disabled"}
+          >
+        </label>
+      `;
+    }
+
+    selectedItem.querySelectorAll("[data-editor-object-field]").forEach((input) => {
+      input.addEventListener("focus", () => {
+        if (!input.dataset.historyCaptured) {
+          recordEditorHistory();
+          input.dataset.historyCaptured = "1";
+        }
+      });
+
+      input.addEventListener("input", () => {
+        if (!editable || !selector) return;
+
+        const field = input.dataset.editorObjectField;
+        state.editorAttributeDrafts = {
+          ...state.editorAttributeDrafts,
+          [selector]: {
+            ...(state.editorAttributeDrafts[selector] || selectedObject.attributes || {}),
+            [field]: String(input.value || "").slice(0, 2000)
+          }
+        };
+
+        state.editorSelectedObject = {
+          ...selectedObject,
+          attributes: {
+            ...(selectedObject.attributes || {}),
+            ...(state.editorAttributeDrafts[selector] || {})
+          }
+        };
+
+        setDirty();
+        postDraft();
+      });
+    });
   };
 
   const renderColours = () => {
