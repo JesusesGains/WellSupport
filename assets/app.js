@@ -786,190 +786,204 @@ function renderWebEditor() {
   const betaBehind = Number(comparison.behindBy || 0) > 0;
   const betaAhead = Number(comparison.aheadBy || 0) > 0;
   const editable = state.editorMode === "beta" && connected && !betaBehind;
+  const config = editorPageConfig(
+    state.editorMode === "beta" ? "beta" : "production",
+    state.editorPage
+  );
 
-  panel.className = "chat-panel web-editor-panel";
+  const sourceSha =
+    state.editorMode === "beta"
+      ? state.editorStatus?.beta?.sha || "beta"
+      : state.editorStatus?.main?.sha || "main";
+  const draftKey = `${state.editorMode}:${state.editorPage}:${sourceSha}`;
+
+  if (state.editorDraftKey !== draftKey && !state.editorDirty) {
+    state.editorDraftKey = draftKey;
+    state.editorTextDrafts =
+      config.text && typeof config.text === "object"
+        ? { ...config.text }
+        : {};
+    state.editorAccentDraft = String(config.accent || "");
+    state.editorFontDraft = String(config.font || "");
+    state.editorHeadingDraft = String(config.heading || "");
+    state.editorCopyDraft = String(config.copy || "");
+    state.editorColours = [];
+    state.editorSelectedText = null;
+    state.editorPickedColour = "";
+  }
+
+  const currentAccent =
+    /^#[0-9a-f]{6}$/i.test(state.editorAccentDraft)
+      ? state.editorAccentDraft.toUpperCase()
+      : "#304660";
+
+  panel.className = "chat-panel web-editor-panel is-fullscreen";
   panel.innerHTML = `
-    <div class="web-editor-view">
-      <header class="web-editor-header">
-        <div>
-          <div class="eyebrow"><i aria-hidden="true"></i> Website management</div>
-          <h1>Web Editor</h1>
-          <p>Compare production with beta-main, edit the beta preview, then deliberately promote approved changes to main.</p>
-        </div>
-        <a
-          class="web-editor-open-site"
-          href="${publicOrigin}/"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Open public site
-          <span aria-hidden="true">↗</span>
-        </a>
-      </header>
-
-      <section class="editor-environments" aria-label="Website environments">
-        <button
-          class="editor-environment-card ${state.editorMode === "production" ? "is-active" : ""}"
-          type="button"
-          data-editor-environment="production"
-        >
-          <span class="editor-env-label">Production Preview</span>
-          <strong>wellwebsite.pages.dev</strong>
-          <small><b>main</b> · read-only reference</small>
-        </button>
-        <div class="editor-environment-arrow" aria-hidden="true">→</div>
-        <button
-          class="editor-environment-card ${state.editorMode === "beta" ? "is-active" : ""}"
-          type="button"
-          data-editor-environment="beta"
-        >
-          <span class="editor-env-label">Beta Preview</span>
-          <strong>beta-main.wellwebsite.pages.dev</strong>
-          <small><b>beta-main</b> · editable staging</small>
-        </button>
-      </section>
-
-      <section class="editor-github-status ${connected ? "is-connected" : "is-disconnected"}">
-        <div class="editor-github-status-copy">
-          <span class="editor-status-dot"></span>
-          <div>
-            <strong>${connected ? "GitHub connected" : "GitHub connection required"}</strong>
-            <small>${connected ? editorBranchSummary() : "Add the Cloudflare secret WELLWEBSITE_GITHUB_TOKEN to enable publishing."}</small>
+    <div class="web-editor-fullscreen">
+      <header class="editor-fullscreen-topbar">
+        <div class="editor-fullscreen-topbar-left">
+          <button id="web-editor-exit" class="editor-topbar-icon-button" type="button" aria-label="Exit web editor">←</button>
+          <div class="editor-fullscreen-title">
+            <span>Well College Global</span>
+            <strong>Live Editor</strong>
           </div>
+          <div class="editor-mode-switcher" role="group" aria-label="Website environment">
+            <button
+              type="button"
+              data-editor-environment="production"
+              class="${state.editorMode === "production" ? "is-active" : ""}"
+            >Production</button>
+            <button
+              type="button"
+              data-editor-environment="beta"
+              class="${state.editorMode === "beta" ? "is-active" : ""}"
+            >Beta</button>
+          </div>
+          <span class="editor-connection-pill ${connected ? "is-connected" : "is-disconnected"}">
+            <i></i>
+            ${connected ? editorBranchSummary() : "GitHub not connected"}
+          </span>
         </div>
-        <div class="editor-github-actions">
+
+        <div class="editor-fullscreen-topbar-right">
           ${connected && betaBehind ? `
-            <button id="web-editor-sync" class="editor-action-button is-secondary" type="button">
-              Sync beta from production
-            </button>
+            <button id="web-editor-sync" class="editor-topbar-button" type="button">Sync beta</button>
           ` : ""}
           ${connected && betaAhead && !betaBehind ? `
-            <button id="web-editor-promote" class="editor-action-button is-promote" type="button">
-              Promote to production
-            </button>
+            <button id="web-editor-promote" class="editor-topbar-button is-promote" type="button">Promote</button>
           ` : ""}
+          <button id="web-editor-refresh" class="editor-topbar-button" type="button">Refresh</button>
+          <a id="web-editor-open-page" class="editor-topbar-button" target="_blank" rel="noopener noreferrer">Open ↗</a>
+          <button
+            id="web-editor-preview-submit"
+            class="editor-topbar-button is-primary"
+            type="button"
+            ${editable && state.editorDirty ? "" : "disabled"}
+          >Publish to beta-main</button>
         </div>
-      </section>
+      </header>
 
-      <section class="editor-workflow" aria-label="Website publishing workflow">
-        <article class="${state.editorMode === "beta" ? "is-active" : ""}">
-          <span>01</span>
-          <div><strong>Edit beta</strong><small>Draft changes against beta-main</small></div>
-        </article>
-        <i aria-hidden="true"></i>
-        <article class="${betaAhead ? "is-active" : ""}">
-          <span>02</span>
-          <div><strong>Review preview</strong><small>beta-main.wellwebsite.pages.dev</small></div>
-        </article>
-        <i aria-hidden="true"></i>
-        <article class="${!betaAhead && connected && !betaBehind ? "is-complete" : ""}">
-          <span>03</span>
-          <div><strong>Production</strong><small>promote beta-main → main</small></div>
-        </article>
-      </section>
+      <div class="editor-fullscreen-body">
+        <aside class="editor-inspector">
+          <div class="editor-inspector-scroll">
+            <section class="editor-inspector-section is-first">
+              <div class="editor-inspector-heading">
+                <span>Page</span>
+                <small>${state.editorMode === "beta" ? "Editable preview" : "Read-only reference"}</small>
+              </div>
+              <select id="web-editor-page" class="editor-inspector-select">
+                <option value="/">Home</option>
+                <option value="/qualifications.html">Qualifications</option>
+                <option value="/short-courses.html">Short Courses</option>
+                <option value="/about.html">About</option>
+                <option value="/testimonials.html">Testimonials</option>
+                <option value="/faqs.html">FAQs</option>
+                <option value="/contact.html">Contact</option>
+              </select>
+            </section>
 
-      <section class="web-editor-grid">
-        <aside class="editor-controls">
-          <div class="editor-controls-head">
-            <span>${state.editorMode === "beta" ? "Beta editor" : "Production reference"}</span>
-            <strong>${state.editorMode === "beta" ? "Edit beta-main" : "View production"}</strong>
-          </div>
+            <section class="editor-inspector-section">
+              <div class="editor-inspector-heading">
+                <span>Text editing</span>
+                <small>Click text in the page</small>
+              </div>
+              <div id="editor-selected-text" class="editor-selected-text ${state.editorSelectedText ? "has-selection" : ""}">
+                <strong>${state.editorSelectedText ? "Selected text" : "Nothing selected"}</strong>
+                <span></span>
+                <small>${editable
+                  ? "Click any highlighted text in the beta preview and type directly on the page."
+                  : "Switch to Beta to edit text directly on the page."}</small>
+              </div>
+            </section>
 
-          <label class="editor-field">
-            <span>Website page</span>
-            <select id="web-editor-page">
-              <option value="/">Home</option>
-              <option value="/qualifications.html">Qualifications</option>
-              <option value="/short-courses.html">Short Courses</option>
-              <option value="/about.html">About</option>
-              <option value="/testimonials.html">Testimonials</option>
-              <option value="/faqs.html">FAQs</option>
-              <option value="/contact.html">Contact</option>
-            </select>
-          </label>
+            <section class="editor-inspector-section">
+              <div class="editor-inspector-heading">
+                <span>Colours used</span>
+                <small id="editor-colour-count">${state.editorColours.length ? `${state.editorColours.length} detected` : "Scanning page…"}</small>
+              </div>
+              <div id="editor-colour-swatches" class="editor-colour-swatches"></div>
+            </section>
 
-          <fieldset id="web-editor-fields" ${editable ? "" : "disabled"}>
-            <div class="editor-section">
-              <span class="editor-section-label">Content</span>
-              <label class="editor-field">
-                <span>Main heading</span>
-                <textarea id="web-editor-heading" rows="3" placeholder="Leave blank to use the source heading…"></textarea>
-              </label>
-              <label class="editor-field">
-                <span>Lead copy</span>
-                <textarea id="web-editor-copy" rows="5" placeholder="Leave blank to use the source page copy…"></textarea>
-              </label>
-            </div>
+            <section class="editor-inspector-section">
+              <div class="editor-inspector-heading">
+                <span>Colour analyser</span>
+                <small>Exact screen colour</small>
+              </div>
+              <button id="editor-eyedropper" class="editor-eyedropper-button" type="button">
+                <span class="editor-eyedropper-icon">⌾</span>
+                <span>
+                  <strong>Pick a colour</strong>
+                  <small>Hover anywhere on screen, then click to capture the exact hex.</small>
+                </span>
+              </button>
 
-            <div class="editor-section">
-              <span class="editor-section-label">Appearance</span>
-              <label class="editor-field">
-                <span>Primary navy / accent</span>
-                <div class="editor-colour-row">
-                  <input id="web-editor-accent" type="color" value="#304660" />
-                  <input id="web-editor-accent-text" type="text" value="#304660" maxlength="7" />
+              <div class="editor-picked-colour">
+                <span id="editor-picked-colour-swatch" style="--picked-colour:${state.editorPickedColour || currentAccent}"></span>
+                <div>
+                  <small>Selected hex</small>
+                  <strong id="editor-picked-colour-value">${state.editorPickedColour || currentAccent}</strong>
                 </div>
-              </label>
-              <label class="editor-field">
-                <span>Heading typography</span>
-                <select id="web-editor-font">
-                  <option>DM Serif Display</option>
-                  <option>DM Sans</option>
-                  <option>System Sans</option>
-                </select>
-              </label>
-            </div>
-          </fieldset>
+                <button id="editor-copy-colour" type="button">Copy</button>
+              </div>
 
-          <div class="editor-draft-note">
-            <strong>${state.editorMode === "beta" ? "Beta changes only" : "Production is read-only"}</strong>
-            <span>${state.editorMode === "beta"
-              ? "Draft edits affect only the embedded beta preview until you commit them to beta-main."
-              : "Switch to Beta Preview to make changes. Production cannot be edited directly from this dashboard."}</span>
+              <button
+                id="editor-apply-picked-accent"
+                class="editor-apply-colour"
+                type="button"
+                ${editable && state.editorPickedColour ? "" : "disabled"}
+              >Use as page accent</button>
+            </section>
+
+            ${!connected ? `
+              <section class="editor-inspector-section">
+                <div class="editor-secret-callout">
+                  <strong>GitHub connection required</strong>
+                  <span>Add the production Cloudflare secret:</span>
+                  <code>WELLWEBSITE_GITHUB_TOKEN</code>
+                </div>
+              </section>
+            ` : ""}
           </div>
 
-          ${!connected ? `
-            <div class="editor-secret-callout">
-              <strong>Connect GitHub</strong>
-              <span>Cloudflare secret required:</span>
-              <code>WELLWEBSITE_GITHUB_TOKEN</code>
-              <small>Use a fine-grained GitHub token restricted to the WellWebsite repository with Contents: Read and write.</small>
+          <div class="editor-devtools-chatbox">
+            <div>
+              <span class="editor-devtools-mark">&lt;/&gt;</span>
+              <div>
+                <strong>Chrome DevTools</strong>
+                <small>Inspect DOM, network and performance for the page currently shown.</small>
+              </div>
             </div>
-          ` : ""}
-
-          <div class="editor-draft-note is-devtools-note">
-            <strong>Chrome DevTools</strong>
-            <span>Use the built-in device sizes for routine checks, or open the selected preview in Chrome for DOM, network and performance inspection.</span>
+            <button id="web-editor-inspect" type="button">Open current page in Chrome</button>
           </div>
         </aside>
 
-        <div class="editor-preview-shell">
-          <div class="editor-preview-toolbar">
-            <div>
+        <main class="editor-live-workspace">
+          <div class="editor-live-toolbar">
+            <div class="editor-live-location">
               <span class="editor-status-dot"></span>
-              <strong id="web-editor-preview-title">${state.editorMode === "beta" ? "Beta Preview" : "Production Preview"}</strong>
-              <small id="web-editor-preview-path"></small>
+              <div>
+                <strong id="web-editor-preview-title">${state.editorMode === "beta" ? "Beta Preview" : "Production Preview"}</strong>
+                <small id="web-editor-preview-path"></small>
+              </div>
             </div>
 
             <div class="editor-device-toolbar" role="group" aria-label="Preview device size">
-              <button class="is-active" type="button" data-editor-device="desktop">Desktop</button>
-              <button type="button" data-editor-device="tablet">Tablet</button>
-              <button type="button" data-editor-device="mobile">Mobile</button>
+              <button class="${state.editorDevice === "desktop" ? "is-active" : ""}" type="button" data-editor-device="desktop">Desktop</button>
+              <button class="${state.editorDevice === "tablet" ? "is-active" : ""}" type="button" data-editor-device="tablet">Tablet</button>
+              <button class="${state.editorDevice === "mobile" ? "is-active" : ""}" type="button" data-editor-device="mobile">Mobile</button>
             </div>
 
-            <div class="editor-preview-actions">
-              <button id="web-editor-refresh" type="button">Refresh</button>
-              <button id="web-editor-inspect" type="button">Inspect in Chrome</button>
-              <a id="web-editor-open-page" target="_blank" rel="noopener noreferrer">Open preview ↗</a>
+            <div class="editor-live-help">
+              ${editable ? "Click text to edit · changes stay draft until published" : "Production is read-only"}
             </div>
           </div>
 
-          <div class="editor-preview-placeholder">
-            <div id="web-editor-browser" class="editor-preview-browser" data-device="desktop">
+          <div class="editor-preview-placeholder is-fullscreen">
+            <div id="web-editor-browser" class="editor-preview-browser is-fullscreen" data-device="${state.editorDevice}">
               <div class="editor-preview-browser-bar">
                 <i></i><i></i><i></i>
                 <span id="web-editor-browser-url"></span>
-                <b>${state.editorMode === "beta" ? "BETA" : "PROD"}</b>
+                <b class="${state.editorMode === "beta" ? "is-beta" : ""}">${state.editorMode === "beta" ? "BETA" : "PROD"}</b>
               </div>
               <iframe
                 id="web-editor-frame"
@@ -981,29 +995,17 @@ function renderWebEditor() {
             </div>
           </div>
 
-          <footer class="editor-publish-bar">
+          <footer class="editor-fullscreen-footer">
             <div>
-              <strong>${state.editorMode === "beta" ? "beta-main editing" : "main production reference"}</strong>
+              <strong>${state.editorMode === "beta" ? "beta-main draft" : "main production reference"}</strong>
               <span>${state.editorMode === "beta"
-                ? "Save to beta-main → review Cloudflare Beta Preview → promote to main."
-                : "Production changes only when approved beta-main work is promoted."}</span>
+                ? "Direct text edits and page accent changes are committed only when Publish to beta-main is pressed."
+                : "Switch to Beta to make changes."}</span>
             </div>
-            <div class="editor-publish-actions">
-              <button class="is-secondary" type="button" id="web-editor-discard" ${state.editorMode === "beta" ? "" : "disabled"}>
-                Reset draft
-              </button>
-              <button
-                class="is-primary"
-                type="button"
-                id="web-editor-preview-submit"
-                ${editable && state.editorDirty ? "" : "disabled"}
-              >
-                Publish to beta-main
-              </button>
-            </div>
+            <button id="web-editor-discard" class="editor-topbar-button" type="button" ${state.editorMode === "beta" ? "" : "disabled"}>Reset draft</button>
           </footer>
-        </div>
-      </section>
+        </main>
+      </div>
     </div>
 
     <div id="editor-promote-modal" class="confirm-modal" hidden>
@@ -1016,9 +1018,7 @@ function renderWebEditor() {
       <section class="confirm-card" role="dialog" aria-modal="true" aria-labelledby="editor-promote-title">
         <div class="confirm-icon">${editorIcon()}</div>
         <h2 id="editor-promote-title">Promote beta to production?</h2>
-        <p>
-          This merges <strong>beta-main</strong> into <strong>main</strong>. Cloudflare will then deploy the approved version to wellwebsite.pages.dev and the production website.
-        </p>
+        <p>This merges <strong>beta-main</strong> into <strong>main</strong>.</p>
         <div class="confirm-actions">
           <button id="cancel-editor-promote" class="confirm-secondary" type="button">Cancel</button>
           <button id="confirm-editor-promote" class="confirm-danger" type="button">Promote to production</button>
@@ -1028,17 +1028,16 @@ function renderWebEditor() {
   `;
 
   const pageSelect = document.querySelector("#web-editor-page");
-  const heading = document.querySelector("#web-editor-heading");
-  const copy = document.querySelector("#web-editor-copy");
-  const accent = document.querySelector("#web-editor-accent");
-  const accentText = document.querySelector("#web-editor-accent-text");
-  const font = document.querySelector("#web-editor-font");
   const frame = document.querySelector("#web-editor-frame");
   const browser = document.querySelector("#web-editor-browser");
   const openPage = document.querySelector("#web-editor-open-page");
   const previewPath = document.querySelector("#web-editor-preview-path");
   const browserUrl = document.querySelector("#web-editor-browser-url");
   const publishButton = document.querySelector("#web-editor-preview-submit");
+  const selectedText = document.querySelector("#editor-selected-text");
+  const pickedValue = document.querySelector("#editor-picked-colour-value");
+  const pickedSwatch = document.querySelector("#editor-picked-colour-swatch");
+  const applyPickedAccent = document.querySelector("#editor-apply-picked-accent");
 
   if (pageSelect) pageSelect.value = state.editorPage;
 
@@ -1057,47 +1056,102 @@ function renderWebEditor() {
     return url.toString();
   };
 
-  const loadFields = () => {
-    const config = editorPageConfig(
-      state.editorMode === "beta" ? "beta" : "production",
-      state.editorPage
-    );
-
-    if (heading) heading.value = config.heading || "";
-    if (copy) copy.value = config.copy || "";
-    if (accent) accent.value = config.accent || "#304660";
-    if (accentText) accentText.value = config.accent || "#304660";
-    if (font) font.value = config.font || "DM Serif Display";
-    state.editorDirty = false;
-    if (publishButton) publishButton.disabled = true;
-  };
-
   const draftPayload = () => ({
-    heading: heading?.value || "",
-    copy: copy?.value || "",
-    accent: /^#[0-9a-f]{6}$/i.test(accentText?.value || "")
-      ? accentText.value
-      : accent?.value || "#304660",
-    font: font?.value || "DM Serif Display"
+    heading: state.editorHeadingDraft || "",
+    copy: state.editorCopyDraft || "",
+    accent: state.editorAccentDraft || "",
+    font: state.editorFontDraft || "",
+    text: { ...state.editorTextDrafts },
+    editable
   });
 
-  const postDraft = () => {
-    if (state.editorMode !== "beta") return;
+  const setDirty = () => {
+    if (!editable) return;
+    state.editorDirty = true;
+    if (publishButton) publishButton.disabled = false;
+  };
 
-    frame?.contentWindow?.postMessage(
+  const postDraft = () => {
+    if (!frame?.contentWindow) return;
+    frame.contentWindow.postMessage(
       {
         type: "WCG_EDITOR_PREVIEW",
         payload: draftPayload()
       },
-      betaPreviewOrigin
+      activeOrigin()
     );
   };
 
-  const markDirty = () => {
-    if (!editable) return;
-    state.editorDirty = true;
-    if (publishButton) publishButton.disabled = false;
-    postDraft();
+  const requestColours = () => {
+    frame?.contentWindow?.postMessage(
+      { type: "WCG_EDITOR_SCAN_COLOURS" },
+      activeOrigin()
+    );
+  };
+
+  const renderSelectedText = () => {
+    if (!selectedText) return;
+    const strong = selectedText.querySelector("strong");
+    const value = selectedText.querySelector("span");
+
+    selectedText.classList.toggle("has-selection", Boolean(state.editorSelectedText));
+    if (strong) {
+      strong.textContent = state.editorSelectedText
+        ? `${String(state.editorSelectedText.tag || "text").toUpperCase()} selected`
+        : "Nothing selected";
+    }
+    if (value) {
+      value.textContent = state.editorSelectedText?.text || "";
+    }
+  };
+
+  const renderColours = () => {
+    const host = document.querySelector("#editor-colour-swatches");
+    const count = document.querySelector("#editor-colour-count");
+    if (!host) return;
+
+    host.replaceChildren();
+    const colours = Array.isArray(state.editorColours)
+      ? state.editorColours.filter((item) => /^#[0-9a-f]{6}$/i.test(item?.hex || ""))
+      : [];
+
+    if (count) {
+      count.textContent = colours.length
+        ? `${colours.length} detected`
+        : "No colours detected";
+    }
+
+    for (const colour of colours) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "editor-colour-swatch";
+      button.style.setProperty("--swatch", colour.hex);
+      button.title = `${colour.hex} · used ${colour.count || 1} time${Number(colour.count || 1) === 1 ? "" : "s"}`;
+      button.setAttribute("aria-label", `Use colour ${colour.hex}`);
+
+      const sample = document.createElement("span");
+      const code = document.createElement("strong");
+      code.textContent = String(colour.hex).toUpperCase();
+      button.append(sample, code);
+
+      button.addEventListener("click", async () => {
+        state.editorPickedColour = String(colour.hex).toUpperCase();
+        if (pickedValue) pickedValue.textContent = state.editorPickedColour;
+        if (pickedSwatch) {
+          pickedSwatch.style.setProperty("--picked-colour", state.editorPickedColour);
+        }
+        if (applyPickedAccent) applyPickedAccent.disabled = !editable;
+
+        try {
+          await navigator.clipboard.writeText(state.editorPickedColour);
+          showToast(`${state.editorPickedColour} copied.`);
+        } catch {
+          showToast(`Selected ${state.editorPickedColour}.`);
+        }
+      });
+
+      host.appendChild(button);
+    }
   };
 
   const updatePreviewLocation = ({ reload = true, cacheBust = false } = {}) => {
@@ -1111,52 +1165,113 @@ function renderWebEditor() {
     if (reload && frame) frame.src = iframeUrl(cacheBust);
   };
 
+  if (state.editorMessageHandler) {
+    window.removeEventListener("message", state.editorMessageHandler);
+  }
+
+  state.editorMessageHandler = (event) => {
+    if (!frame?.contentWindow || event.source !== frame.contentWindow) return;
+    if (![productionPreviewOrigin, betaPreviewOrigin].includes(event.origin)) return;
+    if (!event.data || typeof event.data !== "object") return;
+
+    if (event.data.type === "WCG_EDITOR_READY") {
+      window.setTimeout(() => {
+        postDraft();
+        requestColours();
+      }, 30);
+      return;
+    }
+
+    if (event.data.type === "WCG_EDITOR_COLOURS") {
+      state.editorColours = Array.isArray(event.data.colours)
+        ? event.data.colours
+        : [];
+      renderColours();
+      return;
+    }
+
+    if (event.data.type === "WCG_EDITOR_TEXT_SELECTED") {
+      state.editorSelectedText = {
+        selector: String(event.data.selector || ""),
+        text: String(event.data.text || ""),
+        tag: String(event.data.tag || "")
+      };
+      renderSelectedText();
+      return;
+    }
+
+    if (event.data.type === "WCG_EDITOR_TEXT_CHANGE" && editable) {
+      const selector = String(event.data.selector || "");
+      const text = String(event.data.text || "").slice(0, 4000);
+      if (!selector) return;
+
+      state.editorTextDrafts = {
+        ...state.editorTextDrafts,
+        [selector]: text
+      };
+      state.editorSelectedText = {
+        selector,
+        text,
+        tag: String(event.data.tag || "")
+      };
+      setDirty();
+      renderSelectedText();
+    }
+  };
+
+  window.addEventListener("message", state.editorMessageHandler);
+
+  document.querySelector("#web-editor-exit")?.addEventListener("click", () => {
+    if (state.editorMessageHandler) {
+      window.removeEventListener("message", state.editorMessageHandler);
+      state.editorMessageHandler = null;
+    }
+    setDashboardView("dashboard");
+  });
+
   document.querySelectorAll("[data-editor-environment]").forEach((button) => {
     button.addEventListener("click", () => {
-      state.editorMode =
+      const next =
         button.dataset.editorEnvironment === "production"
           ? "production"
           : "beta";
+
+      if (next === state.editorMode) return;
+      state.editorMode = next;
       state.editorDirty = false;
+      state.editorDraftKey = "";
+      state.editorColours = [];
+      state.editorSelectedText = null;
       renderWebEditor();
     });
   });
 
   pageSelect?.addEventListener("change", () => {
     state.editorPage = pageSelect.value || "/";
-    loadFields();
-    updatePreviewLocation();
-  });
-
-  heading?.addEventListener("input", markDirty);
-  copy?.addEventListener("input", markDirty);
-  font?.addEventListener("change", markDirty);
-
-  accent?.addEventListener("input", () => {
-    if (accentText) accentText.value = accent.value;
-    markDirty();
-  });
-
-  accentText?.addEventListener("input", () => {
-    if (/^#[0-9a-f]{6}$/i.test(accentText.value) && accent) {
-      accent.value = accentText.value;
-      markDirty();
-    }
+    state.editorDirty = false;
+    state.editorDraftKey = "";
+    state.editorColours = [];
+    state.editorSelectedText = null;
+    renderWebEditor();
   });
 
   frame?.addEventListener("load", () => {
-    if (state.editorMode === "beta" && state.editorDirty) {
-      window.setTimeout(postDraft, 100);
-    }
+    window.setTimeout(() => {
+      postDraft();
+      requestColours();
+    }, 80);
   });
 
   document.querySelectorAll("[data-editor-device]").forEach((button) => {
     button.addEventListener("click", () => {
-      const device = button.dataset.editorDevice || "desktop";
-      if (browser) browser.dataset.device = device;
+      state.editorDevice = button.dataset.editorDevice || "desktop";
+      if (browser) browser.dataset.device = state.editorDevice;
 
       document.querySelectorAll("[data-editor-device]").forEach((item) => {
-        item.classList.toggle("is-active", item === button);
+        item.classList.toggle(
+          "is-active",
+          item.dataset.editorDevice === state.editorDevice
+        );
       });
     });
   });
@@ -1167,26 +1282,100 @@ function renderWebEditor() {
 
   document.querySelector("#web-editor-inspect")?.addEventListener("click", () => {
     window.open(pageUrl(), "_blank", "noopener,noreferrer");
-    showToast("Open Chrome DevTools with ⌘⌥I on Mac, or Ctrl+Shift+I / F12 on Windows.");
+    showToast("Opened current page. Use ⌘⌥I on Mac or Ctrl+Shift+I / F12 on Windows.");
+  });
+
+  document.querySelector("#editor-eyedropper")?.addEventListener("click", async () => {
+    if (!window.EyeDropper) {
+      showToast("Chrome EyeDropper is unavailable in this browser.", "error");
+      return;
+    }
+
+    try {
+      const result = await new window.EyeDropper().open();
+      const hex = String(result?.sRGBHex || "").toUpperCase();
+      if (!/^#[0-9A-F]{6}$/.test(hex)) return;
+
+      state.editorPickedColour = hex;
+      if (pickedValue) pickedValue.textContent = hex;
+      if (pickedSwatch) pickedSwatch.style.setProperty("--picked-colour", hex);
+      if (applyPickedAccent) applyPickedAccent.disabled = !editable;
+
+      try {
+        await navigator.clipboard.writeText(hex);
+        showToast(`${hex} copied to clipboard.`);
+      } catch {
+        showToast(`Captured ${hex}.`);
+      }
+    } catch (error) {
+      if (error?.name !== "AbortError") {
+        showToast("Unable to sample that colour.", "error");
+      }
+    }
+  });
+
+  document.querySelector("#editor-copy-colour")?.addEventListener("click", async () => {
+    const hex = state.editorPickedColour || currentAccent;
+    try {
+      await navigator.clipboard.writeText(hex);
+      showToast(`${hex} copied.`);
+    } catch {
+      showToast(`Selected ${hex}.`);
+    }
+  });
+
+  applyPickedAccent?.addEventListener("click", () => {
+    if (!editable || !/^#[0-9A-F]{6}$/i.test(state.editorPickedColour)) return;
+    state.editorAccentDraft = state.editorPickedColour.toUpperCase();
+    setDirty();
+    postDraft();
+    window.setTimeout(requestColours, 40);
   });
 
   document.querySelector("#web-editor-discard")?.addEventListener("click", () => {
     if (state.editorMode !== "beta") return;
-    loadFields();
+
+    const deployed = editorPageConfig("beta", state.editorPage);
+    state.editorTextDrafts =
+      deployed.text && typeof deployed.text === "object"
+        ? { ...deployed.text }
+        : {};
+    state.editorAccentDraft = String(deployed.accent || "");
+    state.editorFontDraft = String(deployed.font || "");
+    state.editorHeadingDraft = String(deployed.heading || "");
+    state.editorCopyDraft = String(deployed.copy || "");
+    state.editorDirty = false;
+    state.editorSelectedText = null;
+
+    if (publishButton) publishButton.disabled = true;
 
     frame?.contentWindow?.postMessage(
-      { type: "WCG_EDITOR_PREVIEW_RESET" },
+      {
+        type: "WCG_EDITOR_PREVIEW_RESET",
+        editable
+      },
       betaPreviewOrigin
     );
 
-    showToast("Draft reset to the currently deployed beta-main version.");
+    window.setTimeout(() => {
+      postDraft();
+      requestColours();
+    }, 20);
+
+    renderSelectedText();
+    showToast("Draft reset to the deployed beta-main version.");
   });
 
   publishButton?.addEventListener("click", () => {
     if (!editable || !state.editorDirty) return;
+
     publishWebEditorDraft({
       pagePath: state.editorPage,
-      ...draftPayload()
+      heading: state.editorHeadingDraft || "",
+      copy: state.editorCopyDraft || "",
+      accent: state.editorAccentDraft || "",
+      font: state.editorFontDraft || "",
+      text: { ...state.editorTextDrafts }
     });
   });
 
@@ -1222,14 +1411,14 @@ function renderWebEditor() {
     }
   );
 
-  loadFields();
+  renderSelectedText();
+  renderColours();
   updatePreviewLocation({ reload: true });
 
   if (!state.editorStatus && !state.editorLoading) {
     window.setTimeout(() => loadWebEditorStatus({ quiet: true }), 0);
   }
 }
-
 function notificationStatusLabel() {
   if (!("Notification" in window)) return "Desktop alerts unavailable";
   if (Notification.permission === "granted") return "Desktop alerts on";
