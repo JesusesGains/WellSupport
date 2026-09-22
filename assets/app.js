@@ -902,6 +902,64 @@ function recordEditorHistory() {
   state.editorFuture = [];
 }
 
+function undoEditorDraft() {
+  if (state.editorMode !== "beta") return false;
+
+  let index = -1;
+  for (let i = state.editorHistory.length - 1; i >= 0; i -= 1) {
+    if (state.editorHistory[i]?.pagePath === state.editorPage) {
+      index = i;
+      break;
+    }
+  }
+  if (index < 0) return false;
+
+  const current = currentEditorDraftSnapshot();
+  const entry = state.editorHistory[index];
+  state.editorHistory = state.editorHistory.filter((_, itemIndex) => itemIndex !== index);
+  state.editorFuture = [
+    ...state.editorFuture.slice(-79),
+    { pagePath: state.editorPage, draft: current }
+  ];
+
+  applyEditorDraftSnapshot(entry.draft);
+  storeCurrentEditorDraft();
+  return true;
+}
+
+function redoEditorDraft() {
+  if (state.editorMode !== "beta") return false;
+
+  let index = -1;
+  for (let i = state.editorFuture.length - 1; i >= 0; i -= 1) {
+    if (state.editorFuture[i]?.pagePath === state.editorPage) {
+      index = i;
+      break;
+    }
+  }
+  if (index < 0) return false;
+
+  const current = currentEditorDraftSnapshot();
+  const entry = state.editorFuture[index];
+  state.editorFuture = state.editorFuture.filter((_, itemIndex) => itemIndex !== index);
+  state.editorHistory = [
+    ...state.editorHistory.slice(-79),
+    { pagePath: state.editorPage, draft: current }
+  ];
+
+  applyEditorDraftSnapshot(entry.draft);
+  storeCurrentEditorDraft();
+  return true;
+}
+
+function editorCanUndo() {
+  return state.editorHistory.some((entry) => entry?.pagePath === state.editorPage);
+}
+
+function editorCanRedo() {
+  return state.editorFuture.some((entry) => entry?.pagePath === state.editorPage);
+}
+
 function editorPendingChangeCount() {
   return Object.keys(state.editorPendingPages || {}).length;
 }
@@ -1089,22 +1147,18 @@ async function deleteEditorBannerItem(index) {
 function editorBranchSummary() {
   const comparison = state.editorStatus?.comparison;
   if (!state.editorStatus?.connected || !comparison) {
-    return "GitHub connection required";
-  }
-
-  if (comparison.behindBy > 0 && comparison.aheadBy > 0) {
-    return `beta-main is ${comparison.aheadBy} ahead · ${comparison.behindBy} behind`;
+    return "Publishing connection unavailable";
   }
 
   if (comparison.behindBy > 0) {
-    return `beta-main is ${comparison.behindBy} commit${comparison.behindBy === 1 ? "" : "s"} behind production`;
+    return "Preview needs updating from the live site";
   }
 
   if (comparison.aheadBy > 0) {
-    return `${comparison.aheadBy} beta commit${comparison.aheadBy === 1 ? "" : "s"} ready for review`;
+    return "Preview has unpublished changes";
   }
 
-  return "beta-main is synced with production";
+  return "Preview matches the live site";
 }
 
 async function syncWebEditorBeta() {
@@ -1122,13 +1176,13 @@ async function syncWebEditorBeta() {
 
     state.editorStatus = result.status || state.editorStatus;
     state.editorDirty = false;
-    showToast("beta-main is synced with production.");
+    showToast("Preview updated from the live website.");
     renderWebEditor();
   } catch (error) {
     showToast(error?.message || "Unable to sync beta-main.", "error");
     if (button) {
       button.disabled = false;
-      button.textContent = "Sync beta from production";
+      button.textContent = "Update preview from live site";
     }
   }
 }
@@ -1152,13 +1206,13 @@ async function publishWebEditorDraft(payload) {
     }
 
     state.editorDirty = false;
-    showToast("Committed to beta-main. Cloudflare will deploy the Beta Preview.");
+    showToast("Changes sent to the preview site. The updated preview will appear shortly.");
     await loadWebEditorStatus({ quiet: true });
   } catch (error) {
-    showToast(error?.message || "Unable to publish to beta-main.", "error");
+    showToast(error?.message || "Unable to publish these changes to the preview site.", "error");
     if (button) {
       button.disabled = false;
-      button.textContent = "Publish to beta-main";
+      button.textContent = "Push changes to beta";
     }
   }
 }
@@ -1196,13 +1250,13 @@ async function promoteWebEditorBeta() {
     state.editorStatus = result.status || state.editorStatus;
     state.editorDirty = false;
     document.body.classList.remove("has-support-confirm-modal");
-    showToast("beta-main promoted to main. Production deployment is starting.");
+    showToast("Preview approved. The live website deployment is starting.");
     renderWebEditor();
   } catch (error) {
     showToast(error?.message || "Unable to promote beta-main.", "error");
     if (button) {
       button.disabled = false;
-      button.textContent = "Promote to production";
+      button.textContent = "Publish preview to live site";
     }
   }
 }
@@ -1301,7 +1355,7 @@ function renderWebEditor() {
 
         <div class="editor-fullscreen-topbar-right">
           ${connected && betaBehind ? `
-            <button id="web-editor-sync" class="editor-topbar-button" type="button">Sync beta</button>
+            <button id="web-editor-sync" class="editor-topbar-button" type="button">Update preview</button>
           ` : ""}
           ${connected && betaAhead && !betaBehind ? `
             <button id="web-editor-promote" class="editor-topbar-button is-promote" type="button">Promote</button>
@@ -1313,7 +1367,7 @@ function renderWebEditor() {
             class="editor-topbar-button is-primary"
             type="button"
             ${editable && state.editorDirty ? "" : "disabled"}
-          >Publish to beta-main</button>
+          >Push changes to beta</button>
         </div>
       </header>
 
@@ -1584,7 +1638,7 @@ function renderWebEditor() {
             <div>
               <strong>${state.editorMode === "beta" ? "beta-main draft" : "main production reference"}</strong>
               <span>${state.editorMode === "beta"
-                ? "Direct text edits and page accent changes are committed only when Publish to beta-main is pressed."
+                ? "Direct text edits and page accent changes are committed only when Push changes to beta is pressed."
                 : "Switch to Beta to make changes."}</span>
             </div>
             <button id="web-editor-discard" class="editor-topbar-button" type="button" ${state.editorMode === "beta" ? "" : "disabled"}>Reset draft</button>
@@ -1620,11 +1674,11 @@ function renderWebEditor() {
       ></button>
       <section class="confirm-card" role="dialog" aria-modal="true" aria-labelledby="editor-promote-title">
         <div class="confirm-icon">${editorIcon()}</div>
-        <h2 id="editor-promote-title">Promote beta to production?</h2>
+        <h2 id="editor-promote-title">Publish preview to the live website?</h2>
         <p>This merges <strong>beta-main</strong> into <strong>main</strong>.</p>
         <div class="confirm-actions">
           <button id="cancel-editor-promote" class="confirm-secondary" type="button">Cancel</button>
-          <button id="confirm-editor-promote" class="confirm-danger" type="button">Promote to production</button>
+          <button id="confirm-editor-promote" class="confirm-danger" type="button">Publish preview to live site</button>
         </div>
       </section>
     </div>
