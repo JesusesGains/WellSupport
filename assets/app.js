@@ -1,4 +1,20 @@
 const MAX_MESSAGE_LENGTH = 4000;
+const DASHBOARD_VIEW_PATHS = {
+  dashboard: "/dashboard",
+  messages: "/messages",
+  editor: "/web-editor"
+};
+
+function dashboardViewFromPath(pathname = window.location.pathname) {
+  const path = String(pathname || "/").replace(/\/+$/, "") || "/";
+  if (path === "/messages") return "messages";
+  if (path === "/web-editor") return "editor";
+  return "dashboard";
+}
+
+function dashboardPathForView(view) {
+  return DASHBOARD_VIEW_PATHS[view] || DASHBOARD_VIEW_PATHS.dashboard;
+}
 
 const app = document.querySelector("#app");
 const state = {
@@ -23,7 +39,7 @@ const state = {
   pollBusy: false,
   messagePollBusy: false,
   pollFailures: 0,
-  currentView: "dashboard",
+  currentView: dashboardViewFromPath(),
   analytics: null,
   analyticsDays: 30,
   analyticsLoading: false,
@@ -694,12 +710,22 @@ function updatePrimaryNavigation() {
   renderMessageBadge();
 }
 
-function setDashboardView(view) {
+function setDashboardView(view, { historyMode = "push" } = {}) {
   const resolvedView = ["dashboard", "messages", "editor"].includes(view)
     ? view
     : "dashboard";
 
   state.currentView = resolvedView;
+
+  const nextPath = dashboardPathForView(resolvedView);
+  if (window.location.pathname !== nextPath) {
+    if (historyMode === "replace") {
+      window.history.replaceState({ dashboardView: resolvedView }, "", nextPath);
+    } else if (historyMode !== "none") {
+      window.history.pushState({ dashboardView: resolvedView }, "", nextPath);
+    }
+  }
+
   updatePrimaryNavigation();
 
   const dashboard = document.querySelector("#dashboard");
@@ -2289,7 +2315,7 @@ async function loadAnalytics({ silent = false } = {}) {
 
 function renderDashboard() {
   app.innerHTML = `
-    <main id="dashboard" class="dashboard is-dashboard">
+    <main id="dashboard" class="dashboard is-${state.currentView}">
       <div class="staff-profile-shell">
         <button
           id="profile-menu-button"
@@ -2521,12 +2547,18 @@ function renderDashboard() {
   });
 
   renderRealtimeStatus();
+  setDashboardView(state.currentView, { historyMode: "replace" });
 }
 
 async function initialiseDashboard() {
   await Promise.all([loadInbox(), loadAnalytics()]);
   subscribeRealtime();
 }
+
+window.addEventListener("popstate", () => {
+  if (!state.user) return;
+  setDashboardView(dashboardViewFromPath(), { historyMode: "none" });
+});
 
 async function loadInbox({ silent = false } = {}) {
   if (state.pollBusy) return;
