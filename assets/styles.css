@@ -5853,3 +5853,96 @@ body.has-support-confirm-modal {
     min-width: 760px;
   }
 }
+
+
+/* Waiting chat urgency + compact conversation context */
+.message-section-button[data-message-section="waiting"].has-waiting {
+  border-color: rgba(200, 62, 55, .52);
+  color: #b83d36;
+  background: rgba(200, 62, 55, .055);
+  box-shadow: 0 0 0 2px rgba(200, 62, 55, .08);
+}
+
+.message-section-button[data-message-section="waiting"].has-waiting:hover,
+.message-section-button[data-message-section="waiting"].has-waiting.is-active {
+  border-color: #c84a42;
+  color: #a9342f;
+  background: rgba(200, 62, 55, .08);
+}
+
+#waiting-count.has-waiting {
+  display: inline-grid;
+  min-width: 20px;
+  height: 20px;
+  place-items: center;
+  padding: 0 5px;
+  border-radius: 999px;
+  color: #fff;
+  background: #c84a42;
+  box-shadow: 0 0 0 3px rgba(200, 74, 66, .10);
+  font-size: .56rem;
+  line-height: 1;
+}
+
+.conversation-item.is-waiting {
+  border-color: rgba(200, 74, 66, .34);
+  background: rgba(200, 74, 66, .028);
+}
+
+.conversation-item.is-waiting:hover,
+.conversation-item.is-waiting.is-selected {
+  border-color: rgba(200, 74, 66, .58);
+  background: rgba(200, 74, 66, .055);
+  box-shadow: inset 0 0 0 1px rgba(200, 74, 66, .05);
+}
+
+.status-chip.is-waiting,
+.chat-owner-chip.is-waiting {
+  color: #b83d36;
+  background: rgba(200, 74, 66, .09);
+}
+
+.chat-owner-chip.is-waiting {
+  border: 1px solid rgba(200, 74, 66, .20);
+}
+
+.chat-source-path {
+  color: #6f7975;
+  font-size: .62rem;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.chat-source-path:hover {
+  color: var(--wcg-navy);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.visitor-map-wrap {
+  min-height: 84px;
+  max-height: 84px;
+}
+
+.visitor-map-wrap iframe {
+  height: 84px;
+}
+
+.visitor-map-pin-label {
+  bottom: 8px;
+  padding: 5px 8px;
+  font-size: .58rem;
+}
+
+.visitor-map-center-pin {
+  transform: translate(-50%, -78%) scale(.78);
+}
+
+@media (max-width: 760px) {
+  .visitor-map-wrap,
+  .visitor-map-wrap iframe {
+    height: 72px;
+    min-height: 72px;
+    max-height: 72px;
+  }
+}
