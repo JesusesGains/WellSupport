@@ -2322,10 +2322,7 @@ function renderWebEditor() {
     if (publishButton) {
       const count = editorPendingChangeCount();
       publishButton.disabled = count < 1;
-      publishButton.textContent =
-        count > 1
-          ? `Push ${count} pages to beta`
-          : "Push changes to beta";
+      publishButton.textContent = "Publish beta preview";
     }
   };
 
@@ -3022,8 +3019,7 @@ function renderWebEditor() {
     if (publishButton) {
       const count = editorPendingChangeCount();
       publishButton.disabled = count < 1;
-      publishButton.textContent =
-        count > 1 ? `Push ${count} pages to beta` : "Push changes to beta";
+      publishButton.textContent = "Publish beta preview";
     }
 
     showToast("Changes for this page were discarded.");
