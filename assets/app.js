@@ -1344,7 +1344,11 @@ async function publishWebEditorDraft(payload) {
       if (result.commitSha) state.editorStatus.beta.sha = result.commitSha;
     }
 
+    state.editorPendingPages = {};
+    state.editorHistory = [];
+    state.editorFuture = [];
     state.editorDirty = false;
+    state.editorDraftKey = "";
     showToast("Changes sent to the preview site. The updated preview will appear shortly.");
     await loadWebEditorStatus({ quiet: true });
   } catch (error) {
@@ -2295,7 +2299,7 @@ function renderWebEditor() {
 
     if (title) title.textContent = "Delete rolling banner?";
     if (copy) {
-      copy.textContent = `“${item.message}” will be removed and committed immediately to WellWebsite/${state.editorMode === "production" ? "main" : "beta-main"}.`;
+      copy.textContent = `“${item.message}” will be removed from the ${state.editorMode === "production" ? "live website" : "preview website"} when you confirm.`;
     }
 
     if (modal) modal.hidden = false;
@@ -2338,11 +2342,6 @@ function renderWebEditor() {
 
   document.querySelector("#web-editor-refresh")?.addEventListener("click", () => {
     if (frame) frame.src = iframeUrl(true);
-  });
-
-  document.querySelector("#web-editor-inspect")?.addEventListener("click", () => {
-    window.open(pageUrl(), "_blank", "noopener,noreferrer");
-    showToast("Opened current page. Use ⌘⌥I on Mac or Ctrl+Shift+I / F12 on Windows.");
   });
 
   document.querySelector("#editor-eyedropper")?.addEventListener("click", async () => {
@@ -2397,18 +2396,22 @@ function renderWebEditor() {
     if (state.editorMode !== "beta") return;
 
     const deployed = editorPageConfig("beta", state.editorPage);
-    state.editorTextDrafts =
-      deployed.text && typeof deployed.text === "object"
-        ? { ...deployed.text }
-        : {};
-    state.editorAccentDraft = String(deployed.accent || "");
-    state.editorFontDraft = String(deployed.font || "");
-    state.editorHeadingDraft = String(deployed.heading || "");
-    state.editorCopyDraft = String(deployed.copy || "");
-    state.editorDirty = false;
-    state.editorSelectedText = null;
+    applyEditorDraftSnapshot(editorDraftFromConfig(deployed));
 
-    if (publishButton) publishButton.disabled = true;
+    const nextPending = { ...state.editorPendingPages };
+    delete nextPending[state.editorPage];
+    state.editorPendingPages = nextPending;
+
+    state.editorHistory = state.editorHistory.filter(
+      (entry) => entry?.pagePath !== state.editorPage
+    );
+    state.editorFuture = state.editorFuture.filter(
+      (entry) => entry?.pagePath !== state.editorPage
+    );
+
+    state.editorDirty = editorPendingChangeCount() > 0;
+    state.editorSelectedText = null;
+    state.editorSelectedObject = null;
 
     frame?.contentWindow?.postMessage(
       {
@@ -2423,21 +2426,45 @@ function renderWebEditor() {
       requestColours();
     }, 20);
 
-    renderSelectedText();
-    showToast("Draft reset to the deployed beta-main version.");
+    renderSelectedItem();
+
+    if (publishButton) {
+      const count = editorPendingChangeCount();
+      publishButton.disabled = count < 1;
+      publishButton.textContent =
+        count > 1 ? `Push ${count} pages to beta` : "Push changes to beta";
+    }
+
+    showToast("Changes for this page were discarded.");
   });
 
   publishButton?.addEventListener("click", () => {
     if (!editable || !state.editorDirty) return;
 
+    storeCurrentEditorDraft();
     publishWebEditorDraft({
-      pagePath: state.editorPage,
-      heading: state.editorHeadingDraft || "",
-      copy: state.editorCopyDraft || "",
-      accent: state.editorAccentDraft || "",
-      font: state.editorFontDraft || "",
-      text: { ...state.editorTextDrafts }
+      pages: { ...state.editorPendingPages }
     });
+  });
+
+  document.querySelector("#web-editor-undo")?.addEventListener("click", () => {
+    if (!undoEditorDraft()) return;
+    state.editorSelectedText = null;
+    state.editorSelectedObject = null;
+    postDraft();
+    renderSelectedItem();
+    showToast("Last change undone.");
+    renderWebEditor();
+  });
+
+  document.querySelector("#web-editor-redo")?.addEventListener("click", () => {
+    if (!redoEditorDraft()) return;
+    state.editorSelectedText = null;
+    state.editorSelectedObject = null;
+    postDraft();
+    renderSelectedItem();
+    showToast("Change reapplied.");
+    renderWebEditor();
   });
 
   document.querySelector("#web-editor-sync")?.addEventListener(
@@ -2501,7 +2528,7 @@ function renderWebEditor() {
     }
   );
 
-  renderSelectedText();
+  renderSelectedItem();
   renderColours();
   updatePreviewLocation({ reload: true });
 
