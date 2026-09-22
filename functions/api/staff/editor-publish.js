@@ -172,6 +172,27 @@ function cleanStyleOverrides(value) {
   return output;
 }
 
+function cleanOrderOverrides(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+
+  const output = {};
+  for (const [rawParent, rawChildren] of Object.entries(value).slice(0, 30)) {
+    const parent = cleanSelector(rawParent);
+    if (!parent || !Array.isArray(rawChildren)) continue;
+
+    const children = rawChildren
+      .slice(0, 40)
+      .map((child) => cleanSelector(child))
+      .filter(Boolean);
+
+    if (children.length > 1 && new Set(children).size === children.length) {
+      output[parent] = children;
+    }
+  }
+
+  return output;
+}
+
 function normalisePagePatch(raw) {
   const input = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
   const heading = cleanText(input.heading, 300);
@@ -181,6 +202,7 @@ function normalisePagePatch(raw) {
   const text = cleanTextOverrides(input.text);
   const attributes = cleanAttributeOverrides(input.attributes);
   const styles = cleanStyleOverrides(input.styles);
+  const order = cleanOrderOverrides(input.order);
 
   if (accent && !/^#[0-9a-f]{6}$/i.test(accent)) {
     const error = new Error("Invalid accent colour.");
@@ -194,7 +216,7 @@ function normalisePagePatch(raw) {
   }
 
   return {
-    heading, copy, accent, font, text, attributes, styles,
+    heading, copy, accent, font, text, attributes, styles, order,
     supplied: {
       heading: Object.prototype.hasOwnProperty.call(input, "heading"),
       copy: Object.prototype.hasOwnProperty.call(input, "copy"),
@@ -202,7 +224,8 @@ function normalisePagePatch(raw) {
       font: Object.prototype.hasOwnProperty.call(input, "font"),
       text: Object.prototype.hasOwnProperty.call(input, "text"),
       attributes: Object.prototype.hasOwnProperty.call(input, "attributes"),
-      styles: Object.prototype.hasOwnProperty.call(input, "styles")
+      styles: Object.prototype.hasOwnProperty.call(input, "styles"),
+      order: Object.prototype.hasOwnProperty.call(input, "order")
     }
   };
 }
@@ -230,6 +253,10 @@ function applyPagePatch(existing, patch) {
   if (patch.supplied.styles) {
     if (Object.keys(patch.styles).length) config.styles = patch.styles;
     else delete config.styles;
+  }
+  if (patch.supplied.order) {
+    if (Object.keys(patch.order).length) config.order = patch.order;
+    else delete config.order;
   }
   return config;
 }
