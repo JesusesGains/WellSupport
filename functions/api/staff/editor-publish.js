@@ -27,6 +27,35 @@ function cleanPath(value) {
   return path === "/index.html" ? "/" : path;
 }
 
+function cleanSelector(value) {
+  const selector = String(value || "").trim();
+  if (!selector || selector.length > 500) return "";
+  if (!/^[#a-z0-9_.>:\\()\-\s]+$/i.test(selector)) return "";
+  return selector;
+}
+
+function cleanTextOverrides(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+
+  const output = {};
+  let totalLength = 0;
+
+  for (const [rawSelector, rawText] of Object.entries(value).slice(0, 120)) {
+    const selector = cleanSelector(rawSelector);
+    if (!selector || typeof rawText !== "string") continue;
+
+    const text = rawText
+      .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "")
+      .slice(0, 4000);
+
+    totalLength += text.length;
+    if (totalLength > 50000) break;
+    output[selector] = text;
+  }
+
+  return output;
+}
+
 export async function onRequestPost({ request, env }) {
   const blocked = assertSameOrigin(request);
   if (blocked) return blocked;
@@ -40,6 +69,7 @@ export async function onRequestPost({ request, env }) {
   const copy = cleanText(input.copy, 1800);
   const accent = cleanText(input.accent, 16);
   const font = cleanText(input.font, 40);
+  const textOverrides = cleanTextOverrides(input.text);
 
   if (!pagePath) {
     return sessionResponse({ error: "Invalid website page." }, session, 400);
@@ -73,11 +103,36 @@ export async function onRequestPost({ request, env }) {
       pages: { ...(current.data.pages || {}) }
     };
 
-    const config = {};
-    if (heading) config.heading = heading;
-    if (copy) config.copy = copy;
-    if (accent && accent.toLowerCase() !== "#304660") config.accent = accent;
-    if (font && font !== "DM Serif Display") config.font = font;
+    const existing =
+      next.pages[pagePath] && typeof next.pages[pagePath] === "object"
+        ? next.pages[pagePath]
+        : {};
+    const config = { ...existing };
+
+    if (Object.prototype.hasOwnProperty.call(input, "heading")) {
+      if (heading) config.heading = heading;
+      else delete config.heading;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(input, "copy")) {
+      if (copy) config.copy = copy;
+      else delete config.copy;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(input, "accent")) {
+      if (accent && accent.toLowerCase() !== "#304660") config.accent = accent;
+      else delete config.accent;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(input, "font")) {
+      if (font && font !== "DM Serif Display") config.font = font;
+      else delete config.font;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(input, "text")) {
+      if (Object.keys(textOverrides).length) config.text = textOverrides;
+      else delete config.text;
+    }
 
     if (Object.keys(config).length) {
       next.pages[pagePath] = config;
