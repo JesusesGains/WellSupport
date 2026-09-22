@@ -83,6 +83,12 @@ const state = {
   editorBannerKey: "",
   editorBannerOpenId: "",
   editorBannerPendingDeleteIndex: null,
+  editorNavigationTarget: "",
+  editorNavigationHeaderOrder: [],
+  editorNavigationGroupOrder: [],
+  editorNavigationDirty: false,
+  editorNavigationLoading: false,
+  editorNavigationDrag: null,
   supportPagePickerSection: ""
 };
 
@@ -1414,6 +1420,168 @@ async function promoteWebEditorBeta() {
   }
 }
 
+const EDITOR_HEADER_NAV_LABELS = {
+  qualifications: "Qualifications",
+  "short-courses": "Short Courses",
+  about: "About us",
+  testimonials: "Testimonials",
+  more: "More"
+};
+
+async function loadEditorNavigation({ quiet = false } = {}) {
+  if (state.editorNavigationLoading || !state.editorStatus?.connected) return;
+
+  const target = state.editorMode === "production" ? "production" : "beta";
+  state.editorNavigationLoading = true;
+
+  try {
+    const result = await apiRequest(
+      `/editor-navigation?target=${encodeURIComponent(target)}`
+    );
+
+    state.editorNavigationTarget = target;
+    state.editorNavigationHeaderOrder = Array.isArray(result.headerOrder)
+      ? [...result.headerOrder]
+      : [];
+    state.editorNavigationGroupOrder = Array.isArray(result.shortCourseGroupOrder)
+      ? [...result.shortCourseGroupOrder]
+      : [];
+    state.editorNavigationDirty = false;
+  } catch (error) {
+    if (!quiet) {
+      showToast(
+        error?.message || "Unable to load header navigation order.",
+        "error"
+      );
+    }
+  } finally {
+    state.editorNavigationLoading = false;
+    if (state.currentView === "editor") renderWebEditor();
+  }
+}
+
+async function saveEditorNavigationOrder() {
+  if (
+    state.editorMode !== "beta" ||
+    !state.editorStatus?.connected ||
+    !state.editorNavigationDirty
+  ) {
+    return;
+  }
+
+  const button = document.querySelector("#editor-navigation-save");
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Saving source…";
+  }
+
+  try {
+    const result = await apiRequest("/editor-navigation", {
+      method: "POST",
+      body: {
+        target: "beta",
+        headerOrder: [...state.editorNavigationHeaderOrder],
+        shortCourseGroupOrder: [...state.editorNavigationGroupOrder]
+      }
+    });
+
+    state.editorNavigationHeaderOrder = [...result.headerOrder];
+    state.editorNavigationGroupOrder = [...result.shortCourseGroupOrder];
+    state.editorNavigationDirty = false;
+
+    showToast(
+      "Header order saved directly to website source code on beta-main."
+    );
+
+    await loadWebEditorStatus({ quiet: true });
+    state.editorNavigationTarget = "";
+    await loadEditorNavigation({ quiet: true });
+  } catch (error) {
+    showToast(
+      error?.message || "Unable to save header navigation source.",
+      "error"
+    );
+    if (button) {
+      button.disabled = false;
+      button.textContent = "Save header order to beta";
+    }
+  }
+}
+
+function editorNavigationItemMarkup(key, label, editable) {
+  return `
+    <div
+      class="editor-nav-order-item"
+      data-editor-nav-key="${escapeEditorAttribute(key)}"
+      draggable="${editable ? "true" : "false"}"
+    >
+      <span class="editor-nav-drag-handle" aria-hidden="true">⋮⋮</span>
+      <strong>${escapeEditorAttribute(label)}</strong>
+      <span class="editor-nav-order-hint">${editable ? "Drag to reorder" : "Live order"}</span>
+    </div>
+  `;
+}
+
+function bindEditorNavigationSortable(list, orderKey, editable) {
+  if (!list || !editable) return;
+
+  list.addEventListener("dragstart", (event) => {
+    const item = event.target?.closest?.("[data-editor-nav-key]");
+    if (!item) return;
+
+    state.editorNavigationDrag = {
+      orderKey,
+      key: String(item.dataset.editorNavKey || "")
+    };
+    item.classList.add("is-dragging");
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", state.editorNavigationDrag.key);
+  });
+
+  list.addEventListener("dragover", (event) => {
+    if (state.editorNavigationDrag?.orderKey !== orderKey) return;
+    const dragging = list.querySelector(".is-dragging");
+    const target = event.target?.closest?.("[data-editor-nav-key]");
+    if (!dragging || !target || target === dragging) return;
+
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+
+    const rect = target.getBoundingClientRect();
+    const before = event.clientY < rect.top + rect.height / 2;
+    list.insertBefore(dragging, before ? target : target.nextSibling);
+  });
+
+  const finish = () => {
+    const dragging = list.querySelector(".is-dragging");
+    dragging?.classList.remove("is-dragging");
+
+    if (state.editorNavigationDrag?.orderKey !== orderKey) return;
+
+    const nextOrder = [...list.querySelectorAll("[data-editor-nav-key]")]
+      .map((item) => String(item.dataset.editorNavKey || ""))
+      .filter(Boolean);
+
+    if (orderKey === "header") {
+      state.editorNavigationHeaderOrder = nextOrder;
+    } else {
+      state.editorNavigationGroupOrder = nextOrder;
+    }
+
+    state.editorNavigationDrag = null;
+    state.editorNavigationDirty = true;
+
+    const save = document.querySelector("#editor-navigation-save");
+    if (save) save.disabled = false;
+  };
+
+  list.addEventListener("drop", (event) => {
+    event.preventDefault();
+    finish();
+  });
+  list.addEventListener("dragend", finish);
+}
+
 function renderWebEditor() {
   const panel = document.querySelector("#chat-panel");
   if (!panel) return;
@@ -1571,6 +1739,57 @@ function renderWebEditor() {
                 <option value="/faqs.html">FAQs</option>
                 <option value="/contact.html">Contact</option>
               </select>
+            </section>
+
+            <section class="editor-inspector-section editor-navigation-section">
+              <div class="editor-inspector-heading">
+                <span>Header navigation</span>
+                <small>Direct source edit</small>
+              </div>
+
+              <div class="editor-source-edit-note">
+                <strong>Edits website code</strong>
+                <span>This rewrites the existing order in <code>src/data/navigation.js</code> on <b>beta-main</b>. It does not add CSS layers or DOM overlays.</span>
+              </div>
+
+              <div class="editor-nav-order-group">
+                <div class="editor-nav-order-heading">
+                  <strong>Header sections</strong>
+                  <span>Desktop and mobile use the same order</span>
+                </div>
+                <div id="editor-header-order-list" class="editor-nav-order-list">
+                  ${state.editorNavigationHeaderOrder.length
+                    ? state.editorNavigationHeaderOrder.map((key) =>
+                        editorNavigationItemMarkup(
+                          key,
+                          EDITOR_HEADER_NAV_LABELS[key] || key,
+                          editable
+                        )
+                      ).join("")
+                    : `<div class="editor-nav-order-empty">${state.editorNavigationLoading ? "Loading source…" : "Header source unavailable."}</div>`}
+                </div>
+              </div>
+
+              <div class="editor-nav-order-group">
+                <div class="editor-nav-order-heading">
+                  <strong>Short Courses dropdown sections</strong>
+                  <span>Drag the dropdown columns into the order you want</span>
+                </div>
+                <div id="editor-short-course-order-list" class="editor-nav-order-list">
+                  ${state.editorNavigationGroupOrder.length
+                    ? state.editorNavigationGroupOrder.map((title) =>
+                        editorNavigationItemMarkup(title, title, editable)
+                      ).join("")
+                    : `<div class="editor-nav-order-empty">${state.editorNavigationLoading ? "Loading source…" : "Dropdown source unavailable."}</div>`}
+                </div>
+              </div>
+
+              <button
+                id="editor-navigation-save"
+                class="editor-source-save"
+                type="button"
+                ${editable && state.editorNavigationDirty ? "" : "disabled"}
+              >Save header order to beta</button>
             </section>
 
             <section class="editor-inspector-section editor-banner-section">
@@ -1769,7 +1988,7 @@ function renderWebEditor() {
 
           <div class="editor-simple-help">
             <strong>How to edit</strong>
-            <span>Click an item in the preview, make the change, then use <b>Push changes to beta</b> when you are ready to review it.</span>
+            <span>Click an item in the preview, make the change, then use <b>Push changes to beta</b>. Draft snapshots replace the previous state instead of stacking visual layers; structural header ordering writes source code directly.</span>
           </div>
         </aside>
 
@@ -1875,8 +2094,20 @@ function renderWebEditor() {
   const bannerInterval = document.querySelector("#editor-banner-interval");
   const bannerList = document.querySelector("#editor-banner-list");
   const bannerSave = document.querySelector("#editor-banner-save");
+  const headerOrderList = document.querySelector("#editor-header-order-list");
+  const shortCourseOrderList = document.querySelector("#editor-short-course-order-list");
 
   if (pageSelect) pageSelect.value = state.editorPage;
+
+  const navigationTarget =
+    state.editorMode === "production" ? "production" : "beta";
+  if (
+    connected &&
+    state.editorNavigationTarget !== navigationTarget &&
+    !state.editorNavigationLoading
+  ) {
+    window.setTimeout(() => loadEditorNavigation({ quiet: true }), 0);
+  }
 
   // Draft editing should not depend on a Cloudflare beta deployment being
   // available. Use the current production build as the in-browser canvas,
@@ -2235,6 +2466,11 @@ function renderWebEditor() {
       state.editorBannerDirty = false;
       state.editorBannerKey = "";
       state.editorBannerOpenId = "";
+      state.editorNavigationTarget = "";
+      state.editorNavigationHeaderOrder = [];
+      state.editorNavigationGroupOrder = [];
+      state.editorNavigationDirty = false;
+      state.editorNavigationDrag = null;
       renderWebEditor();
     });
   });
@@ -2250,7 +2486,20 @@ function renderWebEditor() {
     renderWebEditor();
   });
 
-  bannerInterval?.addEventListener("change", () => {
+  bindEditorNavigationSortable(
+    headerOrderList,
+    "header",
+    editable
+  );
+  bindEditorNavigationSortable(
+    shortCourseOrderList,
+    "groups",
+    editable
+  );
+  document.querySelector("#editor-navigation-save")
+    ?.addEventListener("click", saveEditorNavigationOrder);
+
+    bannerInterval?.addEventListener("change", () => {
     state.editorBannerInterval = Number(bannerInterval.value || 5200);
     state.editorBannerDirty = true;
     if (bannerSave) bannerSave.disabled = !connected;

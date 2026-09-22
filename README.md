@@ -70,6 +70,8 @@ These values are available only to the server-side Pages Functions. The Supabase
 
 The Web Editor uses `WELLWEBSITE_GITHUB_TOKEN` server-side to read/write only `JesusesGains/WellWebsite`. Use a fine-grained GitHub personal access token restricted to that one repository with **Contents: Read and write**. Do not expose it to browser code, commit it to either repository, or add it to Cloudflare preview environments. The production dashboard is the only environment that should receive this token.
 
+Web Editor structural edits are source-backed. Header navigation drag-and-drop rewrites the canonical order arrays in `WellWebsite/src/data/navigation.js` on `beta-main`; it never appends CSS overrides or extra DOM layers. Visual draft previews are reapplied from a clean baseline so repeated edits do not accumulate on top of previous preview state.
+
 Web Editor branch workflow:
 
 1. `main` is production and powers `wellwebsite.pages.dev` / the public website.

@@ -114,6 +114,38 @@ export async function writeOverrides(env, branch, data, sha, message) {
   );
 }
 
+export async function readTextFile(env, branch, path) {
+  const file = await githubRequest(
+    env,
+    `/repos/${REPOSITORY}/contents/${path}?ref=${encodeURIComponent(branch)}`
+  );
+
+  return {
+    sha: file.sha,
+    content: decodeBase64(file.content)
+  };
+}
+
+export async function writeTextFile(env, branch, path, content, sha, message) {
+  return githubRequest(
+    env,
+    `/repos/${REPOSITORY}/contents/${path}`,
+    {
+      method: "PUT",
+      body: {
+        message,
+        content: encodeBase64(
+          String(content || "").endsWith("\n")
+            ? String(content || "")
+            : `${String(content || "")}\n`
+        ),
+        branch,
+        ...(sha ? { sha } : {})
+      }
+    }
+  );
+}
+
 export async function compareBranches(env) {
   const comparison = await githubRequest(
     env,
