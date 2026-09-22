@@ -13,6 +13,14 @@ import {
 
 const ALLOWED_FONTS = new Set(["DM Serif Display", "DM Sans", "System Sans"]);
 const ALLOWED_ATTRIBUTES = new Set(["src", "alt", "href"]);
+const ALLOWED_STYLES = new Set([
+  "backgroundColor",
+  "color",
+  "minHeight",
+  "paddingTop",
+  "paddingBottom",
+  "borderRadius"
+]);
 const HEADER_KEYS = ["qualifications", "short-courses", "about", "testimonials", "more"];
 const SHORT_COURSE_GROUPS = [
   "Nutrition & health",
@@ -116,6 +124,54 @@ function cleanAttributeOverrides(value) {
   return output;
 }
 
+function cleanStyleValue(name, value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+
+  if (name === "backgroundColor" || name === "color") {
+    return /^#[0-9a-f]{6}$/i.test(raw) ? raw.toUpperCase() : "";
+  }
+
+  if (["minHeight", "paddingTop", "paddingBottom", "borderRadius"].includes(name)) {
+    const match = raw.match(/^(\d{1,4})px$/i);
+    if (!match) return "";
+    const number = Math.max(0, Math.min(1600, Number(match[1])));
+    return `${number}px`;
+  }
+
+  return "";
+}
+
+function cleanStyleOverrides(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+
+  const output = {};
+
+  for (const [rawSelector, rawStyles] of Object.entries(value).slice(0, 80)) {
+    const selector = cleanSelector(rawSelector);
+    if (
+      !selector ||
+      !rawStyles ||
+      typeof rawStyles !== "object" ||
+      Array.isArray(rawStyles)
+    ) {
+      continue;
+    }
+
+    const styles = {};
+    for (const [rawName, rawValue] of Object.entries(rawStyles)) {
+      const name = String(rawName || "");
+      if (!ALLOWED_STYLES.has(name)) continue;
+      const cleaned = cleanStyleValue(name, rawValue);
+      if (cleaned) styles[name] = cleaned;
+    }
+
+    if (Object.keys(styles).length) output[selector] = styles;
+  }
+
+  return output;
+}
+
 function normalisePagePatch(raw) {
   const input = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
   const heading = cleanText(input.heading, 300);
@@ -124,6 +180,7 @@ function normalisePagePatch(raw) {
   const font = cleanText(input.font, 40);
   const text = cleanTextOverrides(input.text);
   const attributes = cleanAttributeOverrides(input.attributes);
+  const styles = cleanStyleOverrides(input.styles);
 
   if (accent && !/^#[0-9a-f]{6}$/i.test(accent)) {
     const error = new Error("Invalid accent colour.");
@@ -137,14 +194,15 @@ function normalisePagePatch(raw) {
   }
 
   return {
-    heading, copy, accent, font, text, attributes,
+    heading, copy, accent, font, text, attributes, styles,
     supplied: {
       heading: Object.prototype.hasOwnProperty.call(input, "heading"),
       copy: Object.prototype.hasOwnProperty.call(input, "copy"),
       accent: Object.prototype.hasOwnProperty.call(input, "accent"),
       font: Object.prototype.hasOwnProperty.call(input, "font"),
       text: Object.prototype.hasOwnProperty.call(input, "text"),
-      attributes: Object.prototype.hasOwnProperty.call(input, "attributes")
+      attributes: Object.prototype.hasOwnProperty.call(input, "attributes"),
+      styles: Object.prototype.hasOwnProperty.call(input, "styles")
     }
   };
 }
@@ -168,6 +226,10 @@ function applyPagePatch(existing, patch) {
   if (patch.supplied.attributes) {
     if (Object.keys(patch.attributes).length) config.attributes = patch.attributes;
     else delete config.attributes;
+  }
+  if (patch.supplied.styles) {
+    if (Object.keys(patch.styles).length) config.styles = patch.styles;
+    else delete config.styles;
   }
   return config;
 }
