@@ -1219,100 +1219,27 @@ function newEditorBannerItem() {
   };
 }
 
-async function commitEditorBannerItems(items, {
-  operation = "update",
-  button = null
-} = {}) {
-  const target = state.editorBannerTarget === "beta" ? "beta" : "production";
-  const result = await apiRequest("/editor-banner", {
-    method: "POST",
-    body: {
-      target,
-      operation,
-      intervalMs: state.editorBannerInterval,
-      items
-    }
-  });
-
-  const statusKey = target === "beta" ? "beta" : "main";
-  if (state.editorStatus?.[statusKey]) {
-    state.editorStatus[statusKey].overrides = result.overrides;
-    if (result.commitSha) state.editorStatus[statusKey].sha = result.commitSha;
-  }
-
-  state.editorBannerItems = items.map((item) => ({ ...item }));
-  state.editorBannerDirty = false;
-  state.editorBannerKey = "";
-
-  const destination =
-    target === "production" ? "live website" : "preview website";
-  const verb = operation === "delete" ? "deleted" : "saved";
-  showToast(
-    `Rolling banner ${verb} on the ${destination}.${target === "production" ? " The website update is starting." : ""}`
-  );
-
-  await loadWebEditorStatus({ quiet: true });
-  return result;
-}
-
-async function publishEditorBanner() {
-  const button = document.querySelector("#editor-banner-save");
-  if (button) {
-    button.disabled = true;
-    button.textContent = "Saving…";
-  }
-
-  try {
-    await commitEditorBannerItems(state.editorBannerItems, {
-      operation: "update",
-      button
-    });
-  } catch (error) {
-    showToast(error?.message || "Unable to save the rolling banner.", "error");
-    if (button) {
-      button.disabled = false;
-      button.textContent = state.editorBannerTarget === "production"
-        ? "Save live banner"
-        : "Save preview banner";
-    }
-  }
+function publishEditorBanner() {
+  state.editorBannerDirty = true;
+  state.editorDirty = editorPendingChangeCount() > 0;
+  showToast("Banner changes are staged locally. Publish beta preview to build them.");
 }
 
 async function deleteEditorBannerItem(index) {
   if (!Number.isInteger(index) || !state.editorBannerItems[index]) return;
 
-  const item = state.editorBannerItems[index];
-  const nextItems = state.editorBannerItems.filter(
+  state.editorBannerItems = state.editorBannerItems.filter(
     (_, itemIndex) => itemIndex !== index
   );
-  const button = document.querySelector("#confirm-editor-banner-delete");
+  state.editorBannerDirty = true;
+  state.editorDirty = editorPendingChangeCount() > 0;
+  state.editorBannerPendingDeleteIndex = null;
+  document.body.classList.remove("has-support-confirm-modal");
 
-  if (button) {
-    button.disabled = true;
-    button.textContent = "Deleting…";
-  }
-
-  try {
-    await commitEditorBannerItems(nextItems, {
-      operation: "delete",
-      button
-    });
-
-    if (state.editorBannerOpenId === item.id) {
-      state.editorBannerOpenId = "";
-    }
-
-    state.editorBannerPendingDeleteIndex = null;
-    document.body.classList.remove("has-support-confirm-modal");
-    renderWebEditor();
-  } catch (error) {
-    showToast(error?.message || "Unable to delete the rolling banner.", "error");
-    if (button) {
-      button.disabled = false;
-      button.textContent = "Delete banner";
-    }
-  }
+  renderWebEditor();
+  showToast("Banner removed from the live draft. Publish beta preview to build it.");
 }
+
 
 function editorBranchSummary() {
   const comparison = state.editorStatus?.comparison;
@@ -1361,7 +1288,7 @@ async function publishWebEditorDraft(payload) {
   const button = document.querySelector("#web-editor-preview-submit");
   if (button) {
     button.disabled = true;
-    button.textContent = "Publishing…";
+    button.textContent = "Building beta preview…";
   }
 
   try {
@@ -1378,15 +1305,27 @@ async function publishWebEditorDraft(payload) {
     state.editorPendingPages = {};
     state.editorHistory = [];
     state.editorFuture = [];
+    state.editorNavigationDirty = false;
+    state.editorLayoutDirty = false;
+    state.editorBannerDirty = false;
+    state.editorAssetDrafts = [];
+    state.editorAssetsLoaded = false;
     state.editorDirty = false;
     state.editorDraftKey = "";
-    showToast("Changes sent to the preview site. The updated preview will appear shortly.");
+    showToast("Beta preview published. One GitHub commit/build was created from the staged draft.");
     await loadWebEditorStatus({ quiet: true });
+    state.editorNavigationTarget = "";
+    state.editorLayoutTarget = "";
+    await Promise.all([
+      loadEditorNavigation({ quiet: true }),
+      loadEditorLayout({ quiet: true }),
+      loadEditorAssets({ quiet: true })
+    ]);
   } catch (error) {
     showToast(error?.message || "Unable to publish these changes to the preview site.", "error");
     if (button) {
       button.disabled = false;
-      button.textContent = "Push changes to beta";
+      button.textContent = "Publish beta preview";
     }
   }
 }
@@ -2775,9 +2714,13 @@ function renderWebEditor() {
       state.editorNavigationHeaderOrder = [];
       state.editorNavigationGroupOrder = [];
       state.editorNavigationDirty = false;
-      state.editorNavigationSaving = false;
-      state.editorNavigationSaveQueued = false;
       state.editorNavigationDrag = null;
+      state.editorLayoutTarget = "";
+      state.editorLayoutOrders = {};
+      state.editorLayoutDirty = false;
+      state.editorAssetsLoaded = false;
+      state.editorAssets = [];
+      if (next !== "beta") state.editorAssetDrafts = [];
       renderWebEditor();
     });
   });
@@ -2804,12 +2747,16 @@ function renderWebEditor() {
     editable
   );
   document.querySelector("#editor-navigation-save")
-    ?.addEventListener("click", () => saveEditorNavigationOrder());
+    ?.addEventListener("click", saveEditorNavigationOrder);
 
     bannerInterval?.addEventListener("change", () => {
     state.editorBannerInterval = Number(bannerInterval.value || 5200);
     state.editorBannerDirty = true;
-    if (bannerSave) bannerSave.disabled = !connected;
+    state.editorDirty = editorPendingChangeCount() > 0;
+    postDraft();
+    const publish = document.querySelector("#web-editor-preview-submit");
+    if (publish) publish.disabled = false;
+    if (bannerSave) bannerSave.textContent = "Staged · publish top right";
   });
 
   bannerList?.addEventListener("input", (event) => {
@@ -2837,7 +2784,11 @@ function renderWebEditor() {
     }
 
     state.editorBannerDirty = true;
-    if (bannerSave) bannerSave.disabled = !connected;
+    state.editorDirty = editorPendingChangeCount() > 0;
+    postDraft();
+    const publish = document.querySelector("#web-editor-preview-submit");
+    if (publish) publish.disabled = false;
+    if (bannerSave) bannerSave.textContent = "Staged · publish top right";
   });
 
   bannerList?.addEventListener("change", (event) => {
@@ -2898,7 +2849,9 @@ function renderWebEditor() {
     state.editorBannerItems.push(item);
     state.editorBannerOpenId = item.id;
     state.editorBannerDirty = true;
+    state.editorDirty = editorPendingChangeCount() > 0;
     renderWebEditor();
+    window.setTimeout(postDraft, 30);
   });
 
   bannerSave?.addEventListener("click", publishEditorBanner);
@@ -2908,6 +2861,60 @@ function renderWebEditor() {
       postDraft();
       requestColours();
     }, 80);
+  });
+
+  document.querySelector("#editor-assets-toggle")?.addEventListener("click", () => {
+    state.editorAssetsOpen = !state.editorAssetsOpen;
+    renderWebEditor();
+  });
+
+  document.querySelector("#editor-assets-upload")?.addEventListener("click", () => {
+    document.querySelector("#editor-assets-input")?.click();
+  });
+
+  document.querySelector("#editor-assets-input")?.addEventListener("change", (event) => {
+    stageEditorAssetFiles(event.target?.files);
+  });
+
+  document.querySelector("#editor-assets-grid")?.addEventListener("click", async (event) => {
+    const copyButton = event.target?.closest?.("[data-editor-asset-copy]");
+    if (copyButton) {
+      const link = String(copyButton.dataset.editorAssetCopy || "");
+      try {
+        await navigator.clipboard.writeText(link);
+        showToast("Asset link copied.");
+      } catch {
+        showToast(link);
+      }
+      return;
+    }
+
+    const useButton = event.target?.closest?.("[data-editor-asset-use]");
+    if (!useButton || state.editorSelectedObject?.tag !== "img") return;
+
+    const selector = String(state.editorSelectedObject.selector || "");
+    const src = String(useButton.dataset.editorAssetUse || "");
+    if (!selector || !src) return;
+
+    recordEditorHistory();
+    state.editorAttributeDrafts = {
+      ...state.editorAttributeDrafts,
+      [selector]: {
+        ...(state.editorAttributeDrafts[selector] || state.editorSelectedObject.attributes || {}),
+        src
+      }
+    };
+    state.editorSelectedObject = {
+      ...state.editorSelectedObject,
+      attributes: {
+        ...(state.editorSelectedObject.attributes || {}),
+        src
+      }
+    };
+    setDirty();
+    postDraft();
+    renderSelectedItem();
+    showToast("Asset applied to the live draft.");
   });
 
   document.querySelectorAll("[data-editor-device]").forEach((button) => {
@@ -3023,11 +3030,40 @@ function renderWebEditor() {
   });
 
   publishButton?.addEventListener("click", () => {
-    if (!editable || !state.editorDirty) return;
+    if (!editable || editorPendingChangeCount() < 1) return;
 
-    storeCurrentEditorDraft();
+    if (
+      Object.keys(state.editorTextDrafts || {}).length ||
+      Object.keys(state.editorAttributeDrafts || {}).length ||
+      state.editorHeadingDraft ||
+      state.editorCopyDraft ||
+      state.editorAccentDraft ||
+      state.editorFontDraft
+    ) {
+      storeCurrentEditorDraft();
+    }
+
     publishWebEditorDraft({
-      pages: { ...state.editorPendingPages }
+      pages: { ...state.editorPendingPages },
+      navigation: {
+        headerOrder: [...state.editorNavigationHeaderOrder],
+        shortCourseGroupOrder: [...state.editorNavigationGroupOrder]
+      },
+      layoutOrders: Object.fromEntries(
+        Object.entries(state.editorLayoutOrders || {}).map(([scope, order]) => [
+          scope,
+          Array.isArray(order) ? [...order] : []
+        ])
+      ),
+      banner: {
+        intervalMs: Number(state.editorBannerInterval || 5200),
+        items: state.editorBannerItems.map((item) => ({ ...item }))
+      },
+      assets: state.editorAssetDrafts.map((asset) => ({
+        path: asset.path,
+        contentBase64: asset.contentBase64,
+        size: asset.size
+      }))
     });
   });
 
