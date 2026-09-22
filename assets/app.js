@@ -796,6 +796,88 @@ function editorPageConfig(mode, path) {
   return source?.pages?.[path] || {};
 }
 
+function cloneEditorAttributeDrafts(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value).map(([selector, attributes]) => [
+      selector,
+      attributes && typeof attributes === "object" && !Array.isArray(attributes)
+        ? { ...attributes }
+        : {}
+    ])
+  );
+}
+
+function editorDraftFromConfig(config = {}) {
+  return {
+    heading: String(config.heading || ""),
+    copy: String(config.copy || ""),
+    accent: String(config.accent || ""),
+    font: String(config.font || ""),
+    text:
+      config.text && typeof config.text === "object" && !Array.isArray(config.text)
+        ? { ...config.text }
+        : {},
+    attributes: cloneEditorAttributeDrafts(config.attributes)
+  };
+}
+
+function currentEditorDraftSnapshot() {
+  return {
+    heading: state.editorHeadingDraft || "",
+    copy: state.editorCopyDraft || "",
+    accent: state.editorAccentDraft || "",
+    font: state.editorFontDraft || "",
+    text: { ...state.editorTextDrafts },
+    attributes: cloneEditorAttributeDrafts(state.editorAttributeDrafts)
+  };
+}
+
+function applyEditorDraftSnapshot(snapshot = {}) {
+  const draft = editorDraftFromConfig(snapshot);
+  state.editorHeadingDraft = draft.heading;
+  state.editorCopyDraft = draft.copy;
+  state.editorAccentDraft = draft.accent;
+  state.editorFontDraft = draft.font;
+  state.editorTextDrafts = draft.text;
+  state.editorAttributeDrafts = draft.attributes;
+}
+
+function storeCurrentEditorDraft() {
+  if (state.editorMode !== "beta") return;
+
+  state.editorPendingPages = {
+    ...state.editorPendingPages,
+    [state.editorPage]: currentEditorDraftSnapshot()
+  };
+  state.editorDirty = Object.keys(state.editorPendingPages).length > 0;
+}
+
+function recordEditorHistory() {
+  if (state.editorMode !== "beta") return;
+
+  const snapshot = currentEditorDraftSnapshot();
+  const previous = state.editorHistory[state.editorHistory.length - 1];
+
+  if (
+    previous &&
+    previous.pagePath === state.editorPage &&
+    JSON.stringify(previous.draft) === JSON.stringify(snapshot)
+  ) {
+    return;
+  }
+
+  state.editorHistory = [
+    ...state.editorHistory.slice(-79),
+    { pagePath: state.editorPage, draft: snapshot }
+  ];
+  state.editorFuture = [];
+}
+
+function editorPendingChangeCount() {
+  return Object.keys(state.editorPendingPages || {}).length;
+}
+
 const DEFAULT_EDITOR_BANNERS = [
   {
     id: "clarity-session",
