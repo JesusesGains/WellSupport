@@ -344,7 +344,21 @@ function renderNotesPanel() {
   close.type = "button";
   close.setAttribute("aria-label", "Close notes");
   close.textContent = "×";
-  close.addEventListener("click", () => {
+  close.addEventListener("click", async () => {
+    if (collab.noteSaveTimer) {
+      window.clearTimeout(collab.noteSaveTimer);
+      collab.noteSaveTimer = null;
+    }
+
+    if (collab.noteAnchor && collab.noteDraftBody.trim()) {
+      await saveCurrentDraftNote();
+    } else if (collab.noteAnchor && !collab.noteDraftId) {
+      clearPendingNoteHighlight();
+    }
+
+    collab.noteAnchor = null;
+    collab.noteDraftBody = "";
+    collab.noteDraftId = "";
     collab.notesOpen = false;
     collab.noteMode = false;
     document.querySelector("#editor-collab-note-tool")?.classList.remove("is-active");
@@ -683,6 +697,12 @@ document.addEventListener("click", async (event) => {
     (interaction && interaction.dataset.editorInteraction === "view") ||
     (existingTool && !existingTool.closest("#editor-collab-note-tool"))
   ) {
+    if (collab.noteAnchor && !collab.noteDraftBody.trim() && !collab.noteDraftId) {
+      clearPendingNoteHighlight();
+      collab.noteAnchor = null;
+      collab.noteDraftBody = "";
+      collab.noteDraftId = "";
+    }
     collab.noteMode = false;
     document.querySelector("#editor-collab-note-tool")?.classList.remove("is-active");
   }
