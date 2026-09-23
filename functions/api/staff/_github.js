@@ -219,6 +219,52 @@ export async function moveBranchForward(env, branch, sha) {
   );
 }
 
+export async function restoreBranchTree(env, branch, sourceCommitSha, message) {
+  const [branchInfo, sourceCommit] = await Promise.all([
+    githubRequest(
+      env,
+      `/repos/${REPOSITORY}/branches/${encodeURIComponent(branch)}`
+    ),
+    githubRequest(
+      env,
+      `/repos/${REPOSITORY}/git/commits/${encodeURIComponent(sourceCommitSha)}`
+    )
+  ]);
+
+  const parentSha = branchInfo.commit?.sha;
+  const treeSha = sourceCommit.tree?.sha;
+  if (!parentSha || !treeSha) {
+    const error = new Error("Unable to resolve website version for restore.");
+    error.status = 409;
+    throw error;
+  }
+
+  const commit = await githubRequest(env, `/repos/${REPOSITORY}/git/commits`, {
+    method: "POST",
+    body: {
+      message,
+      tree: treeSha,
+      parents: [parentSha]
+    }
+  });
+
+  await githubRequest(
+    env,
+    `/repos/${REPOSITORY}/git/refs/heads/${encodeURIComponent(branch)}`,
+    {
+      method: "PATCH",
+      body: { sha: commit.sha, force: false }
+    }
+  );
+
+  return {
+    sha: commit.sha,
+    parentSha,
+    restoredFromSha: sourceCommitSha,
+    treeSha
+  };
+}
+
 export async function commitFiles(env, branch, files, message) {
   const cleanFiles = Array.isArray(files)
     ? files.filter((file) => file?.path && typeof file.content === "string")
