@@ -2331,6 +2331,125 @@ function renderDeveloperAi() {
 }
 
 
+
+function sharedEditorPages() {
+  return Object.fromEntries(
+    Object.entries(state.editorPendingPages || {}).map(([path, draft]) => [
+      path,
+      editorDraftFromConfig(draft)
+    ])
+  );
+}
+
+async function loadSharedEditorDraft({ quiet = false } = {}) {
+  const betaSha = state.editorStatus?.beta?.sha || "";
+  if (!betaSha || state.editorMode !== "beta" || state.editorSharedDraftLoadedSha === betaSha) return;
+
+  try {
+    const result = await apiRequest("/editor-draft");
+    state.editorSharedDraftAvailable = result.available !== false;
+    state.editorSharedDraftLoadedSha = betaSha;
+    const draft = result.draft;
+
+    if (!draft || draft.base_sha !== betaSha) {
+      state.editorSharedDraftRevision = 0;
+      state.editorSharedDraftConflict = false;
+      return;
+    }
+
+    const pages =
+      draft.payload?.pages &&
+      typeof draft.payload.pages === "object" &&
+      !Array.isArray(draft.payload.pages)
+        ? draft.payload.pages
+        : {};
+
+    if (!Object.keys(state.editorPendingPages || {}).length) {
+      state.editorPendingPages = Object.fromEntries(
+        Object.entries(pages).map(([path, pageDraft]) => [
+          path,
+          editorDraftFromConfig(pageDraft)
+        ])
+      );
+      state.editorDirty = editorPendingChangeCount() > 0;
+      state.editorDraftKey = "";
+    } else if (JSON.stringify(sharedEditorPages()) !== JSON.stringify(pages)) {
+      state.editorSharedDraftConflict = true;
+      if (!quiet) showToast("A different shared website draft already exists. Reload before overwriting it.", "error");
+    }
+
+    state.editorSharedDraftRevision = Number(draft.revision || 0);
+  } catch (error) {
+    if (error.status === 503) {
+      state.editorSharedDraftAvailable = false;
+      state.editorSharedDraftLoadedSha = betaSha;
+    } else if (!quiet) {
+      showToast(error?.message || "Unable to load the shared website draft.", "error");
+    }
+  } finally {
+    if (state.currentView === "editor") renderWebEditor();
+  }
+}
+
+function scheduleSharedEditorDraft() {
+  if (state.editorSharedDraftTimer) window.clearTimeout(state.editorSharedDraftTimer);
+  state.editorSharedDraftTimer = window.setTimeout(saveSharedEditorDraft, 900);
+}
+
+async function saveSharedEditorDraft() {
+  state.editorSharedDraftTimer = null;
+  if (
+    state.editorMode !== "beta" ||
+    state.editorSharedDraftSaving ||
+    state.editorSharedDraftAvailable === false ||
+    state.editorSharedDraftConflict
+  ) return;
+
+  const betaSha = state.editorStatus?.beta?.sha || "";
+  if (!betaSha) return;
+
+  state.editorSharedDraftSaving = true;
+  try {
+    const result = await apiRequest("/editor-draft", {
+      method: "POST",
+      body: {
+        baseSha: betaSha,
+        revision: state.editorSharedDraftRevision || 0,
+        pages: sharedEditorPages()
+      }
+    });
+    if (result.available === false) {
+      state.editorSharedDraftAvailable = false;
+      return;
+    }
+    state.editorSharedDraftAvailable = true;
+    state.editorSharedDraftLoadedSha = betaSha;
+    state.editorSharedDraftRevision = Number(result.draft?.revision || state.editorSharedDraftRevision || 0);
+  } catch (error) {
+    if (error.status === 409) {
+      state.editorSharedDraftConflict = true;
+      showToast("Another staff member changed the shared draft. Reload before saving more changes.", "error");
+    } else if (error.status === 503) {
+      state.editorSharedDraftAvailable = false;
+    }
+  } finally {
+    state.editorSharedDraftSaving = false;
+  }
+}
+
+async function clearSharedEditorDraft() {
+  if (state.editorSharedDraftTimer) window.clearTimeout(state.editorSharedDraftTimer);
+  state.editorSharedDraftTimer = null;
+  try {
+    await apiRequest("/editor-draft", { method: "DELETE", body: {} });
+  } catch {
+    // Optional shared-draft storage must not block a successful publish.
+  }
+  state.editorSharedDraftLoadedSha = state.editorStatus?.beta?.sha || "";
+  state.editorSharedDraftRevision = 0;
+  state.editorSharedDraftConflict = false;
+}
+
 async function loadEditorVersionHistory({ quiet = false } = {}) {
   if (state.editorHistoryLoading || !staffCan("editor")) return;
   state.editorHistoryLoading = true;
