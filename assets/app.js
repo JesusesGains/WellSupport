@@ -106,6 +106,7 @@ const state = {
   editorAssetsLoading: false,
   editorAssetDrafts: [],
   editorAssetUploadBusy: false,
+  editorAssetUploadTargetSelector: "",
   editorPreviewMode: "visual",
   editorCodeSource: null,
   editorCodeSourceKey: "",
@@ -2640,6 +2641,12 @@ function renderWebEditor() {
   panel.className = "chat-panel web-editor-panel is-fullscreen";
   panel.innerHTML = `
     <div class="web-editor-fullscreen">
+      <input
+        id="editor-assets-input"
+        type="file"
+        accept="image/jpeg,image/png,image/webp"
+        hidden
+      />
       <header class="editor-fullscreen-topbar">
         <div class="editor-fullscreen-topbar-left">
           <button id="web-editor-exit" class="editor-topbar-icon-button" type="button" aria-label="Exit website editor" title="Back">←</button>
@@ -3649,8 +3656,12 @@ function renderWebEditor() {
     }
 
     if (event.data.type === "WCG_EDITOR_OPEN_ASSET_UPLOAD" && editable) {
-      state.editorAssetsOpen = true;
-      document.querySelector("#editor-assets-input")?.click();
+      state.editorAssetUploadTargetSelector = String(event.data.selector || "");
+      const input = document.querySelector("#editor-assets-input");
+      if (input instanceof HTMLInputElement) {
+        input.value = "";
+        input.click();
+      }
       return;
     }
 
@@ -4020,17 +4031,51 @@ function renderWebEditor() {
     if (sha) stageEditorProductionRestore(sha);
   });
 
-  document.querySelector("#editor-assets-toggle")?.addEventListener("click", () => {
-    state.editorAssetsOpen = !state.editorAssetsOpen;
-    renderWebEditor();
-  });
+  document.querySelector("#editor-assets-input")?.addEventListener("change", async (event) => {
+    const input = event.target;
+    const before = state.editorAssetDrafts.length;
+    const targetSelector = state.editorAssetUploadTargetSelector;
+    await stageEditorAssetFiles(input?.files);
 
-  document.querySelector("#editor-assets-upload")?.addEventListener("click", () => {
-    document.querySelector("#editor-assets-input")?.click();
-  });
+    const staged = state.editorAssetDrafts.slice(before);
+    const firstImage = staged.find((asset) => asset.kind === "image");
 
-  document.querySelector("#editor-assets-input")?.addEventListener("change", (event) => {
-    stageEditorAssetFiles(event.target?.files);
+    if (targetSelector && firstImage) {
+      recordEditorHistory();
+      const srcValue = `/${firstImage.path}`;
+      state.editorAttributeDrafts = {
+        ...state.editorAttributeDrafts,
+        [targetSelector]: {
+          ...(state.editorAttributeDrafts[targetSelector] || {}),
+          src: srcValue
+        }
+      };
+
+      if (state.editorSelectedObject?.selector === targetSelector) {
+        state.editorSelectedObject = {
+          ...state.editorSelectedObject,
+          attributes: {
+            ...(state.editorSelectedObject.attributes || {}),
+            src: srcValue
+          }
+        };
+      }
+
+      state.editorDirty = editorPendingChangeCount() > 0;
+      document.querySelector("#web-editor-preview-submit")?.removeAttribute("disabled");
+
+      frame?.contentWindow?.postMessage(
+        {
+          type: "WCG_EDITOR_APPLY_IMAGE",
+          selector: targetSelector,
+          src: srcValue
+        },
+        frameOrigin()
+      );
+    }
+
+    state.editorAssetUploadTargetSelector = "";
+    if (input instanceof HTMLInputElement) input.value = "";
   });
 
   document.querySelector("#editor-assets-grid")?.addEventListener("click", async (event) => {
