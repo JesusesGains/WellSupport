@@ -122,33 +122,13 @@ function ensureNoteTool() {
     slot.appendChild(button);
 
     button.addEventListener("click", () => {
-      collab.noteMode = !collab.noteMode;
-      collab.notesOpen = collab.noteMode || collab.notesOpen;
-
-      document.querySelectorAll("[data-editor-interaction]").forEach((item) => {
-        item.classList.remove("is-active");
-      });
-
-      const editTools = document.querySelector(".editor-tool-toolbar");
-      editTools?.classList.toggle("is-collapsed", collab.noteMode);
-      editTools?.classList.toggle("is-expanded", !collab.noteMode);
-
-      if (!collab.noteMode) {
-        document
-          .querySelector('[data-editor-interaction="edit"]')
-          ?.classList.add("is-active");
-      }
-
-      button.classList.toggle("is-active", collab.noteMode);
+      collab.notesOpen = true;
+      button.classList.add("is-active");
       renderNotesPanel();
-      postToPreview("WCG_EDITOR_TOOL", {
-        tool: collab.noteMode ? "note" : "select",
-        colour: collab.selfColour
-      });
     });
   }
 
-  button.classList.toggle("is-active", collab.noteMode);
+  button.classList.toggle("is-active", collab.notesOpen);
   button.classList.toggle("has-notes", noteCount() > 0);
 }
 
@@ -347,8 +327,53 @@ function renderNotesPanel() {
   subtitle.textContent = "Highlights and notes shared with staff";
   titleWrap.append(title, subtitle);
 
+  const headerActions = document.createElement("div");
+  headerActions.className = "editor-notes-header-actions";
+
+  const add = document.createElement("button");
+  add.type = "button";
+  add.className = "editor-notes-add";
+  add.setAttribute("aria-label", "Create new note");
+  add.title = "Create new note";
+  add.textContent = "+";
+  add.addEventListener("click", async () => {
+    if (collab.noteSaveTimer) {
+      window.clearTimeout(collab.noteSaveTimer);
+      collab.noteSaveTimer = null;
+    }
+
+    if (collab.noteAnchor && collab.noteDraftBody.trim()) {
+      await saveCurrentDraftNote();
+    } else if (collab.noteAnchor && !collab.noteDraftId) {
+      clearPendingNoteHighlight();
+    }
+
+    collab.noteAnchor = null;
+    collab.noteDraftBody = "";
+    collab.noteDraftId = "";
+    collab.selectedNoteId = "";
+    collab.noteMode = true;
+    collab.notesOpen = true;
+
+    document.querySelectorAll("[data-editor-interaction]").forEach((item) => {
+      item.classList.remove("is-active");
+    });
+
+    document.querySelector(".editor-tool-toolbar")?.classList.add("is-collapsed");
+    document.querySelector(".editor-tool-toolbar")?.classList.remove("is-expanded");
+    document.querySelector("#editor-collab-note-tool")?.classList.add("is-active");
+
+    postToPreview("WCG_EDITOR_TOOL", {
+      tool: "note",
+      colour: collab.selfColour
+    });
+
+    renderNotesPanel();
+  });
+
   const close = document.createElement("button");
   close.type = "button";
+  close.className = "editor-notes-close";
   close.setAttribute("aria-label", "Close notes");
   close.textContent = "×";
   close.addEventListener("click", async () => {
@@ -372,7 +397,8 @@ function renderNotesPanel() {
     postToPreview("WCG_EDITOR_TOOL", { tool: "select", colour: collab.selfColour });
     renderNotesPanel();
   });
-  header.append(titleWrap, close);
+  headerActions.append(add, close);
+  header.append(titleWrap, headerActions);
   panel.appendChild(header);
 
   if (collab.noteAnchor) {
@@ -423,9 +449,11 @@ function renderNotesPanel() {
       collab.noteDraftBody = "";
       collab.noteDraftId = "";
       collab.noteMode = false;
-      document.querySelector("#editor-collab-note-tool")?.classList.remove("is-active");
+      document.querySelector("#editor-collab-note-tool")?.classList.add("is-active");
       postToPreview("WCG_EDITOR_TOOL", { tool: "select", colour: collab.selfColour });
       await loadNotes();
+      collab.notesOpen = true;
+      renderNotesPanel();
     });
 
     actions.append(done);
@@ -450,7 +478,7 @@ function renderNotesPanel() {
   if (!ordered.length) {
     const empty = document.createElement("div");
     empty.className = "editor-note-empty";
-    empty.textContent = "Choose Note, then click a section or drag a box over the exact area you want to highlight.";
+    empty.textContent = "Click + above, then click a section or drag over the exact area you want to highlight.";
     list.appendChild(empty);
   } else {
     for (const note of ordered) list.appendChild(noteCard(note));
@@ -710,10 +738,15 @@ document.addEventListener("click", async (event) => {
       collab.noteDraftBody = "";
       collab.noteDraftId = "";
     }
+
+    // Changing View/Edit/tools cancels only note-placement mode.
+    // The notes sidebar stays open until the user explicitly clicks ×.
     collab.noteMode = false;
-    collab.notesOpen = false;
-    document.querySelector("#editor-collab-note-tool")?.classList.remove("is-active");
-    renderNotesPanel();
+
+    const notesButton = document.querySelector("#editor-collab-note-tool");
+    notesButton?.classList.toggle("is-active", collab.notesOpen);
+
+    if (collab.notesOpen) renderNotesPanel();
   }
 
   const goto = event.target?.closest?.("[data-note-goto]");
@@ -825,7 +858,7 @@ window.addEventListener("message", (event) => {
     collab.noteDraftId = "";
     collab.selfColour = event.data.colour || collab.selfColour;
     collab.notesOpen = true;
-    document.querySelector("#editor-collab-note-tool")?.classList.remove("is-active");
+    document.querySelector("#editor-collab-note-tool")?.classList.add("is-active");
     renderNotesPanel();
     return;
   }
