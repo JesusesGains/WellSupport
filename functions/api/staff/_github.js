@@ -171,6 +171,11 @@ export async function editorStatus(env) {
       readOverrides(env, BETA_BRANCH)
     ]);
 
+  const betaSha = beta.commit?.sha || null;
+  const previewGate = betaSha
+    ? await requiredPreviewCheck(env, betaSha)
+    : { required: false, passed: false, state: "missing_sha" };
+
   return {
     connected: true,
     repository: REPOSITORY,
@@ -181,8 +186,9 @@ export async function editorStatus(env) {
     },
     beta: {
       branch: BETA_BRANCH,
-      sha: beta.commit?.sha || null,
-      overrides: betaOverrides.data
+      sha: betaSha,
+      overrides: betaOverrides.data,
+      previewGate
     },
     comparison
   };
@@ -286,6 +292,66 @@ export async function commitFiles(env, branch, files, message) {
     sha: commit.sha,
     parentSha,
     treeSha: nextTree.sha
+  };
+}
+
+export async function requiredPreviewCheck(env, sha) {
+  const requiredName = String(env?.WELLWEBSITE_REQUIRED_CHECK || "").trim();
+  if (!requiredName) {
+    return {
+      required: false,
+      passed: true,
+      name: "",
+      state: "not_configured"
+    };
+  }
+
+  const normalised = requiredName.toLowerCase();
+  const [checks, status] = await Promise.all([
+    githubRequest(
+      env,
+      `/repos/${REPOSITORY}/commits/${encodeURIComponent(sha)}/check-runs?per_page=100`
+    ).catch(() => ({ check_runs: [] })),
+    githubRequest(
+      env,
+      `/repos/${REPOSITORY}/commits/${encodeURIComponent(sha)}/status`
+    ).catch(() => ({ statuses: [] }))
+  ]);
+
+  const checkRun = (Array.isArray(checks?.check_runs) ? checks.check_runs : [])
+    .find((item) => String(item?.name || "").toLowerCase() === normalised);
+  if (checkRun) {
+    const conclusion = String(checkRun.conclusion || "");
+    return {
+      required: true,
+      passed: checkRun.status === "completed" && conclusion === "success",
+      name: requiredName,
+      state: checkRun.status || "unknown",
+      conclusion: conclusion || null,
+      url: checkRun.html_url || checkRun.details_url || null
+    };
+  }
+
+  const commitStatus = (Array.isArray(status?.statuses) ? status.statuses : [])
+    .find((item) => String(item?.context || "").toLowerCase() === normalised);
+  if (commitStatus) {
+    return {
+      required: true,
+      passed: commitStatus.state === "success",
+      name: requiredName,
+      state: commitStatus.state || "unknown",
+      conclusion: commitStatus.state || null,
+      url: commitStatus.target_url || null
+    };
+  }
+
+  return {
+    required: true,
+    passed: false,
+    name: requiredName,
+    state: "missing",
+    conclusion: null,
+    url: null
   };
 }
 
