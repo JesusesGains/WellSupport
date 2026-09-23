@@ -2,6 +2,7 @@ import {
   assertSameOrigin,
   requireStaff,
   requireStaffPermission,
+  recordEditorAudit,
   sessionResponse
 } from "./_utils.js";
 import {
@@ -387,6 +388,35 @@ function replaceExportedStringArray(source, exportName, values) {
   );
 }
 
+function validAssetSignature(bytes, extension) {
+  const data = new Uint8Array(bytes);
+  const ext = String(extension || "").toLowerCase();
+
+  if (ext === "jpg" || ext === "jpeg") {
+    return data.length >= 3 && data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff;
+  }
+  if (ext === "png") {
+    const signature = [0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a];
+    return data.length >= signature.length &&
+      signature.every((byte, index) => data[index] === byte);
+  }
+  if (ext === "webp") {
+    return data.length >= 12 &&
+      String.fromCharCode(...data.slice(0, 4)) === "RIFF" &&
+      String.fromCharCode(...data.slice(8, 12)) === "WEBP";
+  }
+  return false;
+}
+
+function decodeAssetBase64(content) {
+  try {
+    const binary = atob(content);
+    return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  } catch {
+    return null;
+  }
+}
+
 function cleanAssets(value) {
   if (!Array.isArray(value)) return [];
   const output = [];
@@ -396,10 +426,12 @@ function cleanAssets(value) {
     if (!asset || typeof asset !== "object") continue;
     const path = String(asset.path || "").trim();
     const content = String(asset.contentBase64 || "").replace(/\s+/g, "");
-    const size = Math.max(0, Number(asset.size || 0));
 
-    if (!/^assets\/uploads\/[a-z0-9][a-z0-9._/-]{0,220}$/i.test(path)) {
-      const error = new Error("Invalid uploaded asset path.");
+    const match = path.match(
+      /^assets\/uploads\/([a-z0-9][a-z0-9._-]{0,160})\.(png|jpe?g|webp)$/i
+    );
+    if (!match || path.includes("..")) {
+      const error = new Error("Uploaded assets must be JPG, PNG, or WebP images with a safe filename.");
       error.status = 400;
       throw error;
     }
@@ -408,19 +440,27 @@ function cleanAssets(value) {
       error.status = 400;
       throw error;
     }
-    if (size > MAX_ASSET_BYTES) {
-      const error = new Error("Each uploaded asset must be 6 MB or smaller.");
+
+    const bytes = decodeAssetBase64(content);
+    if (!bytes || !bytes.byteLength || bytes.byteLength > MAX_ASSET_BYTES) {
+      const error = new Error("Each uploaded asset must be a valid image no larger than 6 MB.");
       error.status = 413;
       throw error;
     }
-    total += size;
+    if (!validAssetSignature(bytes, match[2])) {
+      const error = new Error("Uploaded image contents do not match the file type.");
+      error.status = 400;
+      throw error;
+    }
+
+    total += bytes.byteLength;
     if (total > MAX_ASSET_TOTAL_BYTES) {
       const error = new Error("Draft asset uploads exceed the 20 MB publish limit.");
       error.status = 413;
       throw error;
     }
 
-    output.push({ path, content, size });
+    output.push({ path, content, size: bytes.byteLength });
   }
 
   return output;
@@ -575,6 +615,15 @@ export async function onRequestPost({ request, env }) {
       files,
       "Web Editor: publish staged preview changes"
     );
+
+    await recordEditorAudit(session, "editor_publish_beta", {
+      commit_sha: result.sha,
+      pages: pagePatches.map(([path]) => path),
+      navigation_changed: hasNavigationChange,
+      layout_changed: hasLayoutChange,
+      banner_changed: hasBannerChange,
+      asset_paths: assets.map((asset) => asset.path)
+    });
 
     return sessionResponse({
       ok: true,
