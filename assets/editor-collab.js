@@ -33,6 +33,7 @@ const collab = {
   heartbeatTimer: null,
   unavailable: false,
   presenceSignature: "",
+  peopleSignature: "",
   notesSignature: ""
 };
 
@@ -488,21 +489,34 @@ async function loadPresence() {
       collab.self = result.self;
       collab.selfColour = result.self.colour || collab.selfColour;
     }
-    const signature = JSON.stringify(
+    const peopleSignature = JSON.stringify(
+      nextPresence.map((person) => [
+        person.session_id,
+        person.display_name,
+        person.avatar_url,
+        person.colour,
+        person.device
+      ])
+    );
+    const cursorSignature = JSON.stringify(
       nextPresence.map((person) => [
         person.session_id,
         person.updated_at,
-        person.display_name,
-        person.colour,
         person.cursor?.pageX,
         person.cursor?.pageY,
         person.cursor?.visible
       ])
     );
-    if (signature !== collab.presenceSignature) {
-      collab.presenceSignature = signature;
-      collab.presence = nextPresence;
+
+    collab.presence = nextPresence;
+
+    if (peopleSignature !== collab.peopleSignature) {
+      collab.peopleSignature = peopleSignature;
       renderPresence();
+    }
+
+    if (cursorSignature !== collab.presenceSignature) {
+      collab.presenceSignature = cursorSignature;
       sendRemoteCursors();
     }
   } catch (error) {
@@ -610,6 +624,7 @@ function stopCollaboration() {
   collab.presence = [];
   collab.notes = [];
   collab.presenceSignature = "";
+  collab.peopleSignature = "";
   collab.notesSignature = "";
 }
 
@@ -721,6 +736,7 @@ document.addEventListener("change", (event) => {
   collab.notes = [];
   collab.notesSignature = "";
   collab.presenceSignature = "";
+  collab.peopleSignature = "";
   collab.noteAnchor = null;
   collab.noteDraftBody = "";
   collab.noteDraftId = "";
