@@ -7931,3 +7931,115 @@ body.is-resizing-editor-dock iframe {
     height: 5px;
   }
 }
+
+
+/* Chrome-like DevTools chrome inside the dock. */
+.editor-devtools-toolbar {
+  display: flex;
+  min-height: 36px;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 6px 0 8px !important;
+  border-bottom: 1px solid #d7d7d7 !important;
+  background: #f3f3f3 !important;
+}
+
+.editor-devtools-tabs {
+  display: flex;
+  min-width: 0;
+  align-items: stretch;
+  gap: 0;
+}
+
+.editor-devtools-tabs button {
+  position: relative;
+  min-height: 35px;
+  padding: 0 10px;
+  border: 0 !important;
+  border-radius: 0 !important;
+  color: #5f6368 !important;
+  background: transparent !important;
+  font: 500 11px/1 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+}
+
+.editor-devtools-tabs button::after {
+  content: "";
+  position: absolute;
+  right: 9px;
+  bottom: 0;
+  left: 9px;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: transparent;
+}
+
+.editor-devtools-tabs button.is-active {
+  color: #202124 !important;
+}
+
+.editor-devtools-tabs button.is-active::after {
+  background: #1a73e8;
+}
+
+.editor-devtools-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+}
+
+.editor-devtools-label {
+  margin-right: 3px;
+  color: #80868b !important;
+  font: 500 10px/1 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+}
+
+.editor-devtools-actions button {
+  display: grid;
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  min-height: 28px !important;
+  place-items: center;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 4px !important;
+  color: #5f6368 !important;
+  background: transparent !important;
+  font-size: 15px !important;
+}
+
+.editor-devtools-actions button:hover {
+  background: #e4e6e8 !important;
+}
+
+.editor-devtools-content {
+  background: #fff;
+}
+
+/* Make the draggable split add up to the available space including the handle. */
+.editor-preview-placeholder.is-fullscreen.has-code-dock {
+  grid-template-columns:
+    minmax(320px, calc(var(--editor-dock-left) - 4.5px))
+    9px
+    minmax(360px, calc(var(--editor-dock-right) - 4.5px)) !important;
+}
+
+.editor-preview-placeholder.is-fullscreen.has-devtools-dock {
+  grid-template-columns:
+    minmax(320px, calc(var(--editor-dock-left) - 4.5px))
+    9px
+    minmax(320px, calc(var(--editor-dock-right) - 4.5px)) !important;
+}
+
+@media (max-width: 760px) {
+  .editor-preview-placeholder.is-fullscreen.has-code-dock,
+  .editor-preview-placeholder.is-fullscreen.has-devtools-dock {
+    grid-template-columns: minmax(0, 1fr) !important;
+    grid-template-rows:
+      minmax(260px, calc(var(--editor-dock-left) - 4.5px))
+      9px
+      minmax(240px, calc(var(--editor-dock-right) - 4.5px)) !important;
+  }
+}
