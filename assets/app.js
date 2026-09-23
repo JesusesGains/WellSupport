@@ -3620,43 +3620,27 @@ function renderWebEditor() {
       state.editorTool = ["text-box", "view"].includes(event.data.tool)
         ? event.data.tool
         : "select";
-      document.querySelectorAll("[data-editor-interaction]").forEach((button) => {
-    button.addEventListener("click", () => {
-      const nextMode =
-        button.dataset.editorInteraction === "view" ? "view" : "edit";
-      if (nextMode === "edit" && !editable) return;
 
-      state.editorTool = nextMode === "view" ? "view" : "select";
+      const isView = state.editorTool === "view";
 
       document.querySelectorAll("[data-editor-interaction]").forEach((item) => {
         item.classList.toggle(
           "is-active",
-          nextMode === "view"
+          isView
             ? item.dataset.editorInteraction === "view"
             : item.dataset.editorInteraction === "edit"
         );
       });
 
       const palette = document.querySelector(".editor-tool-toolbar");
-      palette?.classList.toggle("is-collapsed", nextMode === "view");
-      palette?.classList.toggle("is-expanded", nextMode !== "view");
+      palette?.classList.toggle("is-collapsed", isView);
+      palette?.classList.toggle("is-expanded", !isView);
 
-      document.querySelectorAll("[data-editor-tool]").forEach((item) => {
-        item.classList.toggle(
+      document.querySelectorAll("[data-editor-tool]").forEach((button) => {
+        button.classList.toggle(
           "is-active",
-          nextMode !== "view" && item.dataset.editorTool === "select"
+          !isView && button.dataset.editorTool === state.editorTool
         );
-      });
-
-      frame?.contentWindow?.postMessage(
-        { type: "WCG_EDITOR_TOOL", tool: state.editorTool },
-        frameOrigin()
-      );
-    });
-  });
-
-  document.querySelectorAll("[data-editor-tool]").forEach((button) => {
-        button.classList.toggle("is-active", button.dataset.editorTool === state.editorTool);
       });
       return;
     }
@@ -4004,6 +3988,10 @@ function renderWebEditor() {
   frame?.addEventListener("load", () => {
     window.setTimeout(() => {
       postDraft();
+      frame?.contentWindow?.postMessage(
+        { type: "WCG_EDITOR_TOOL", tool: state.editorTool },
+        frameOrigin()
+      );
       if (state.editorPreviewMode === "code") {
         postCodeSourcePreview();
       }
@@ -4132,6 +4120,49 @@ function renderWebEditor() {
           item.dataset.editorDevice === state.editorDevice
         );
       });
+    });
+  });
+
+  document.querySelectorAll("[data-editor-interaction]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const nextMode =
+        button.dataset.editorInteraction === "view" ? "view" : "edit";
+
+      // View is always available in BETA. Edit remains restricted to an
+      // editable beta branch. Switching modes never changes BETA/PRODUCTION
+      // and never reloads the iframe.
+      if (nextMode === "edit" && !editable) return;
+
+      state.editorTool = nextMode === "view" ? "view" : "select";
+
+      document.querySelectorAll("[data-editor-interaction]").forEach((item) => {
+        item.classList.toggle(
+          "is-active",
+          nextMode === "view"
+            ? item.dataset.editorInteraction === "view"
+            : item.dataset.editorInteraction === "edit"
+        );
+      });
+
+      const palette = document.querySelector(".editor-tool-toolbar");
+      palette?.classList.toggle("is-collapsed", nextMode === "view");
+      palette?.classList.toggle("is-expanded", nextMode !== "view");
+
+      document.querySelectorAll("[data-editor-tool]").forEach((item) => {
+        item.classList.remove("is-active");
+      });
+
+      // Clear stale editor selection state when entering navigation mode.
+      if (nextMode === "view") {
+        state.editorSelectedText = null;
+        state.editorSelectedObject = null;
+        renderSelectedItem();
+      }
+
+      frame?.contentWindow?.postMessage(
+        { type: "WCG_EDITOR_TOOL", tool: state.editorTool },
+        frameOrigin()
+      );
     });
   });
 
