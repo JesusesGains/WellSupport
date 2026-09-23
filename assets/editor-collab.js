@@ -676,8 +676,13 @@ function startCollaboration() {
 }
 
 document.addEventListener("click", async (event) => {
+  const interaction = event.target?.closest?.("[data-editor-interaction]");
   const existingTool = event.target?.closest?.("[data-editor-tool]");
-  if (existingTool && !existingTool.closest("#editor-collab-note-tool")) {
+
+  if (
+    (interaction && interaction.dataset.editorInteraction === "view") ||
+    (existingTool && !existingTool.closest("#editor-collab-note-tool"))
+  ) {
     collab.noteMode = false;
     document.querySelector("#editor-collab-note-tool")?.classList.remove("is-active");
   }
