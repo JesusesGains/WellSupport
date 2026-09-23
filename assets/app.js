@@ -1154,6 +1154,7 @@ function storeCurrentEditorDraft() {
     [state.editorPage]: currentEditorDraftSnapshot()
   };
   state.editorDirty = Object.keys(state.editorPendingPages).length > 0;
+  scheduleSharedEditorDraft();
 }
 
 function recordEditorHistory() {
