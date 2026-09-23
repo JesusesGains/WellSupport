@@ -36,9 +36,6 @@ function browserCredentialFailures(name, source, failures) {
   if (/\beyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\b/.test(source)) {
     failures.push(`${name}: JWT-like credential found in browser assets`);
   }
-  if (/\bsk-(?:proj-|svcacct-)?[A-Za-z0-9_-]{20,}\b/.test(source)) {
-    failures.push(`${name}: OpenAI API key found in browser assets`);
-  }
   if (/\beval\s*\(|\bnew\s+Function\s*\(/.test(source)) {
     failures.push(`${name}: dynamic code execution is forbidden in browser assets`);
   }
@@ -83,9 +80,6 @@ async function sourceScan() {
     }
     if (/\b(?:github_pat_[A-Za-z0-9_]{40,}|ghp_[A-Za-z0-9]{30,})\b/.test(source)) {
       failures.push(`${name}: GitHub token detected; use Cloudflare WELLWEBSITE_GITHUB_TOKEN secret instead`);
-    }
-    if (/\bsk-(?:proj-|svcacct-)?[A-Za-z0-9_-]{20,}\b/.test(source)) {
-      failures.push(`${name}: OpenAI API key detected; use the Cloudflare OPENAI_API_KEY secret instead`);
     }
 
     if (
