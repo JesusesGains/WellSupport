@@ -2758,6 +2758,17 @@ function renderWebEditor() {
                         `).join("")
                       : `<div class="editor-nav-order-empty">No production history loaded.</div>`}
                 </div>
+                ${state.editorAuditHistory.length ? `
+                  <div class="editor-audit-list">
+                    <strong>Recent dashboard actions</strong>
+                    ${state.editorAuditHistory.slice(0, 8).map((entry) => `
+                      <div>
+                        <span>${escapeEditorAttribute(String(entry.action || "").replaceAll("_", " "))}</span>
+                        <small>${escapeEditorAttribute(entry.actor_display_name || "Staff")}${entry.created_at ? ` · ${escapeEditorAttribute(formatTime(entry.created_at))}` : ""}</small>
+                      </div>
+                    `).join("")}
+                  </div>
+                ` : ""}
               ` : ""}
             </section>
 
