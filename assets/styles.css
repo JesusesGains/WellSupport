@@ -7550,3 +7550,100 @@ body.has-support-confirm-modal {
     max-height: none;
   }
 }
+
+
+.dev-ai-proposal.is-code {
+  display: grid;
+  gap: 12px;
+}
+
+.dev-ai-patch-list {
+  display: grid;
+  gap: 7px;
+}
+
+.dev-ai-patch-list details {
+  overflow: hidden;
+  border: 1px solid var(--wcg-line);
+  border-radius: 11px;
+  background: #fbfcfb;
+}
+
+.dev-ai-patch-list summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 11px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.dev-ai-patch-list summary::-webkit-details-marker {
+  display: none;
+}
+
+.dev-ai-patch-list summary code {
+  color: var(--wcg-navy);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: .57rem;
+}
+
+.dev-ai-patch-list summary span {
+  overflow: hidden;
+  color: #8b938f;
+  font-size: .58rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dev-ai-patch-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border-top: 1px solid var(--wcg-line);
+}
+
+.dev-ai-patch-grid section {
+  min-width: 0;
+  padding: 10px;
+}
+
+.dev-ai-patch-grid section + section {
+  border-left: 1px solid var(--wcg-line);
+}
+
+.dev-ai-patch-grid b {
+  display: block;
+  margin-bottom: 6px;
+  color: #858e89;
+  font-size: .53rem;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+}
+
+.dev-ai-patch-grid pre {
+  max-height: 230px;
+  margin: 0;
+  overflow: auto;
+  padding: 9px;
+  border-radius: 8px;
+  color: #304660;
+  background: #f3f5f4;
+  white-space: pre;
+}
+
+.dev-ai-patch-grid code {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: .57rem;
+  line-height: 1.5;
+}
+
+@media (max-width: 760px) {
+  .dev-ai-patch-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .dev-ai-patch-grid section + section {
+    border-top: 1px solid var(--wcg-line);
+    border-left: 0;
+  }
+}
