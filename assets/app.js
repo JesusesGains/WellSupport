@@ -2350,6 +2350,46 @@ function renderEditorDevtoolsDock() {
   const content = document.querySelector("#editor-devtools-content");
   if (content) content.innerHTML = editorDevtoolsContentMarkup();
 
+  const codeInput = document.querySelector("#editor-code-input");
+  const codeHighlight = document.querySelector("#editor-code-highlight");
+
+  const syncCodeHighlight = () => {
+    if (!codeInput || !codeHighlight) return;
+    codeHighlight.innerHTML = `<code>${highlightHtmlSource(codeInput.value)}</code>`;
+    codeHighlight.scrollTop = codeInput.scrollTop;
+    codeHighlight.scrollLeft = codeInput.scrollLeft;
+  };
+
+  codeInput?.addEventListener("input", () => {
+    state.editorCodeDraft = codeInput.value;
+    state.editorCodeDirty = state.editorCodeDraft !== state.editorCodeOriginal;
+    syncCodeHighlight();
+
+    const save = document.querySelector("#editor-code-save");
+    if (save) {
+      save.disabled = !(editable && state.editorCodeDirty && !state.editorCodeSaving);
+    }
+
+    const meta = document.querySelector(".editor-code-meta small");
+    if (meta && state.editorMode === "beta") {
+      meta.textContent = state.editorCodeDirty
+        ? "Unsaved source changes · save to build a new beta preview"
+        : "beta-main source · editable";
+    }
+  });
+
+  codeInput?.addEventListener("scroll", syncCodeHighlight);
+  codeInput?.addEventListener("keydown", (event) => {
+    if (event.key !== "Tab" || !editable) return;
+    event.preventDefault();
+    const start = codeInput.selectionStart;
+    const end = codeInput.selectionEnd;
+    codeInput.setRangeText("  ", start, end, "end");
+    codeInput.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+
+  document.querySelector("#editor-code-save")?.addEventListener("click", saveEditorCodeSource);
+
   document.querySelectorAll("[data-editor-devtools-tab]").forEach((button) => {
     button.classList.toggle(
       "is-active",
@@ -3633,13 +3673,6 @@ function renderWebEditor() {
       if (mode === "code") {
         window.setTimeout(() => loadEditorCodeSource({ quiet: true }), 0);
       }
-    });
-  });
-
-  document.querySelectorAll("[data-editor-code-tab]").forEach((button) => {
-    button.addEventListener("click", () => {
-      state.editorCodeTab = button.dataset.editorCodeTab === "css" ? "css" : "html";
-      renderWebEditor();
     });
   });
 
