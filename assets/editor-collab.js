@@ -127,8 +127,9 @@ function ensureNoteTool() {
     button = document.createElement("button");
     button.id = "editor-collab-note-tool";
     button.type = "button";
-    button.title = "Pin a staff note";
-    button.innerHTML = "✎ <span>Note</span>";
+    button.title = "Draw a highlighted note region";
+    button.setAttribute("aria-label", "Draw a highlighted note region");
+    button.innerHTML = "▧ <span>Note</span>";
     button.addEventListener("click", () => {
       collab.noteMode = !collab.noteMode;
       if (collab.noteMode) collab.notesOpen = true;
@@ -428,7 +429,7 @@ function renderNotesPanel() {
   if (!ordered.length) {
     const empty = document.createElement("div");
     empty.className = "editor-note-empty";
-    empty.textContent = "Choose Note, then click a section of the page to highlight it and start typing.";
+    empty.textContent = "Choose Note, then click a section or drag a box over the exact area you want to highlight.";
     list.appendChild(empty);
   } else {
     for (const note of ordered) list.appendChild(noteCard(note));
@@ -547,7 +548,11 @@ async function loadNotes() {
         note.colour,
         note.anchor?.selector,
         note.anchor?.pageX,
-        note.anchor?.pageY
+        note.anchor?.pageY,
+        note.anchor?.box?.pageX,
+        note.anchor?.box?.pageY,
+        note.anchor?.box?.width,
+        note.anchor?.box?.height
       ])
     );
     if (signature !== collab.notesSignature) {
@@ -711,8 +716,12 @@ document.addEventListener("click", async (event) => {
   const remove = event.target?.closest?.("[data-note-delete]");
   if (remove) {
     const note = collab.notes.find((item) => item.id === remove.dataset.noteDelete);
-    if (!note || !window.confirm("Delete this pinned note?")) return;
+    if (!note) return;
+
+    const card = remove.closest(".editor-note-card");
+    card?.classList.add("is-deleting");
     remove.disabled = true;
+
     try {
       await collabRequest("", {
         method: "POST",
@@ -722,9 +731,18 @@ document.addEventListener("click", async (event) => {
           id: note.id
         }
       });
-      await loadNotes();
-    } finally {
+
+      collab.notes = collab.notes.filter((item) => item.id !== note.id);
+      collab.selectedNoteId =
+        collab.selectedNoteId === note.id ? "" : collab.selectedNoteId;
+      collab.notesSignature = "";
+      ensurePresenceControl();
+      sendNotesToPreview();
+      renderNotesPanel();
+    } catch (error) {
+      card?.classList.remove("is-deleting");
       remove.disabled = false;
+      remove.title = error?.message || "Unable to delete note.";
     }
   }
 });
