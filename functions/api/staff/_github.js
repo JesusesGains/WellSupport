@@ -171,6 +171,11 @@ export async function editorStatus(env) {
       readOverrides(env, BETA_BRANCH)
     ]);
 
+  const betaSha = beta.commit?.sha || null;
+  const previewGate = betaSha
+    ? await requiredPreviewCheck(env, betaSha)
+    : { required: false, passed: false, state: "missing_sha" };
+
   return {
     connected: true,
     repository: REPOSITORY,
@@ -181,8 +186,9 @@ export async function editorStatus(env) {
     },
     beta: {
       branch: BETA_BRANCH,
-      sha: beta.commit?.sha || null,
-      overrides: betaOverrides.data
+      sha: betaSha,
+      overrides: betaOverrides.data,
+      previewGate
     },
     comparison
   };
@@ -211,6 +217,52 @@ export async function moveBranchForward(env, branch, sha) {
       }
     }
   );
+}
+
+export async function restoreBranchTree(env, branch, sourceCommitSha, message) {
+  const [branchInfo, sourceCommit] = await Promise.all([
+    githubRequest(
+      env,
+      `/repos/${REPOSITORY}/branches/${encodeURIComponent(branch)}`
+    ),
+    githubRequest(
+      env,
+      `/repos/${REPOSITORY}/git/commits/${encodeURIComponent(sourceCommitSha)}`
+    )
+  ]);
+
+  const parentSha = branchInfo.commit?.sha;
+  const treeSha = sourceCommit.tree?.sha;
+  if (!parentSha || !treeSha) {
+    const error = new Error("Unable to resolve website version for restore.");
+    error.status = 409;
+    throw error;
+  }
+
+  const commit = await githubRequest(env, `/repos/${REPOSITORY}/git/commits`, {
+    method: "POST",
+    body: {
+      message,
+      tree: treeSha,
+      parents: [parentSha]
+    }
+  });
+
+  await githubRequest(
+    env,
+    `/repos/${REPOSITORY}/git/refs/heads/${encodeURIComponent(branch)}`,
+    {
+      method: "PATCH",
+      body: { sha: commit.sha, force: false }
+    }
+  );
+
+  return {
+    sha: commit.sha,
+    parentSha,
+    restoredFromSha: sourceCommitSha,
+    treeSha
+  };
 }
 
 export async function commitFiles(env, branch, files, message) {
@@ -286,6 +338,60 @@ export async function commitFiles(env, branch, files, message) {
     sha: commit.sha,
     parentSha,
     treeSha: nextTree.sha
+  };
+}
+
+export async function requiredPreviewCheck(env, sha) {
+  const requiredName = String(
+    env?.WELLWEBSITE_REQUIRED_CHECK || "Cloudflare Pages"
+  ).trim();
+
+  const normalised = requiredName.toLowerCase();
+  const [checks, status] = await Promise.all([
+    githubRequest(
+      env,
+      `/repos/${REPOSITORY}/commits/${encodeURIComponent(sha)}/check-runs?per_page=100`
+    ).catch(() => ({ check_runs: [] })),
+    githubRequest(
+      env,
+      `/repos/${REPOSITORY}/commits/${encodeURIComponent(sha)}/status`
+    ).catch(() => ({ statuses: [] }))
+  ]);
+
+  const checkRun = (Array.isArray(checks?.check_runs) ? checks.check_runs : [])
+    .find((item) => String(item?.name || "").toLowerCase() === normalised);
+  if (checkRun) {
+    const conclusion = String(checkRun.conclusion || "");
+    return {
+      required: true,
+      passed: checkRun.status === "completed" && conclusion === "success",
+      name: requiredName,
+      state: checkRun.status || "unknown",
+      conclusion: conclusion || null,
+      url: checkRun.html_url || checkRun.details_url || null
+    };
+  }
+
+  const commitStatus = (Array.isArray(status?.statuses) ? status.statuses : [])
+    .find((item) => String(item?.context || "").toLowerCase() === normalised);
+  if (commitStatus) {
+    return {
+      required: true,
+      passed: commitStatus.state === "success",
+      name: requiredName,
+      state: commitStatus.state || "unknown",
+      conclusion: commitStatus.state || null,
+      url: commitStatus.target_url || null
+    };
+  }
+
+  return {
+    required: true,
+    passed: false,
+    name: requiredName,
+    state: "missing",
+    conclusion: null,
+    url: null
   };
 }
 

@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "node scripts/dev.mjs",
-    "build": "npm run security:source && node scripts/build.mjs && npm run security:dist",
+    "build": "npm run syntax:check && npm run security:source && node scripts/build.mjs && npm run security:dist",
+    "syntax:check": "node scripts/syntax-check.mjs",
     "security:source": "node scripts/security-scan.mjs source",
     "security:dist": "node scripts/security-scan.mjs dist"
   }

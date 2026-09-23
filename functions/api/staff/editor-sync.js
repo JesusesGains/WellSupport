@@ -1,6 +1,8 @@
 import {
   assertSameOrigin,
   requireStaff,
+  requireStaffPermission,
+  recordEditorAudit,
   sessionResponse
 } from "./_utils.js";
 import {
@@ -17,6 +19,8 @@ export async function onRequestPost({ request, env }) {
 
   const session = await requireStaff(env, request);
   if (session.response) return session.response;
+  const denied = requireStaffPermission(session, "editor");
+  if (denied) return denied;
 
   try {
     const comparison = await compareBranches(env);
@@ -28,6 +32,9 @@ export async function onRequestPost({ request, env }) {
         MAIN_BRANCH,
         "Sync production main into beta-main"
       );
+      await recordEditorAudit(session, "editor_sync_main_to_beta", {
+        behind_by: comparison.behindBy
+      });
     }
 
     return sessionResponse({

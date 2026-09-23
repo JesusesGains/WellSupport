@@ -1,6 +1,8 @@
 import {
   assertSameOrigin,
   requireStaff,
+  requireStaffPermission,
+  recordEditorAudit,
   sessionResponse
 } from "./_utils.js";
 import {
@@ -18,6 +20,8 @@ export async function onRequestPost({ request, env }) {
 
   const session = await requireStaff(env, request);
   if (session.response) return session.response;
+  const denied = requireStaffPermission(session, "publish");
+  if (denied) return denied;
 
   const input = await request.json().catch(() => ({}));
   if (input.confirm !== "PROMOTE_BETA_TO_MAIN") {
@@ -29,7 +33,34 @@ export async function onRequestPost({ request, env }) {
   }
 
   try {
-    const comparison = await compareBranches(env);
+    const statusBefore = await editorStatus(env);
+    const comparison = statusBefore.comparison || {};
+    const currentBetaSha = statusBefore.beta?.sha || null;
+    const reviewedBetaSha = String(input.reviewedBetaSha || "").trim();
+
+    if (!currentBetaSha || reviewedBetaSha !== currentBetaSha) {
+      return sessionResponse(
+        {
+          error: "The beta preview changed after it was reviewed. Refresh the preview and approve the current version before publishing.",
+          code: "reviewed_sha_mismatch",
+          currentBetaSha
+        },
+        session,
+        409
+      );
+    }
+
+    if (statusBefore.beta?.previewGate?.required && !statusBefore.beta.previewGate.passed) {
+      return sessionResponse(
+        {
+          error: `Required preview check "${statusBefore.beta.previewGate.name}" has not passed for the reviewed commit.`,
+          code: "preview_check_not_passed",
+          previewGate: statusBefore.beta.previewGate
+        },
+        session,
+        409
+      );
+    }
 
     if (comparison.behindBy > 0) {
       return sessionResponse(
@@ -62,9 +93,15 @@ export async function onRequestPost({ request, env }) {
       await moveBranchForward(env, BETA_BRANCH, productionSha);
     }
 
+    await recordEditorAudit(session, "editor_promote_production", {
+      reviewed_beta_sha: reviewedBetaSha,
+      production_sha: productionSha
+    });
+
     return sessionResponse({
       ok: true,
       productionSha,
+      reviewedBetaSha,
       status: await editorStatus(env)
     }, session);
   } catch (error) {

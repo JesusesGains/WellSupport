@@ -65,6 +65,7 @@ Configure the **WellSupport** Cloudflare Pages project with:
 - `CLOUDFLARE_ANALYTICS_TOKEN` — **Secret**; a Cloudflare API token scoped to that account with **Account Analytics: Read**
 - `CLOUDFLARE_ANALYTICS_HOST` — Optional text; defaults to `wellcollegeglobal.com`
 - `WELLWEBSITE_GITHUB_TOKEN` — **Secret, production environment only**
+- `WELLWEBSITE_REQUIRED_CHECK` — Optional text; defaults to `Cloudflare Pages` and is required to pass on the exact reviewed beta commit before production promotion
 
 These values are available only to the server-side Pages Functions. The Supabase publishable key is not privileged; every data request still carries the verified staff JWT and remains constrained by RLS. No Supabase service-role/secret key is used.
 
@@ -78,7 +79,8 @@ Web Editor branch workflow:
 2. `beta-main` is staging and powers `beta-main.wellwebsite.pages.dev`.
 3. Staff edit and publish only to `beta-main`.
 4. Staff review the Beta Preview.
-5. The explicit Promote action merges `beta-main → main` and then fast-forwards `beta-main` to the resulting production commit.
+5. The explicit Promote action is available only to publisher/admin roles, requires the exact reviewed beta commit SHA, and verifies the required Cloudflare preview check succeeded for that SHA.
+6. The approved `beta-main` commit is merged to `main`, then `beta-main` is fast-forwarded to the resulting production commit.
 
 ## Staff access
 
@@ -87,8 +89,8 @@ Create staff accounts in Supabase Authentication using an admin-controlled flow.
 After the auth user exists, grant dashboard access by inserting its UUID into the support allowlist:
 
 ```sql
-insert into public.support_agents (user_id, display_name, active)
-values ('STAFF_AUTH_USER_UUID', 'Staff name', true);
+insert into public.support_agents (user_id, display_name, active, role)
+values ('STAFF_AUTH_USER_UUID', 'Staff name', true, 'support');
 ```
 
 To revoke dashboard access without deleting the auth account:
@@ -98,6 +100,15 @@ update public.support_agents
 set active = false
 where user_id = 'STAFF_AUTH_USER_UUID';
 ```
+
+Staff roles are:
+
+- `support` — support chat, visitors and analytics
+- `editor` — support access plus Web Editor and DevTools
+- `publisher` — editor access plus explicit beta → production promotion
+- `admin` — all WellSupport capabilities
+
+Role values are authorization data and are not writable through the staff self-service profile API.
 
 RLS in the WellWebsite `supabase/support_chat.sql` file is the security boundary. The dashboard performs an additional UI guard immediately after sign-in, but unauthorized users must still be denied by RLS.
 
@@ -119,6 +130,24 @@ Realtime must include:
 - `public.support_messages`
 
 The website and this dashboard point to the same **Well Website** Supabase project (`fmlrtcofnbqdotpvuaem`).
+
+
+## Web Editor source view
+
+The Web Editor has two embedded preview modes:
+
+- **Visual** — the interactive website canvas with desktop/tablet/mobile controls.
+- **Code** — read-only source for the selected branch/page. The Code view opens on **HTML** and can switch to **CSS** without leaving the editor.
+
+The source endpoint reads from the selected `WellWebsite` branch server-side. It does not expose the GitHub token to the browser and it does not allow source writes.
+
+Page-level visual drafts are also persisted through `public.support_editor_drafts` when the companion Supabase schema has been applied. Draft saves use the current beta SHA plus a revision number so a stale browser cannot silently overwrite another staff member's newer draft. Uploaded image binaries remain local until beta publish.
+
+## Editor audit and permissions
+
+The companion schema in `WellWebsite/supabase/support_chat.sql` adds staff roles, `public.support_editor_audit`, and `public.support_editor_drafts`. Beta publishes, main→beta syncs, production promotions and applied DevTools patches write an audit event when the audit schema is available.
+
+During migration, existing staff rows are assigned `admin` to preserve the access they already had. New staff rows default to `support`.
 
 ## Local preview
 

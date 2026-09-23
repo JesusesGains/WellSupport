@@ -1,6 +1,7 @@
 import {
   assertSameOrigin,
   requireStaff,
+  requireStaffPermission,
   sessionResponse
 } from "./_utils.js";
 import {
@@ -113,6 +114,8 @@ function ordersFromSource(source) {
 export async function onRequestGet({ request, env }) {
   const session = await requireStaff(env, request);
   if (session.response) return session.response;
+  const denied = requireStaffPermission(session, "editor");
+  if (denied) return denied;
 
   const url = new URL(request.url);
   const target = url.searchParams.get("target") === "production"

@@ -106,11 +106,35 @@ const state = {
   editorAssetsLoading: false,
   editorAssetDrafts: [],
   editorAssetUploadBusy: false,
+  editorPreviewMode: "visual",
+  editorCodeTab: "html",
+  editorCodeSource: null,
+  editorCodeSourceKey: "",
+  editorCodeLoading: false,
+  editorHistoryOpen: false,
+  editorVersionHistory: [],
+  editorAuditHistory: [],
+  editorHistoryLoading: false,
+  editorSharedDraftLoadedSha: "",
+  editorSharedDraftRevision: 0,
+  editorSharedDraftAvailable: null,
+  editorSharedDraftConflict: false,
+  editorSharedDraftTimer: null,
+  editorSharedDraftSaving: false,
+  editorDevtoolsTab: "elements",
+  editorDevtoolsData: null,
   supportPagePickerSection: ""
 };
 
 function configured() {
   return true;
+}
+
+function staffCan(permission) {
+  return Boolean(
+    Array.isArray(state.agent?.permissions) &&
+    state.agent.permissions.includes(String(permission || ""))
+  );
 }
 
 async function apiRequest(path, {
@@ -147,7 +171,10 @@ async function apiRequest(path, {
   }
 
   if (!response.ok) {
-    if (response.status === 401 || response.status === 403) {
+    if (
+      response.status === 401 ||
+      (response.status === 403 && payload?.code !== "insufficient_role")
+    ) {
       cleanupRealtime();
       state.agent = null;
       state.user = null;
@@ -850,6 +877,10 @@ function notificationsIcon() {
   return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"></path><path d="M10 21h4"></path></svg>`;
 }
 
+function devtoolsIcon() {
+  return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 9-4 3 4 3"></path><path d="m16 9 4 3-4 3"></path><path d="m14 5-4 14"></path></svg>`;
+}
+
 function totalUnreadMessages() {
   let total = 0;
 
@@ -900,9 +931,9 @@ function updatePrimaryNavigation() {
 }
 
 function setDashboardView(view, { historyMode = "push" } = {}) {
-  const resolvedView = ["dashboard", "visitors", "messages", "editor"].includes(view)
-    ? view
-    : "dashboard";
+  const allowedViews = ["dashboard", "visitors", "messages"];
+  if (staffCan("editor")) allowedViews.push("editor");
+  const resolvedView = allowedViews.includes(view) ? view : "dashboard";
 
   state.currentView = resolvedView;
 
@@ -987,7 +1018,9 @@ async function loadWebEditorStatus({ quiet = false } = {}) {
       state.editorStatus?.main?.sha || "",
       state.editorStatus?.beta?.sha || "",
       Number(comparison.aheadBy || 0),
-      Number(comparison.behindBy || 0)
+      Number(comparison.behindBy || 0),
+      state.editorStatus?.beta?.previewGate?.state || "",
+      state.editorStatus?.beta?.previewGate?.conclusion || ""
     ].join(":");
 
     if (
@@ -1109,6 +1142,7 @@ function storeCurrentEditorDraft() {
     [state.editorPage]: currentEditorDraftSnapshot()
   };
   state.editorDirty = Object.keys(state.editorPendingPages).length > 0;
+  scheduleSharedEditorDraft();
 }
 
 function recordEditorHistory() {
@@ -1476,6 +1510,7 @@ async function publishWebEditorDraft(payload) {
     state.editorAssetsLoaded = false;
     state.editorDirty = false;
     state.editorDraftKey = "";
+    await clearSharedEditorDraft();
     showToast("Beta preview published. One GitHub commit/build was created from the staged draft.");
     await loadWebEditorStatus({ quiet: true });
     state.editorNavigationTarget = "";
@@ -1521,7 +1556,10 @@ async function promoteWebEditorBeta() {
   try {
     const result = await apiRequest("/editor-promote", {
       method: "POST",
-      body: { confirm: "PROMOTE_BETA_TO_MAIN" }
+      body: {
+        confirm: "PROMOTE_BETA_TO_MAIN",
+        reviewedBetaSha: state.editorStatus?.beta?.sha || ""
+      }
     });
 
     state.editorStatus = result.status || state.editorStatus;
@@ -1709,6 +1747,13 @@ async function stageEditorAssetFiles(fileList) {
     for (const [index, file] of files.entries()) {
       if (!(file instanceof File)) continue;
 
+      const safeType = ["image/jpeg", "image/png", "image/webp"].includes(file.type);
+      const safeExtension = /\.(?:jpe?g|png|webp)$/i.test(file.name || "");
+      if (!safeType || !safeExtension) {
+        showToast(`${file.name} must be a JPG, PNG, or WebP image.`, "error");
+        continue;
+      }
+
       if (file.size > 6 * 1024 * 1024) {
         showToast(`${file.name} is larger than the 6 MB asset limit.`, "error");
         continue;
@@ -1879,6 +1924,328 @@ function bindEditorNavigationSortable(list, orderKey, editable) {
   list.addEventListener("dragend", finish);
 }
 
+
+
+async function loadSharedEditorDraft({ quiet = false } = {}) {
+  const betaSha = state.editorStatus?.beta?.sha || "";
+  if (!betaSha || state.editorMode !== "beta" || state.editorSharedDraftLoadedSha === betaSha) return;
+
+  try {
+    const result = await apiRequest("/editor-draft");
+    state.editorSharedDraftAvailable = result.available !== false;
+    state.editorSharedDraftLoadedSha = betaSha;
+    const draft = result.draft;
+
+    if (!draft || draft.base_sha !== betaSha) {
+      state.editorSharedDraftRevision = 0;
+      state.editorSharedDraftConflict = false;
+      return;
+    }
+
+    const pages =
+      draft.payload?.pages &&
+      typeof draft.payload.pages === "object" &&
+      !Array.isArray(draft.payload.pages)
+        ? draft.payload.pages
+        : {};
+
+    if (!Object.keys(state.editorPendingPages || {}).length) {
+      state.editorPendingPages = Object.fromEntries(
+        Object.entries(pages).map(([path, pageDraft]) => [
+          path,
+          editorDraftFromConfig(pageDraft)
+        ])
+      );
+      state.editorDirty = editorPendingChangeCount() > 0;
+      state.editorDraftKey = "";
+    } else if (JSON.stringify(sharedEditorPages()) !== JSON.stringify(pages)) {
+      state.editorSharedDraftConflict = true;
+      if (!quiet) showToast("A different shared website draft already exists. Reload before overwriting it.", "error");
+    }
+
+    state.editorSharedDraftRevision = Number(draft.revision || 0);
+  } catch (error) {
+    if (error.status === 503) {
+      state.editorSharedDraftAvailable = false;
+      state.editorSharedDraftLoadedSha = betaSha;
+    } else if (!quiet) {
+      showToast(error?.message || "Unable to load the shared website draft.", "error");
+    }
+  } finally {
+    if (state.currentView === "editor") renderWebEditor();
+  }
+}
+
+function scheduleSharedEditorDraft() {
+  if (state.editorSharedDraftTimer) window.clearTimeout(state.editorSharedDraftTimer);
+  state.editorSharedDraftTimer = window.setTimeout(saveSharedEditorDraft, 900);
+}
+
+async function saveSharedEditorDraft() {
+  state.editorSharedDraftTimer = null;
+  if (
+    state.editorMode !== "beta" ||
+    state.editorSharedDraftSaving ||
+    state.editorSharedDraftAvailable === false ||
+    state.editorSharedDraftConflict
+  ) return;
+
+  const betaSha = state.editorStatus?.beta?.sha || "";
+  if (!betaSha) return;
+
+  state.editorSharedDraftSaving = true;
+  try {
+    const result = await apiRequest("/editor-draft", {
+      method: "POST",
+      body: {
+        baseSha: betaSha,
+        revision: state.editorSharedDraftRevision || 0,
+        pages: sharedEditorPages()
+      }
+    });
+    if (result.available === false) {
+      state.editorSharedDraftAvailable = false;
+      return;
+    }
+    state.editorSharedDraftAvailable = true;
+    state.editorSharedDraftLoadedSha = betaSha;
+    state.editorSharedDraftRevision = Number(result.draft?.revision || state.editorSharedDraftRevision || 0);
+  } catch (error) {
+    if (error.status === 409) {
+      state.editorSharedDraftConflict = true;
+      showToast("Another staff member changed the shared draft. Reload before saving more changes.", "error");
+    } else if (error.status === 503) {
+      state.editorSharedDraftAvailable = false;
+    }
+  } finally {
+    state.editorSharedDraftSaving = false;
+  }
+}
+
+async function clearSharedEditorDraft() {
+  if (state.editorSharedDraftTimer) window.clearTimeout(state.editorSharedDraftTimer);
+  state.editorSharedDraftTimer = null;
+  try {
+    await apiRequest("/editor-draft", { method: "DELETE", body: {} });
+  } catch {
+    // Optional shared-draft storage must not block a successful publish.
+  }
+  state.editorSharedDraftLoadedSha = state.editorStatus?.beta?.sha || "";
+  state.editorSharedDraftRevision = 0;
+  state.editorSharedDraftConflict = false;
+}
+
+async function loadEditorVersionHistory({ quiet = false } = {}) {
+  if (state.editorHistoryLoading || !staffCan("editor")) return;
+  state.editorHistoryLoading = true;
+  if (state.currentView === "editor" && state.editorHistoryOpen) renderWebEditor();
+
+  try {
+    const result = await apiRequest("/editor-history");
+    state.editorVersionHistory = Array.isArray(result.commits) ? result.commits : [];
+    state.editorAuditHistory = Array.isArray(result.audit) ? result.audit : [];
+  } catch (error) {
+    if (!quiet) showToast(error?.message || "Unable to load website history.", "error");
+  } finally {
+    state.editorHistoryLoading = false;
+    if (state.currentView === "editor" && state.editorHistoryOpen) renderWebEditor();
+  }
+}
+
+async function stageEditorProductionRestore(sourceSha) {
+  if (!staffCan("publish")) return;
+  if (editorPendingChangeCount() > 0) {
+    showToast("Discard or publish local editor changes before staging a restore.", "error");
+    return;
+  }
+
+  const commit = state.editorVersionHistory.find((item) => item.sha === sourceSha);
+  const label = commit?.message || sourceSha.slice(0, 7);
+  if (!window.confirm(`Stage “${label}” as a new beta preview? Production will not change yet.`)) {
+    return;
+  }
+
+  try {
+    const result = await apiRequest("/editor-restore", {
+      method: "POST",
+      body: {
+        confirm: "STAGE_PRODUCTION_RESTORE",
+        sourceSha,
+        expectedMainSha: state.editorStatus?.main?.sha || ""
+      }
+    });
+
+    state.editorStatus = result.status || state.editorStatus;
+    state.editorDraftKey = "";
+    state.editorCodeSource = null;
+    state.editorCodeSourceKey = "";
+    state.editorAssetsLoaded = false;
+    state.editorNavigationTarget = "";
+    state.editorLayoutTarget = "";
+    showToast("Previous production version staged on beta-main. Review the Cloudflare preview before publishing live.");
+    renderWebEditor();
+  } catch (error) {
+    showToast(error?.message || "Unable to stage that website version.", "error");
+  }
+}
+
+async function loadEditorCodeSource({ quiet = false } = {}) {
+  if (!state.editorStatus?.connected || state.editorCodeLoading) return;
+
+  const target = state.editorMode === "production" ? "production" : "beta";
+  const key = `${target}:${state.editorPage}:${target === "beta"
+    ? state.editorStatus?.beta?.sha || ""
+    : state.editorStatus?.main?.sha || ""}`;
+
+  if (state.editorCodeSourceKey === key && state.editorCodeSource) return;
+
+  state.editorCodeLoading = true;
+  if (state.currentView === "editor" && state.editorPreviewMode === "code") {
+    renderWebEditor();
+  }
+
+  try {
+    const result = await apiRequest(
+      `/editor-source?target=${encodeURIComponent(target)}&page=${encodeURIComponent(state.editorPage || "/")}`
+    );
+    state.editorCodeSource = result;
+    state.editorCodeSourceKey = key;
+  } catch (error) {
+    state.editorCodeSource = {
+      error: error?.message || "Unable to load website source."
+    };
+    state.editorCodeSourceKey = key;
+    if (!quiet) showToast(state.editorCodeSource.error, "error");
+  } finally {
+    state.editorCodeLoading = false;
+    if (state.currentView === "editor" && state.editorPreviewMode === "code") {
+      renderWebEditor();
+    }
+  }
+}
+
+function editorCodeContent() {
+  if (!state.editorCodeSource) return "";
+  return state.editorCodeTab === "css"
+    ? String(state.editorCodeSource?.css?.content || "")
+    : String(state.editorCodeSource?.html?.content || "");
+}
+
+function editorCodeFileLabel() {
+  if (state.editorCodeTab === "css") {
+    const files = Array.isArray(state.editorCodeSource?.css?.files)
+      ? state.editorCodeSource.css.files.map((item) => item.path).filter(Boolean)
+      : [];
+    return files.length ? files.join(" + ") : "CSS";
+  }
+  return state.editorCodeSource?.html?.path || "HTML";
+}
+
+
+function editorDevtoolsContentMarkup() {
+  const data = state.editorDevtoolsData;
+  const tab = state.editorDevtoolsTab;
+
+  if (!data || data.panel !== tab) {
+    return `<div class="editor-devtools-empty">Select an element in the preview or refresh this panel.</div>`;
+  }
+
+  if (tab === "elements") {
+    const target = data.target;
+    if (!target) return `<div class="editor-devtools-empty">No DOM node selected.</div>`;
+
+    return `
+      <div class="editor-devtools-elements">
+        <div class="editor-devtools-node-head">
+          <code>${escapeEditorAttribute(target.selector || target.tag || "element")}</code>
+          <span>${escapeEditorAttribute(target.box ? `${target.box.width} × ${target.box.height}` : "")}</span>
+        </div>
+        <pre><code>${escapeEditorAttribute(target.outerHTML || "")}</code></pre>
+        ${Array.isArray(target.children) && target.children.length ? `
+          <div class="editor-devtools-children">
+            <strong>Children</strong>
+            ${target.children.map((child) => `
+              <code>${escapeEditorAttribute(child.selector || child.tag || "")}</code>
+            `).join("")}
+          </div>
+        ` : ""}
+      </div>
+    `;
+  }
+
+  if (tab === "styles") {
+    const computed = data.computed && typeof data.computed === "object"
+      ? Object.entries(data.computed)
+      : [];
+    const rules = Array.isArray(data.rules) ? data.rules : [];
+
+    return `
+      <div class="editor-devtools-styles">
+        <section>
+          <h4>Matched CSS rules</h4>
+          ${data.inlineStyle ? `
+            <article class="editor-devtools-rule">
+              <div><code>element.style</code></div>
+              <pre><code>${escapeEditorAttribute(data.inlineStyle)}</code></pre>
+            </article>
+          ` : ""}
+          ${rules.length
+            ? rules.map((rule) => `
+                <article class="editor-devtools-rule">
+                  <div>
+                    <code>${escapeEditorAttribute(rule.selector || "")}</code>
+                    <span>${escapeEditorAttribute(rule.source || "")}</span>
+                  </div>
+                  <pre><code>${escapeEditorAttribute(rule.cssText || "")}</code></pre>
+                </article>
+              `).join("")
+            : `<div class="editor-devtools-empty is-small">No readable matching stylesheet rules.</div>`}
+        </section>
+        <section>
+          <h4>Computed</h4>
+          <div class="editor-devtools-computed">
+            ${computed.map(([property, value]) => `
+              <div><code>${escapeEditorAttribute(property)}</code><span>${escapeEditorAttribute(value)}</span></div>
+            `).join("")}
+          </div>
+        </section>
+      </div>
+    `;
+  }
+
+  const entries = Array.isArray(data.entries) ? data.entries : [];
+  const perf = data.performance || {};
+  return `
+    <div class="editor-devtools-console">
+      <div class="editor-devtools-console-meta">
+        <span>DOM nodes: <b>${Number(perf.domNodes || 0)}</b></span>
+        <span>Resources: <b>${Number(perf.resources || 0)}</b></span>
+      </div>
+      ${entries.length
+        ? entries.map((entry) => `
+            <div class="editor-devtools-console-row is-${escapeEditorAttribute(entry.level || "log")}">
+              <span>${escapeEditorAttribute(entry.level || "log")}</span>
+              <code>${escapeEditorAttribute(entry.text || "")}</code>
+              <time>${escapeEditorAttribute(entry.time ? formatTime(entry.time) : "")}</time>
+            </div>
+          `).join("")
+        : `<div class="editor-devtools-empty">No console messages captured in this preview session.</div>`}
+    </div>
+  `;
+}
+
+function renderEditorDevtoolsDock() {
+  const content = document.querySelector("#editor-devtools-content");
+  if (content) content.innerHTML = editorDevtoolsContentMarkup();
+
+  document.querySelectorAll("[data-editor-devtools-tab]").forEach((button) => {
+    button.classList.toggle(
+      "is-active",
+      button.dataset.editorDevtoolsTab === state.editorDevtoolsTab
+    );
+  });
+}
+
 function renderWebEditor() {
   const panel = document.querySelector("#chat-panel");
   if (!panel) return;
@@ -2010,7 +2377,7 @@ function renderWebEditor() {
             <button id="web-editor-sync" class="editor-topbar-button" type="button">Update preview</button>
           ` : ""}
 
-          ${connected && betaAhead && !betaBehind ? `
+          ${connected && betaAhead && !betaBehind && staffCan("publish") ? `
             <button id="web-editor-promote" class="editor-topbar-button is-promote" type="button">Publish preview live</button>
           ` : ""}
 
@@ -2045,6 +2412,51 @@ function renderWebEditor() {
               </select>
             </section>
 
+            <section class="editor-inspector-section editor-history-section">
+              <button id="editor-history-toggle" class="editor-assets-toggle" type="button">
+                <span>
+                  <strong>Version history</strong>
+                  <small>Restore safely through beta preview</small>
+                </span>
+                <b aria-hidden="true">${state.editorHistoryOpen ? "−" : "+"}</b>
+              </button>
+
+              ${state.editorHistoryOpen ? `
+                <div class="editor-version-list">
+                  ${state.editorHistoryLoading
+                    ? `<div class="editor-nav-order-empty">Loading production history…</div>`
+                    : state.editorVersionHistory.length
+                      ? state.editorVersionHistory.slice(0, 10).map((commit, index) => `
+                          <article class="editor-version-item ${index === 0 ? "is-current" : ""}">
+                            <div>
+                              <strong>${escapeEditorAttribute(commit.message || "Website update")}</strong>
+                              <span>
+                                <code>${escapeEditorAttribute(String(commit.sha || "").slice(0, 7))}</code>
+                                ${commit.authoredAt ? ` · ${escapeEditorAttribute(formatTime(commit.authoredAt))}` : ""}
+                                ${commit.author ? ` · ${escapeEditorAttribute(commit.author)}` : ""}
+                              </span>
+                            </div>
+                            ${index > 0 && state.editorMode === "beta" && staffCan("publish") ? `
+                              <button type="button" data-editor-restore-sha="${escapeEditorAttribute(commit.sha || "")}">Restore in beta</button>
+                            ` : index === 0 ? `<b>LIVE</b>` : ""}
+                          </article>
+                        `).join("")
+                      : `<div class="editor-nav-order-empty">No production history loaded.</div>`}
+                </div>
+                ${state.editorAuditHistory.length ? `
+                  <div class="editor-audit-list">
+                    <strong>Recent dashboard actions</strong>
+                    ${state.editorAuditHistory.slice(0, 8).map((entry) => `
+                      <div>
+                        <span>${escapeEditorAttribute(String(entry.action || "").replaceAll("_", " "))}</span>
+                        <small>${escapeEditorAttribute(entry.actor_display_name || "Staff")}${entry.created_at ? ` · ${escapeEditorAttribute(formatTime(entry.created_at))}` : ""}</small>
+                      </div>
+                    `).join("")}
+                  </div>
+                ` : ""}
+              ` : ""}
+            </section>
+
             <section class="editor-inspector-section editor-visual-editor-info">
               <div class="editor-inspector-heading">
                 <span>Visual editor</span>
@@ -2055,7 +2467,7 @@ function renderWebEditor() {
                 <span>Text, links, images and sections open controls beside the item you clicked. Drag supported sections and cards directly on the page. The sidebar now stays focused on page status, assets and publishing.</span>
               </div>
               <div class="editor-visual-info-status">
-                <span><i></i> Draft changes stay local</span>
+                <span><i></i> ${state.editorSharedDraftAvailable === false ? "Drafts stay local until shared storage is enabled" : state.editorSharedDraftConflict ? "Shared draft changed elsewhere · reload required" : "Page drafts sync across staff"}</span>
                 <span><i></i> Publish beta preview creates the build</span>
               </div>
             </section>
@@ -2315,7 +2727,7 @@ function renderWebEditor() {
 
               ${state.editorAssetsOpen ? `
                 <div class="editor-assets-panel">
-                  <input id="editor-assets-input" type="file" multiple hidden>
+                  <input id="editor-assets-input" type="file" accept="image/jpeg,image/png,image/webp" multiple hidden>
                   <button id="editor-assets-upload" class="editor-assets-upload" type="button" ${editable && !state.editorAssetUploadBusy ? "" : "disabled"}>
                     + Upload assets
                   </button>
@@ -2378,37 +2790,103 @@ function renderWebEditor() {
               </div>
             </div>
 
-            <div class="editor-device-toolbar" role="group" aria-label="Preview device size">
-              <button class="${state.editorDevice === "desktop" ? "is-active" : ""}" type="button" data-editor-device="desktop">Desktop</button>
-              <button class="${state.editorDevice === "tablet" ? "is-active" : ""}" type="button" data-editor-device="tablet">Tablet</button>
-              <button class="${state.editorDevice === "mobile" ? "is-active" : ""}" type="button" data-editor-device="mobile">Mobile</button>
+            <div class="editor-view-toolbar" role="group" aria-label="Preview type">
+              <button class="${state.editorPreviewMode === "visual" ? "is-active" : ""}" type="button" data-editor-preview-mode="visual">Visual</button>
+              <button class="${state.editorPreviewMode === "code" ? "is-active" : ""}" type="button" data-editor-preview-mode="code">&lt;/&gt; Code</button>
+              <button class="${state.editorPreviewMode === "devtools" ? "is-active" : ""}" type="button" data-editor-preview-mode="devtools">DevTools</button>
             </div>
 
-            <div class="editor-tool-toolbar" role="group" aria-label="Editor tools">
-              <button class="${state.editorTool === "select" ? "is-active" : ""}" type="button" data-editor-tool="select" title="Select and edit">↖ <span>Select</span></button>
-              <button class="${state.editorTool === "text-box" ? "is-active" : ""}" type="button" data-editor-tool="text-box" title="Draw a text box">T <span>Text box</span></button>
-            </div>
+            ${state.editorPreviewMode === "code" ? `
+              <div class="editor-code-tabs" role="group" aria-label="Source type">
+                <button class="${state.editorCodeTab === "html" ? "is-active" : ""}" type="button" data-editor-code-tab="html">HTML</button>
+                <button class="${state.editorCodeTab === "css" ? "is-active" : ""}" type="button" data-editor-code-tab="css">CSS</button>
+              </div>
+            ` : state.editorPreviewMode === "devtools" ? `
+              <div class="editor-code-tabs" role="group" aria-label="DevTools panel">
+                <button class="${state.editorDevtoolsTab === "elements" ? "is-active" : ""}" type="button" data-editor-devtools-tab="elements">Elements</button>
+                <button class="${state.editorDevtoolsTab === "styles" ? "is-active" : ""}" type="button" data-editor-devtools-tab="styles">Styles</button>
+                <button class="${state.editorDevtoolsTab === "console" ? "is-active" : ""}" type="button" data-editor-devtools-tab="console">Console</button>
+              </div>
+              <div class="editor-device-toolbar" role="group" aria-label="Preview device size">
+                <button class="${state.editorDevice === "desktop" ? "is-active" : ""}" type="button" data-editor-device="desktop">Desktop</button>
+                <button class="${state.editorDevice === "tablet" ? "is-active" : ""}" type="button" data-editor-device="tablet">Tablet</button>
+                <button class="${state.editorDevice === "mobile" ? "is-active" : ""}" type="button" data-editor-device="mobile">Mobile</button>
+              </div>
+            ` : `
+              <div class="editor-device-toolbar" role="group" aria-label="Preview device size">
+                <button class="${state.editorDevice === "desktop" ? "is-active" : ""}" type="button" data-editor-device="desktop">Desktop</button>
+                <button class="${state.editorDevice === "tablet" ? "is-active" : ""}" type="button" data-editor-device="tablet">Tablet</button>
+                <button class="${state.editorDevice === "mobile" ? "is-active" : ""}" type="button" data-editor-device="mobile">Mobile</button>
+              </div>
+
+              <div class="editor-tool-toolbar" role="group" aria-label="Editor tools">
+                <button class="${state.editorTool === "select" ? "is-active" : ""}" type="button" data-editor-tool="select" title="Select and edit">↖ <span>Select</span></button>
+                <button class="${state.editorTool === "text-box" ? "is-active" : ""}" type="button" data-editor-tool="text-box" title="Draw a text box">T <span>Text box</span></button>
+              </div>
+            `}
 
             <div class="editor-live-help">
-              ${editable ? "Click an item to edit · use the ⋮⋮ handle only to move sections" : "Live website preview · view only"}
+              ${state.editorPreviewMode === "code"
+                ? "Read-only source from the selected GitHub branch"
+                : state.editorPreviewMode === "devtools"
+                  ? "Inspect the rendered DOM, matched CSS and captured console output"
+                  : editable
+                    ? "Click an item to edit · use the ⋮⋮ handle only to move sections"
+                    : "Live website preview · view only"}
             </div>
           </div>
 
           <div class="editor-preview-placeholder is-fullscreen">
-            <div id="web-editor-browser" class="editor-preview-browser is-fullscreen" data-device="${state.editorDevice}">
-              <div class="editor-preview-browser-bar">
-                <i></i><i></i><i></i>
-                <span id="web-editor-browser-url"></span>
-                <b class="${state.editorMode === "beta" ? "is-beta" : ""}">${state.editorMode === "beta" ? "BETA" : "PROD"}</b>
+            ${state.editorPreviewMode === "code" ? `
+              <div class="editor-code-browser">
+                <div class="editor-preview-browser-bar">
+                  <i></i><i></i><i></i>
+                  <span>${escapeEditorAttribute(editorCodeFileLabel())}</span>
+                  <b class="${state.editorMode === "beta" ? "is-beta" : ""}">${state.editorMode === "beta" ? "BETA" : "PROD"}</b>
+                </div>
+                <div class="editor-code-meta">
+                  <span>${state.editorCodeTab.toUpperCase()}</span>
+                  <small>${state.editorMode === "beta" ? "beta-main" : "main"} source · local visual drafts appear after Publish beta preview</small>
+                </div>
+                <pre class="editor-code-pre" aria-live="polite"><code>${state.editorCodeLoading
+                  ? "Loading source…"
+                  : state.editorCodeSource?.error
+                    ? escapeEditorAttribute(state.editorCodeSource.error)
+                    : escapeEditorAttribute(editorCodeContent() || "No source available.")}</code></pre>
               </div>
-              <iframe
-                id="web-editor-frame"
-                class="editor-live-frame"
-                title="Well College Global website preview"
-                loading="eager"
-                referrerpolicy="strict-origin-when-cross-origin"
-              ></iframe>
-            </div>
+            ` : `
+              <div id="web-editor-browser" class="editor-preview-browser is-fullscreen" data-device="${state.editorDevice}">
+                <div class="editor-preview-browser-bar">
+                  <i></i><i></i><i></i>
+                  <span id="web-editor-browser-url"></span>
+                  <b class="${state.editorMode === "beta" ? "is-beta" : ""}">${state.editorMode === "beta" ? "BETA" : "PROD"}</b>
+                </div>
+                <iframe
+                  id="web-editor-frame"
+                  class="editor-live-frame"
+                  title="Well College Global website preview"
+                  loading="eager"
+                  referrerpolicy="strict-origin-when-cross-origin"
+                ></iframe>
+              </div>
+              ${state.editorPreviewMode === "devtools" ? `
+                <section class="editor-devtools-dock">
+                  <header>
+                    <div>
+                      <strong>Chrome DevTools</strong>
+                      <span>Rendered preview inspector</span>
+                    </div>
+                    <div>
+                      <button id="editor-devtools-refresh" type="button">Refresh</button>
+                      ${state.editorDevtoolsTab === "console" ? `<button id="editor-devtools-clear" type="button">Clear console</button>` : ""}
+                    </div>
+                  </header>
+                  <div id="editor-devtools-content" class="editor-devtools-content">
+                    ${editorDevtoolsContentMarkup()}
+                  </div>
+                </section>
+              ` : ""}
+            `}
           </div>
 
           <footer class="editor-fullscreen-footer">
@@ -2452,7 +2930,14 @@ function renderWebEditor() {
       <section class="confirm-card" role="dialog" aria-modal="true" aria-labelledby="editor-promote-title">
         <div class="confirm-icon">${editorIcon()}</div>
         <h2 id="editor-promote-title">Publish preview to the live website?</h2>
-        <p>This publishes the preview version to the live Well College Global website.</p>
+        <p>This publishes only the exact beta commit shown below. If beta changes after review, publishing will be blocked.</p>
+        <code class="editor-promote-sha">${escapeEditorAttribute(state.editorStatus?.beta?.sha || "Preview SHA unavailable")}</code>
+        ${state.editorStatus?.beta?.previewGate?.required ? `
+          <p class="editor-promote-gate ${state.editorStatus.beta.previewGate.passed ? "is-passed" : "is-blocked"}">
+            Required check: ${escapeEditorAttribute(state.editorStatus.beta.previewGate.name || "preview")} ·
+            ${escapeEditorAttribute(state.editorStatus.beta.previewGate.passed ? "passed" : state.editorStatus.beta.previewGate.state || "pending")}
+          </p>
+        ` : ""}
         <div class="confirm-actions">
           <button id="cancel-editor-promote" class="confirm-secondary" type="button">Cancel</button>
           <button id="confirm-editor-promote" class="confirm-danger" type="button">Publish preview to live site</button>
@@ -2501,6 +2986,28 @@ function renderWebEditor() {
 
   if (connected && !state.editorAssetsLoaded && !state.editorAssetsLoading) {
     window.setTimeout(() => loadEditorAssets({ quiet: true }), 0);
+  }
+
+  if (
+    connected &&
+    state.editorMode === "beta" &&
+    state.editorSharedDraftLoadedSha !== (state.editorStatus?.beta?.sha || "")
+  ) {
+    window.setTimeout(() => loadSharedEditorDraft({ quiet: true }), 0);
+  }
+
+  if (
+    connected &&
+    state.editorPreviewMode === "code" &&
+    !state.editorCodeLoading
+  ) {
+    const codeTarget = state.editorMode === "production" ? "production" : "beta";
+    const expectedCodeKey = `${codeTarget}:${state.editorPage}:${codeTarget === "beta"
+      ? state.editorStatus?.beta?.sha || ""
+      : state.editorStatus?.main?.sha || ""}`;
+    if (state.editorCodeSourceKey !== expectedCodeKey) {
+      window.setTimeout(() => loadEditorCodeSource({ quiet: true }), 0);
+    }
   }
 
   // Keep the in-editor canvas on the public website origin. Cloudflare preview
@@ -2607,6 +3114,13 @@ function renderWebEditor() {
   const requestColours = () => {
     frame?.contentWindow?.postMessage(
       { type: "WCG_EDITOR_SCAN_COLOURS" },
+      frameOrigin()
+    );
+  };
+
+  const requestDevtools = (panel = state.editorDevtoolsTab) => {
+    frame?.contentWindow?.postMessage(
+      { type: "WCG_EDITOR_DEVTOOLS_REQUEST", panel },
       frameOrigin()
     );
   };
@@ -2831,7 +3345,19 @@ function renderWebEditor() {
           { type: "WCG_EDITOR_TOOL", tool: state.editorTool },
           frameOrigin()
         );
+        if (state.editorPreviewMode === "devtools") {
+          requestDevtools();
+        }
       }, 30);
+      return;
+    }
+
+    if (event.data.type === "WCG_EDITOR_DEVTOOLS_DATA") {
+      state.editorDevtoolsData = {
+        ...event.data,
+        type: undefined
+      };
+      renderEditorDevtoolsDock();
       return;
     }
 
@@ -2943,6 +3469,7 @@ function renderWebEditor() {
         tag: String(event.data.tag || "")
       };
       renderSelectedItem();
+      if (state.editorPreviewMode === "devtools") requestDevtools();
       return;
     }
 
@@ -2957,6 +3484,7 @@ function renderWebEditor() {
             : {}
       };
       renderSelectedItem();
+      if (state.editorPreviewMode === "devtools") requestDevtools();
       return;
     }
 
@@ -3105,6 +3633,8 @@ function renderWebEditor() {
       state.editorLayoutDirty = false;
       state.editorAssetsLoaded = false;
       state.editorAssets = [];
+      state.editorCodeSource = null;
+      state.editorCodeSourceKey = "";
       if (next !== "beta") state.editorAssetDrafts = [];
       renderWebEditor();
     });
@@ -3118,6 +3648,8 @@ function renderWebEditor() {
     state.editorColours = [];
     state.editorSelectedText = null;
     state.editorSelectedObject = null;
+    state.editorCodeSource = null;
+    state.editorCodeSourceKey = "";
     renderWebEditor();
   });
 
@@ -3248,6 +3780,24 @@ function renderWebEditor() {
     }, 80);
   });
 
+  document.querySelector("#editor-history-toggle")?.addEventListener("click", () => {
+    state.editorHistoryOpen = !state.editorHistoryOpen;
+    renderWebEditor();
+    if (
+      state.editorHistoryOpen &&
+      !state.editorVersionHistory.length &&
+      !state.editorHistoryLoading
+    ) {
+      window.setTimeout(() => loadEditorVersionHistory({ quiet: true }), 0);
+    }
+  });
+
+  document.querySelector(".editor-version-list")?.addEventListener("click", (event) => {
+    const button = event.target?.closest?.("[data-editor-restore-sha]");
+    const sha = String(button?.dataset?.editorRestoreSha || "");
+    if (sha) stageEditorProductionRestore(sha);
+  });
+
   document.querySelector("#editor-assets-toggle")?.addEventListener("click", () => {
     state.editorAssetsOpen = !state.editorAssetsOpen;
     renderWebEditor();
@@ -3302,6 +3852,51 @@ function renderWebEditor() {
     showToast("Asset applied to the live draft.");
   });
 
+  document.querySelectorAll("[data-editor-preview-mode]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const requested = button.dataset.editorPreviewMode;
+      const mode = ["visual", "code", "devtools"].includes(requested)
+        ? requested
+        : "visual";
+      if (mode === state.editorPreviewMode) return;
+      state.editorPreviewMode = mode;
+      renderWebEditor();
+      if (mode === "code") {
+        window.setTimeout(() => loadEditorCodeSource({ quiet: true }), 0);
+      }
+    });
+  });
+
+  document.querySelectorAll("[data-editor-code-tab]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.editorCodeTab = button.dataset.editorCodeTab === "css" ? "css" : "html";
+      renderWebEditor();
+    });
+  });
+
+  document.querySelectorAll("[data-editor-devtools-tab]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const tab = button.dataset.editorDevtoolsTab;
+      state.editorDevtoolsTab = ["elements", "styles", "console"].includes(tab)
+        ? tab
+        : "elements";
+      state.editorDevtoolsData = null;
+      renderEditorDevtoolsDock();
+      requestDevtools();
+    });
+  });
+
+  document.querySelector("#editor-devtools-refresh")?.addEventListener("click", () => {
+    requestDevtools();
+  });
+
+  document.querySelector("#editor-devtools-clear")?.addEventListener("click", () => {
+    frame?.contentWindow?.postMessage(
+      { type: "WCG_EDITOR_DEVTOOLS_CLEAR_CONSOLE" },
+      frameOrigin()
+    );
+  });
+
   document.querySelectorAll("[data-editor-device]").forEach((button) => {
     button.addEventListener("click", () => {
       state.editorDevice = button.dataset.editorDevice || "desktop";
@@ -3331,6 +3926,12 @@ function renderWebEditor() {
   });
 
   document.querySelector("#web-editor-refresh")?.addEventListener("click", () => {
+    if (state.editorPreviewMode === "code") {
+      state.editorCodeSource = null;
+      state.editorCodeSourceKey = "";
+      loadEditorCodeSource();
+      return;
+    }
     if (frame) frame.src = iframeUrl(true);
   });
 
@@ -3400,6 +4001,7 @@ function renderWebEditor() {
     );
 
     state.editorDirty = editorPendingChangeCount() > 0;
+    scheduleSharedEditorDraft();
     state.editorSelectedText = null;
     state.editorSelectedObject = null;
 
@@ -4456,10 +5058,12 @@ function renderDashboard() {
             <span>Messages</span>
             <b id="messages-nav-badge" class="nav-badge" hidden>0</b>
           </button>
+          ${staffCan("editor") ? `
           <button class="nav-button" type="button" data-dashboard-view="editor">
             ${editorIcon()}
             <span>Web Editor</span>
           </button>
+          ` : ""}
         </nav>
 
         <button id="notification-permission-button" class="sidebar-notification-button" type="button">
@@ -6294,6 +6898,14 @@ async function signOut() {
   state.editorMode = "beta";
   state.editorPage = "/";
   state.editorDirty = false;
+  if (state.editorSharedDraftTimer) window.clearTimeout(state.editorSharedDraftTimer);
+  state.editorSharedDraftTimer = null;
+  state.editorSharedDraftLoadedSha = "";
+  state.editorSharedDraftRevision = 0;
+  state.editorSharedDraftAvailable = null;
+  state.editorSharedDraftConflict = false;
+  state.editorDevtoolsTab = "elements";
+  state.editorDevtoolsData = null;
   state.currentView = "dashboard";
   renderLogin();
 }
