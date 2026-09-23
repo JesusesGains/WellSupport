@@ -66,6 +66,10 @@ function cleanAnchor(value) {
   const anchor = value && typeof value === "object" && !Array.isArray(value)
     ? value
     : {};
+  const box =
+    anchor.box && typeof anchor.box === "object" && !Array.isArray(anchor.box)
+      ? anchor.box
+      : null;
 
   return {
     selector: String(anchor.selector || "").slice(0, 1000),
@@ -73,7 +77,15 @@ function cleanAnchor(value) {
     pageY: Math.max(0, finiteNumber(anchor.pageY)),
     offsetX: Math.min(1, Math.max(0, finiteNumber(anchor.offsetX, 0.5))),
     offsetY: Math.min(1, Math.max(0, finiteNumber(anchor.offsetY, 0.5))),
-    scrollY: Math.max(0, finiteNumber(anchor.scrollY))
+    scrollY: Math.max(0, finiteNumber(anchor.scrollY)),
+    box: box
+      ? {
+          pageX: Math.max(0, finiteNumber(box.pageX)),
+          pageY: Math.max(0, finiteNumber(box.pageY)),
+          width: Math.min(5000, Math.max(8, finiteNumber(box.width, 8))),
+          height: Math.min(5000, Math.max(8, finiteNumber(box.height, 8)))
+        }
+      : null
   };
 }
 
