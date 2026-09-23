@@ -2629,7 +2629,7 @@ function renderWebEditor() {
             </div>
           </div>
 
-          <div class="editor-preview-placeholder is-fullscreen">
+          <div class="editor-preview-placeholder is-fullscreen ${state.editorPreviewMode === "code" ? "has-code-dock" : state.editorPreviewMode === "devtools" ? "has-devtools-dock" : ""}">
             <div id="web-editor-browser" class="editor-preview-browser is-fullscreen" data-device="${state.editorDevice}">
               <div class="editor-preview-browser-bar">
                 <i></i><i></i><i></i>
