@@ -2476,37 +2476,72 @@ function renderWebEditor() {
               </div>
             </div>
 
-            <div class="editor-device-toolbar" role="group" aria-label="Preview device size">
-              <button class="${state.editorDevice === "desktop" ? "is-active" : ""}" type="button" data-editor-device="desktop">Desktop</button>
-              <button class="${state.editorDevice === "tablet" ? "is-active" : ""}" type="button" data-editor-device="tablet">Tablet</button>
-              <button class="${state.editorDevice === "mobile" ? "is-active" : ""}" type="button" data-editor-device="mobile">Mobile</button>
+            <div class="editor-view-toolbar" role="group" aria-label="Preview type">
+              <button class="${state.editorPreviewMode === "visual" ? "is-active" : ""}" type="button" data-editor-preview-mode="visual">Visual</button>
+              <button class="${state.editorPreviewMode === "code" ? "is-active" : ""}" type="button" data-editor-preview-mode="code">&lt;/&gt; Code</button>
             </div>
 
-            <div class="editor-tool-toolbar" role="group" aria-label="Editor tools">
-              <button class="${state.editorTool === "select" ? "is-active" : ""}" type="button" data-editor-tool="select" title="Select and edit">↖ <span>Select</span></button>
-              <button class="${state.editorTool === "text-box" ? "is-active" : ""}" type="button" data-editor-tool="text-box" title="Draw a text box">T <span>Text box</span></button>
-            </div>
+            ${state.editorPreviewMode === "code" ? `
+              <div class="editor-code-tabs" role="group" aria-label="Source type">
+                <button class="${state.editorCodeTab === "html" ? "is-active" : ""}" type="button" data-editor-code-tab="html">HTML</button>
+                <button class="${state.editorCodeTab === "css" ? "is-active" : ""}" type="button" data-editor-code-tab="css">CSS</button>
+              </div>
+            ` : `
+              <div class="editor-device-toolbar" role="group" aria-label="Preview device size">
+                <button class="${state.editorDevice === "desktop" ? "is-active" : ""}" type="button" data-editor-device="desktop">Desktop</button>
+                <button class="${state.editorDevice === "tablet" ? "is-active" : ""}" type="button" data-editor-device="tablet">Tablet</button>
+                <button class="${state.editorDevice === "mobile" ? "is-active" : ""}" type="button" data-editor-device="mobile">Mobile</button>
+              </div>
+
+              <div class="editor-tool-toolbar" role="group" aria-label="Editor tools">
+                <button class="${state.editorTool === "select" ? "is-active" : ""}" type="button" data-editor-tool="select" title="Select and edit">↖ <span>Select</span></button>
+                <button class="${state.editorTool === "text-box" ? "is-active" : ""}" type="button" data-editor-tool="text-box" title="Draw a text box">T <span>Text box</span></button>
+              </div>
+            `}
 
             <div class="editor-live-help">
-              ${editable ? "Click an item to edit · use the ⋮⋮ handle only to move sections" : "Live website preview · view only"}
+              ${state.editorPreviewMode === "code"
+                ? "Read-only source from the selected GitHub branch"
+                : editable
+                  ? "Click an item to edit · use the ⋮⋮ handle only to move sections"
+                  : "Live website preview · view only"}
             </div>
           </div>
 
           <div class="editor-preview-placeholder is-fullscreen">
-            <div id="web-editor-browser" class="editor-preview-browser is-fullscreen" data-device="${state.editorDevice}">
-              <div class="editor-preview-browser-bar">
-                <i></i><i></i><i></i>
-                <span id="web-editor-browser-url"></span>
-                <b class="${state.editorMode === "beta" ? "is-beta" : ""}">${state.editorMode === "beta" ? "BETA" : "PROD"}</b>
+            ${state.editorPreviewMode === "code" ? `
+              <div class="editor-code-browser">
+                <div class="editor-preview-browser-bar">
+                  <i></i><i></i><i></i>
+                  <span>${escapeEditorAttribute(editorCodeFileLabel())}</span>
+                  <b class="${state.editorMode === "beta" ? "is-beta" : ""}">${state.editorMode === "beta" ? "BETA" : "PROD"}</b>
+                </div>
+                <div class="editor-code-meta">
+                  <span>${state.editorCodeTab.toUpperCase()}</span>
+                  <small>${state.editorMode === "beta" ? "beta-main" : "main"} source · local visual drafts appear after Publish beta preview</small>
+                </div>
+                <pre class="editor-code-pre" aria-live="polite"><code>${state.editorCodeLoading
+                  ? "Loading source…"
+                  : state.editorCodeSource?.error
+                    ? escapeEditorAttribute(state.editorCodeSource.error)
+                    : escapeEditorAttribute(editorCodeContent() || "No source available.")}</code></pre>
               </div>
-              <iframe
-                id="web-editor-frame"
-                class="editor-live-frame"
-                title="Well College Global website preview"
-                loading="eager"
-                referrerpolicy="strict-origin-when-cross-origin"
-              ></iframe>
-            </div>
+            ` : `
+              <div id="web-editor-browser" class="editor-preview-browser is-fullscreen" data-device="${state.editorDevice}">
+                <div class="editor-preview-browser-bar">
+                  <i></i><i></i><i></i>
+                  <span id="web-editor-browser-url"></span>
+                  <b class="${state.editorMode === "beta" ? "is-beta" : ""}">${state.editorMode === "beta" ? "BETA" : "PROD"}</b>
+                </div>
+                <iframe
+                  id="web-editor-frame"
+                  class="editor-live-frame"
+                  title="Well College Global website preview"
+                  loading="eager"
+                  referrerpolicy="strict-origin-when-cross-origin"
+                ></iframe>
+              </div>
+            `}
           </div>
 
           <footer class="editor-fullscreen-footer">
