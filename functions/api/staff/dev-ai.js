@@ -19,7 +19,7 @@ const TEXT_FILE_PATTERN = /\.(?:html?|css|js|mjs|cjs|jsx|ts|tsx|json|md)$/i;
 
 function aiConfig(env) {
   const apiKey = String(env?.OPENAI_API_KEY || "").trim();
-  const model = String(env?.WELL_DEV_AI_MODEL || "gpt-6-astra").trim();
+  const model = String(env?.WELL_DEV_AI_MODEL || "gpt-5.6-sol").trim();
   return { apiKey, model, configured: Boolean(apiKey && model) };
 }
 
