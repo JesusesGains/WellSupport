@@ -229,7 +229,9 @@ export async function onRequestPost({ request, env }) {
       "If the requested change can be represented by the existing visual editor, set mode=draft and put ONLY a JSON object in draft_json.",
       "Supported draft_json keys are heading, copy, accent, font, text, attributes, styles, order, elements. Preserve existing values not being changed.",
       "For text/styles/attributes/order, only use selectors actually present in the supplied selection/source or current draft. If uncertain, use mode=explain instead.",
-      "If code changes outside the visual editor are needed, use mode=explain, identify the files, and describe the exact implementation without pretending it was applied.",
+      "If a source-code change is needed and the exact existing text is present in the supplied source, use mode=code and return minimal exact find/replace edits in code_changes_json.",
+      "code_changes_json must be a JSON array of objects with path, find, replace, reason. Use only files that appear in RELEVANT BETA SOURCE. The find string must be copied exactly from that source and should be as small as possible while remaining unique.",
+      "Never propose source edits to secrets, deployment config, package manifests, workers, database/schema files, security headers, or GitHub configuration.",
       "Keep answer concise and implementation-focused."
     ].join("\n");
 
@@ -267,8 +269,9 @@ export async function onRequestPost({ request, env }) {
               properties: {
                 answer: { type: "string" },
                 summary: { type: "string" },
-                mode: { type: "string", enum: ["explain", "draft"] },
+                mode: { type: "string", enum: ["explain", "draft", "code"] },
                 draft_json: { type: "string" },
+                code_changes_json: { type: "string" },
                 files: {
                   type: "array",
                   items: { type: "string" },
@@ -280,7 +283,7 @@ export async function onRequestPost({ request, env }) {
                   maxItems: 8
                 }
               },
-              required: ["answer", "summary", "mode", "draft_json", "files", "warnings"],
+              required: ["answer", "summary", "mode", "draft_json", "code_changes_json", "files", "warnings"],
               additionalProperties: false
             }
           }
@@ -306,6 +309,7 @@ export async function onRequestPost({ request, env }) {
         summary: "Developer AI response",
         mode: "explain",
         draft_json: "{}",
+        code_changes_json: "[]",
         files: context.files.map((file) => file.path),
         warnings: ["The model response was not structured as expected, so no draft can be applied."]
       };
@@ -323,11 +327,64 @@ export async function onRequestPost({ request, env }) {
       }
     }
 
+    const contextByPath = new Map(
+      context.files.map((file) => [file.path, file])
+    );
+    const protectedPath = /^(?:\.github\/|supabase\/|functions\/)|(?:^|\/)(?:package(?:-lock)?\.json|wrangler\.|vite\.config\.|worker\.js|_headers|_redirects)$/i;
+    const allowedSourcePath = (path) =>
+      !protectedPath.test(path) &&
+      (
+        /^[a-z0-9][a-z0-9._-]*\.html$/i.test(path) ||
+        /^[a-z0-9][a-z0-9._-]*\.(?:css|js)$/i.test(path) ||
+        /^(?:src|assets)\/[a-z0-9][a-z0-9._/-]*\.(?:css|js|jsx|ts|tsx)$/i.test(path)
+      );
+
+    let rawCodeChanges = [];
+    if (result?.mode === "code") {
+      try {
+        const parsed = JSON.parse(String(result.code_changes_json || "[]"));
+        rawCodeChanges = Array.isArray(parsed) ? parsed : [];
+      } catch {
+        rawCodeChanges = [];
+      }
+    }
+
+    const codeChanges = [];
+    let replacementChars = 0;
+    for (const item of rawCodeChanges.slice(0, 4)) {
+      if (!item || typeof item !== "object") continue;
+      const path = String(item.path || "").trim();
+      const find = String(item.find || "");
+      const replace = String(item.replace ?? "");
+      const reason = String(item.reason || "").trim().slice(0, 400);
+      const source = contextByPath.get(path)?.source || "";
+
+      if (
+        !path ||
+        !allowedSourcePath(path) ||
+        !source ||
+        !find ||
+        find.length > 12000 ||
+        replace.length > 24000
+      ) {
+        continue;
+      }
+
+      const first = source.indexOf(find);
+      if (first < 0 || first !== source.lastIndexOf(find)) continue;
+
+      replacementChars += replace.length;
+      if (replacementChars > 60000) break;
+
+      codeChanges.push({ path, find, replace, reason });
+    }
+
     await recordEditorAudit(session, "dev_ai_query", {
       beta_sha: context.branchSha,
       page_path: pagePath,
       context_files: context.files.map((file) => file.path),
-      proposed_draft: Boolean(draft)
+      proposed_draft: Boolean(draft),
+      proposed_code_files: codeChanges.map((change) => change.path)
     });
 
     return sessionResponse({
@@ -337,8 +394,9 @@ export async function onRequestPost({ request, env }) {
       model: config.model,
       answer: String(result?.answer || ""),
       summary: String(result?.summary || ""),
-      mode: draft ? "draft" : "explain",
+      mode: draft ? "draft" : codeChanges.length ? "code" : "explain",
       draft,
+      codeChanges,
       files: Array.isArray(result?.files) ? result.files.slice(0, 12) : [],
       warnings: Array.isArray(result?.warnings) ? result.warnings.slice(0, 8) : []
     }, session);
