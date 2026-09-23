@@ -8,6 +8,7 @@ import {
 
 const PRESENCE_TTL_MS = 9000;
 const MAX_NOTES = 200;
+const MAX_REPLIES = 800;
 const STAFF_COLOURS = Object.freeze([
   "#2F65A0",
   "#2F7D73",
@@ -33,6 +34,12 @@ function decorateNote(note) {
   return note && typeof note === "object"
     ? { ...note, colour: staffColour(note.created_by || note.created_by_name) }
     : note;
+}
+
+function decorateReply(reply) {
+  return reply && typeof reply === "object"
+    ? { ...reply, colour: staffColour(reply.created_by || reply.created_by_name) }
+    : reply;
 }
 
 function decoratePresence(person) {
@@ -127,16 +134,44 @@ export async function onRequestGet({ request, env }) {
 
   try {
     if (kind === "notes") {
-      const query = new URLSearchParams({
+      const notesQuery = new URLSearchParams({
         select: "id,page_path,anchor,body,resolved,created_by,created_by_name,created_at,updated_at,resolved_by,resolved_at",
         order: "resolved.asc,created_at.desc",
         limit: String(MAX_NOTES)
       });
-      const notes = await restJson(
-        `/rest/v1/support_editor_notes?${query.toString()}`,
-        session
-      );
-      const allNotes = Array.isArray(notes) ? notes.map(decorateNote) : [];
+      const repliesQuery = new URLSearchParams({
+        select: "id,note_id,body,created_by,created_by_name,created_at,updated_at",
+        order: "created_at.asc",
+        limit: String(MAX_REPLIES)
+      });
+
+      const [notes, replies] = await Promise.all([
+        restJson(
+          `/rest/v1/support_editor_notes?${notesQuery.toString()}`,
+          session
+        ),
+        restJson(
+          `/rest/v1/support_editor_note_replies?${repliesQuery.toString()}`,
+          session
+        )
+      ]);
+
+      const repliesByNote = new Map();
+      for (const reply of Array.isArray(replies) ? replies.map(decorateReply) : []) {
+        const noteId = String(reply?.note_id || "");
+        if (!noteId) continue;
+        const list = repliesByNote.get(noteId) || [];
+        list.push(reply);
+        repliesByNote.set(noteId, list);
+      }
+
+      const allNotes = (Array.isArray(notes) ? notes : [])
+        .map(decorateNote)
+        .map((note) => ({
+          ...note,
+          replies: repliesByNote.get(String(note?.id || "")) || []
+        }));
+
       return sessionResponse({
         notes: allNotes.filter((note) => note?.page_path === page),
         allNotes,
@@ -306,6 +341,54 @@ export async function onRequestPost({ request, env }) {
         ok: true,
         note: Array.isArray(notes) ? decorateNote(notes[0] || null) : null
       }, session);
+    }
+
+    if (action === "reply_add") {
+      const noteId = uuid(input.noteId);
+      const body = cleanNoteBody(input.body);
+      if (!noteId) {
+        return sessionResponse({ error: "Invalid note." }, session, 400);
+      }
+      if (!body) {
+        return sessionResponse({ error: "Write a reply before sending it." }, session, 400);
+      }
+
+      const replies = await restJson(
+        "/rest/v1/support_editor_note_replies",
+        session,
+        {
+          method: "POST",
+          headers: { Prefer: "return=representation" },
+          body: {
+            note_id: noteId,
+            body,
+            created_by: session.user.id,
+            created_by_name: String(session.agent?.display_name || "Staff").slice(0, 120),
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          }
+        }
+      );
+
+      return sessionResponse({
+        ok: true,
+        reply: Array.isArray(replies)
+          ? decorateReply(replies[0] || null)
+          : null
+      }, session);
+    }
+
+    if (action === "reply_delete") {
+      const id = uuid(input.id);
+      if (!id) return sessionResponse({ error: "Invalid reply." }, session, 400);
+
+      const query = new URLSearchParams({ id: `eq.${id}` });
+      await restJson(
+        `/rest/v1/support_editor_note_replies?${query.toString()}`,
+        session,
+        { method: "DELETE", headers: { Prefer: "return=minimal" } }
+      );
+      return sessionResponse({ ok: true }, session);
     }
 
     if (action === "note_delete") {
