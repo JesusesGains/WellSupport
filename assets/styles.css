@@ -7658,3 +7658,66 @@ body.has-support-confirm-modal {
     max-width: 160px;
   }
 }
+
+
+/* Code view keeps the live site visible and docks editable HTML on the right. */
+.editor-preview-placeholder.is-fullscreen:has(.editor-code-dock) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(420px, 46vw);
+  grid-template-rows: minmax(0, 1fr);
+  align-items: stretch;
+  gap: 8px;
+}
+
+.editor-preview-placeholder.is-fullscreen:has(.editor-code-dock) .editor-preview-browser {
+  width: 100% !important;
+  height: 100%;
+  min-width: 0;
+}
+
+.editor-code-dock {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid var(--wcg-line);
+  border-radius: 12px;
+  background: #11161b;
+}
+
+.editor-code-dock .editor-preview-browser-bar {
+  border-bottom-color: rgba(255,255,255,.08);
+  background: #171d23;
+}
+
+.editor-code-dock .editor-preview-browser-bar span {
+  color: #aeb8c2;
+}
+
+.editor-code-dock .editor-code-meta {
+  border-bottom-color: rgba(255,255,255,.08);
+  background: #141a20;
+}
+
+.editor-code-dock .editor-code-meta span {
+  color: #eef3f7;
+}
+
+.editor-code-dock .editor-code-meta small {
+  color: #88939e;
+}
+
+@media (max-width: 1050px) {
+  .editor-preview-placeholder.is-fullscreen:has(.editor-code-dock) {
+    grid-template-columns: minmax(0, 1fr) minmax(360px, 44vw);
+  }
+}
+
+@media (max-width: 760px) {
+  .editor-preview-placeholder.is-fullscreen:has(.editor-code-dock) {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(260px, 1fr) minmax(300px, 1fr);
+  }
+}

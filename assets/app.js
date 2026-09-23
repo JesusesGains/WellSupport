@@ -2630,8 +2630,23 @@ function renderWebEditor() {
           </div>
 
           <div class="editor-preview-placeholder is-fullscreen">
+            <div id="web-editor-browser" class="editor-preview-browser is-fullscreen" data-device="${state.editorDevice}">
+              <div class="editor-preview-browser-bar">
+                <i></i><i></i><i></i>
+                <span id="web-editor-browser-url"></span>
+                <b class="${state.editorMode === "beta" ? "is-beta" : ""}">${state.editorMode === "beta" ? "BETA" : "PROD"}</b>
+              </div>
+              <iframe
+                id="web-editor-frame"
+                class="editor-live-frame"
+                title="Well College Global website preview"
+                loading="eager"
+                referrerpolicy="strict-origin-when-cross-origin"
+              ></iframe>
+            </div>
+
             ${state.editorPreviewMode === "code" ? `
-              <div class="editor-code-browser is-editable">
+              <aside class="editor-code-dock">
                 <div class="editor-preview-browser-bar">
                   <i></i><i></i><i></i>
                   <span>${escapeEditorAttribute(editorCodeFileLabel())}</span>
@@ -2662,42 +2677,27 @@ function renderWebEditor() {
                     aria-label="HTML source editor"
                   >${escapeEditorAttribute(editorCodeContent())}</textarea>
                 </div>
-              </div>
-            ` : `
-              <div id="web-editor-browser" class="editor-preview-browser is-fullscreen" data-device="${state.editorDevice}">
-                <div class="editor-preview-browser-bar">
-                  <i></i><i></i><i></i>
-                  <span id="web-editor-browser-url"></span>
-                  <b class="${state.editorMode === "beta" ? "is-beta" : ""}">${state.editorMode === "beta" ? "BETA" : "PROD"}</b>
-                </div>
-                <iframe
-                  id="web-editor-frame"
-                  class="editor-live-frame"
-                  title="Well College Global website preview"
-                  loading="eager"
-                  referrerpolicy="strict-origin-when-cross-origin"
-                ></iframe>
-              </div>
-              ${state.editorPreviewMode === "devtools" ? `
-                <section class="editor-devtools-dock">
-                  <header>
-                    <div>
-                      <strong>Chrome DevTools</strong>
-                      <span>Rendered preview inspector</span>
-                    </div>
-                    <div>
-                      <button id="editor-devtools-refresh" type="button">Refresh</button>
-                      ${state.editorDevtoolsTab === "console" ? `<button id="editor-devtools-clear" type="button">Clear console</button>` : ""}
-                    </div>
-                  </header>
-                  <div id="editor-devtools-content" class="editor-devtools-content">
-                    ${editorDevtoolsContentMarkup()}
-                  </div>
-                </section>
-              ` : ""}
-            `}
-          </div>
+              </aside>
+            ` : ""}
 
+            ${state.editorPreviewMode === "devtools" ? `
+              <section class="editor-devtools-dock">
+                <header>
+                  <div>
+                    <strong>Chrome DevTools</strong>
+                    <span>Rendered preview inspector</span>
+                  </div>
+                  <div>
+                    <button id="editor-devtools-refresh" type="button">Refresh</button>
+                    ${state.editorDevtoolsTab === "console" ? `<button id="editor-devtools-clear" type="button">Clear console</button>` : ""}
+                  </div>
+                </header>
+                <div id="editor-devtools-content" class="editor-devtools-content">
+                  ${editorDevtoolsContentMarkup()}
+                </div>
+              </section>
+            ` : ""}
+          </div>
           <footer class="editor-fullscreen-footer">
             <div>
               <strong>${state.editorMode === "beta" ? "Preview changes" : "Live website"}</strong>
