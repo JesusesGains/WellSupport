@@ -8430,3 +8430,144 @@ body.is-resizing-editor-dock iframe {
     width: calc(100vw - 16px);
   }
 }
+
+
+/* Inline collaborative notes dock */
+.editor-preview-placeholder.is-fullscreen.has-notes-dock {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 360px);
+  grid-template-rows: minmax(0, 1fr);
+  gap: 8px;
+  align-items: stretch;
+  justify-items: stretch;
+  overflow: hidden;
+  place-items: initial;
+}
+
+.editor-preview-placeholder.is-fullscreen.has-notes-dock > .editor-preview-browser.is-fullscreen {
+  position: relative !important;
+  top: auto !important;
+  left: auto !important;
+  width: 100% !important;
+  height: 100% !important;
+  min-width: 0 !important;
+  max-width: none !important;
+  margin: 0 !important;
+  transform: none !important;
+}
+
+.editor-preview-placeholder.is-fullscreen.has-notes-dock > .editor-preview-browser.is-fullscreen[data-device="tablet"],
+.editor-preview-placeholder.is-fullscreen.has-notes-dock > .editor-preview-browser.is-fullscreen[data-device="mobile"] {
+  justify-self: center;
+}
+
+.editor-preview-placeholder.is-fullscreen.has-notes-dock > .editor-preview-browser.is-fullscreen[data-device="tablet"] {
+  width: min(820px, 100%) !important;
+}
+
+.editor-preview-placeholder.is-fullscreen.has-notes-dock > .editor-preview-browser.is-fullscreen[data-device="mobile"] {
+  width: min(390px, 100%) !important;
+}
+
+.editor-notes-panel {
+  position: relative;
+  z-index: 2;
+  top: auto;
+  right: auto;
+  bottom: auto;
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  display: none;
+  overflow: hidden;
+  border: 1px solid rgba(48,70,96,.12);
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.editor-notes-panel.is-open {
+  display: flex;
+  flex-direction: column;
+}
+
+.editor-note-card {
+  position: relative;
+  overflow: hidden;
+  border-left: 4px solid var(--note-colour, #2F65A0);
+}
+
+.editor-note-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--note-colour, #2F65A0) 5%, transparent);
+  pointer-events: none;
+}
+
+.editor-note-card > * {
+  position: relative;
+  z-index: 1;
+}
+
+.editor-note-composer {
+  border-left: 4px solid var(--note-colour, #2F65A0);
+}
+
+.editor-note-composer-label {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+}
+
+.editor-note-composer-label i {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.editor-note-composer-label strong {
+  color: #304660;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.editor-note-composer-label small {
+  color: #98a19d;
+  font-size: 9px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.editor-collab-person {
+  border-color: color-mix(in srgb, var(--collab-colour, #2F65A0) 28%, rgba(48,70,96,.12));
+}
+
+.editor-collab-avatar {
+  background: color-mix(in srgb, var(--collab-colour, #2F65A0) 12%, #fff);
+  color: var(--collab-colour, #2F65A0);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--collab-colour, #2F65A0) 28%, transparent);
+}
+
+@media (max-width: 900px) {
+  .editor-preview-placeholder.is-fullscreen.has-notes-dock {
+    grid-template-columns: minmax(0, 1fr) minmax(285px, 34vw);
+  }
+}
+
+@media (max-width: 760px) {
+  .editor-preview-placeholder.is-fullscreen.has-notes-dock {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(260px, 1fr) minmax(280px, .8fr);
+  }
+
+  .editor-notes-panel {
+    top: auto;
+    right: auto;
+    bottom: auto;
+    width: 100%;
+  }
+}
