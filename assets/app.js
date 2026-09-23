@@ -3,7 +3,8 @@ const DASHBOARD_VIEW_PATHS = {
   dashboard: "/dashboard",
   visitors: "/visitors",
   messages: "/messages",
-  editor: "/web-editor"
+  editor: "/web-editor",
+  devai: "/developer-ai"
 };
 
 function dashboardViewFromPath(pathname = window.location.pathname) {
@@ -11,6 +12,7 @@ function dashboardViewFromPath(pathname = window.location.pathname) {
   if (path === "/visitors") return "visitors";
   if (path === "/messages") return "messages";
   if (path === "/web-editor") return "editor";
+  if (path === "/developer-ai") return "devai";
   return "dashboard";
 }
 
@@ -106,11 +108,22 @@ const state = {
   editorAssetsLoading: false,
   editorAssetDrafts: [],
   editorAssetUploadBusy: false,
+  devAiStatus: null,
+  devAiMessages: [],
+  devAiLoading: false,
+  devAiProposal: null,
   supportPagePickerSection: ""
 };
 
 function configured() {
   return true;
+}
+
+function staffCan(permission) {
+  return Boolean(
+    Array.isArray(state.agent?.permissions) &&
+    state.agent.permissions.includes(String(permission || ""))
+  );
 }
 
 async function apiRequest(path, {
@@ -147,7 +160,10 @@ async function apiRequest(path, {
   }
 
   if (!response.ok) {
-    if (response.status === 401 || response.status === 403) {
+    if (
+      response.status === 401 ||
+      (response.status === 403 && payload?.code !== "insufficient_role")
+    ) {
       cleanupRealtime();
       state.agent = null;
       state.user = null;
@@ -850,6 +866,10 @@ function notificationsIcon() {
   return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"></path><path d="M10 21h4"></path></svg>`;
 }
 
+function devAiIcon() {
+  return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 9-4 3 4 3"></path><path d="m16 9 4 3-4 3"></path><path d="m14 5-4 14"></path></svg>`;
+}
+
 function totalUnreadMessages() {
   let total = 0;
 
@@ -900,9 +920,10 @@ function updatePrimaryNavigation() {
 }
 
 function setDashboardView(view, { historyMode = "push" } = {}) {
-  const resolvedView = ["dashboard", "visitors", "messages", "editor"].includes(view)
-    ? view
-    : "dashboard";
+  const allowedViews = ["dashboard", "visitors", "messages"];
+  if (staffCan("editor")) allowedViews.push("editor");
+  if (staffCan("dev_ai")) allowedViews.push("devai");
+  const resolvedView = allowedViews.includes(view) ? view : "dashboard";
 
   state.currentView = resolvedView;
 
@@ -922,6 +943,7 @@ function setDashboardView(view, { historyMode = "push" } = {}) {
   dashboard?.classList.toggle("is-visitors", state.currentView === "visitors");
   dashboard?.classList.toggle("is-messages", state.currentView === "messages");
   dashboard?.classList.toggle("is-editor", state.currentView === "editor");
+  dashboard?.classList.toggle("is-devai", state.currentView === "devai");
 
   if (state.currentView !== "visitors" && state.visitorsTimer) {
     window.clearInterval(state.visitorsTimer);
@@ -950,6 +972,12 @@ function setDashboardView(view, { historyMode = "push" } = {}) {
   if (state.currentView === "editor") {
     dashboard?.classList.remove("has-selection");
     renderWebEditor();
+    return;
+  }
+
+  if (state.currentView === "devai") {
+    dashboard?.classList.remove("has-selection");
+    renderDeveloperAi();
     return;
   }
 
@@ -987,7 +1015,9 @@ async function loadWebEditorStatus({ quiet = false } = {}) {
       state.editorStatus?.main?.sha || "",
       state.editorStatus?.beta?.sha || "",
       Number(comparison.aheadBy || 0),
-      Number(comparison.behindBy || 0)
+      Number(comparison.behindBy || 0),
+      state.editorStatus?.beta?.previewGate?.state || "",
+      state.editorStatus?.beta?.previewGate?.conclusion || ""
     ].join(":");
 
     if (
@@ -1521,7 +1551,10 @@ async function promoteWebEditorBeta() {
   try {
     const result = await apiRequest("/editor-promote", {
       method: "POST",
-      body: { confirm: "PROMOTE_BETA_TO_MAIN" }
+      body: {
+        confirm: "PROMOTE_BETA_TO_MAIN",
+        reviewedBetaSha: state.editorStatus?.beta?.sha || ""
+      }
     });
 
     state.editorStatus = result.status || state.editorStatus;
@@ -1708,6 +1741,13 @@ async function stageEditorAssetFiles(fileList) {
   try {
     for (const [index, file] of files.entries()) {
       if (!(file instanceof File)) continue;
+
+      const safeType = ["image/jpeg", "image/png", "image/webp"].includes(file.type);
+      const safeExtension = /\.(?:jpe?g|png|webp)$/i.test(file.name || "");
+      if (!safeType || !safeExtension) {
+        showToast(`${file.name} must be a JPG, PNG, or WebP image.`, "error");
+        continue;
+      }
 
       if (file.size > 6 * 1024 * 1024) {
         showToast(`${file.name} is larger than the 6 MB asset limit.`, "error");
@@ -2010,7 +2050,7 @@ function renderWebEditor() {
             <button id="web-editor-sync" class="editor-topbar-button" type="button">Update preview</button>
           ` : ""}
 
-          ${connected && betaAhead && !betaBehind ? `
+          ${connected && betaAhead && !betaBehind && staffCan("publish") ? `
             <button id="web-editor-promote" class="editor-topbar-button is-promote" type="button">Publish preview live</button>
           ` : ""}
 
@@ -2315,7 +2355,7 @@ function renderWebEditor() {
 
               ${state.editorAssetsOpen ? `
                 <div class="editor-assets-panel">
-                  <input id="editor-assets-input" type="file" multiple hidden>
+                  <input id="editor-assets-input" type="file" accept="image/jpeg,image/png,image/webp" multiple hidden>
                   <button id="editor-assets-upload" class="editor-assets-upload" type="button" ${editable && !state.editorAssetUploadBusy ? "" : "disabled"}>
                     + Upload assets
                   </button>
@@ -2452,7 +2492,14 @@ function renderWebEditor() {
       <section class="confirm-card" role="dialog" aria-modal="true" aria-labelledby="editor-promote-title">
         <div class="confirm-icon">${editorIcon()}</div>
         <h2 id="editor-promote-title">Publish preview to the live website?</h2>
-        <p>This publishes the preview version to the live Well College Global website.</p>
+        <p>This publishes only the exact beta commit shown below. If beta changes after review, publishing will be blocked.</p>
+        <code class="editor-promote-sha">${escapeEditorAttribute(state.editorStatus?.beta?.sha || "Preview SHA unavailable")}</code>
+        ${state.editorStatus?.beta?.previewGate?.required ? `
+          <p class="editor-promote-gate ${state.editorStatus.beta.previewGate.passed ? "is-passed" : "is-blocked"}">
+            Required check: ${escapeEditorAttribute(state.editorStatus.beta.previewGate.name || "preview")} ·
+            ${escapeEditorAttribute(state.editorStatus.beta.previewGate.passed ? "passed" : state.editorStatus.beta.previewGate.state || "pending")}
+          </p>
+        ` : ""}
         <div class="confirm-actions">
           <button id="cancel-editor-promote" class="confirm-secondary" type="button">Cancel</button>
           <button id="confirm-editor-promote" class="confirm-danger" type="button">Publish preview to live site</button>
@@ -4456,10 +4503,18 @@ function renderDashboard() {
             <span>Messages</span>
             <b id="messages-nav-badge" class="nav-badge" hidden>0</b>
           </button>
+          ${staffCan("editor") ? `
           <button class="nav-button" type="button" data-dashboard-view="editor">
             ${editorIcon()}
             <span>Web Editor</span>
           </button>
+          ` : ""}
+          ${staffCan("dev_ai") ? `
+          <button class="nav-button" type="button" data-dashboard-view="devai">
+            ${devAiIcon()}
+            <span>Developer AI</span>
+          </button>
+          ` : ""}
         </nav>
 
         <button id="notification-permission-button" class="sidebar-notification-button" type="button">
@@ -6294,6 +6349,10 @@ async function signOut() {
   state.editorMode = "beta";
   state.editorPage = "/";
   state.editorDirty = false;
+  state.devAiStatus = null;
+  state.devAiMessages = [];
+  state.devAiLoading = false;
+  state.devAiProposal = null;
   state.currentView = "dashboard";
   renderLogin();
 }
