@@ -65,8 +65,6 @@ Configure the **WellSupport** Cloudflare Pages project with:
 - `CLOUDFLARE_ANALYTICS_TOKEN` — **Secret**; a Cloudflare API token scoped to that account with **Account Analytics: Read**
 - `CLOUDFLARE_ANALYTICS_HOST` — Optional text; defaults to `wellcollegeglobal.com`
 - `WELLWEBSITE_GITHUB_TOKEN` — **Secret, production environment only**
-- `OPENAI_API_KEY` — **Secret, production environment only**; enables the staff-only Developer AI workspace
-- `WELL_DEV_AI_MODEL` — Optional text; defaults to `gpt-5.6-sol`
 - `WELLWEBSITE_REQUIRED_CHECK` — Optional text; defaults to `Cloudflare Pages` and is required to pass on the exact reviewed beta commit before production promotion
 
 These values are available only to the server-side Pages Functions. The Supabase publishable key is not privileged; every data request still carries the verified staff JWT and remains constrained by RLS. No Supabase service-role/secret key is used.
@@ -106,7 +104,7 @@ where user_id = 'STAFF_AUTH_USER_UUID';
 Staff roles are:
 
 - `support` — support chat, visitors and analytics
-- `editor` — support access plus Web Editor and Developer AI
+- `editor` — support access plus Web Editor and DevTools
 - `publisher` — editor access plus explicit beta → production promotion
 - `admin` — all WellSupport capabilities
 
@@ -145,35 +143,9 @@ The source endpoint reads from the selected `WellWebsite` branch server-side. It
 
 Page-level visual drafts are also persisted through `public.support_editor_drafts` when the companion Supabase schema has been applied. Draft saves use the current beta SHA plus a revision number so a stale browser cannot silently overwrite another staff member's newer draft. Uploaded image binaries remain local until beta publish.
 
-## Developer AI
-
-`/developer-ai` is an internal staff-only coding assistant connected to `WellWebsite/beta-main`.
-
-Developer AI can:
-
-- inspect a small relevant set of beta source files
-- explain implementation and bugs
-- use current page / selected visual-editor element context
-- propose supported visual-editor draft changes
-- propose exact source-level find/replace patches
-- show source patches before any write
-- commit a staff-approved source patch only to `beta-main`
-
-Developer AI cannot:
-
-- write directly to `main`
-- promote a beta build to production
-- access environment secrets
-- run an arbitrary shell
-- edit deployment config, GitHub configuration, database/schema files, security headers, package manifests or Worker code through its patch endpoint
-
-Source patches are guarded by the beta commit SHA used to generate them. If `beta-main` changes before a staff member applies the patch, the write is rejected and the AI proposal must be regenerated.
-
-The Web Editor also exposes production version history. A publisher/admin can stage an older production tree as a **new beta restore commit** only when beta is clean. The restored version must then pass the normal Cloudflare preview and reviewed-SHA promotion flow; history restore never rewrites `main` directly.
-
 ## Editor audit and permissions
 
-The companion schema in `WellWebsite/supabase/support_chat.sql` adds staff roles, `public.support_editor_audit`, and `public.support_editor_drafts`. Beta publishes, main→beta syncs, production promotions and applied Developer AI patches write an audit event when the audit schema is available.
+The companion schema in `WellWebsite/supabase/support_chat.sql` adds staff roles, `public.support_editor_audit`, and `public.support_editor_drafts`. Beta publishes, main→beta syncs, production promotions and applied DevTools patches write an audit event when the audit schema is available.
 
 During migration, existing staff rows are assigned `admin` to preserve the access they already had. New staff rows default to `support`.
 
