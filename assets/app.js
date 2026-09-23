@@ -113,6 +113,10 @@ const state = {
   editorCodeSource: null,
   editorCodeSourceKey: "",
   editorCodeLoading: false,
+  editorHistoryOpen: false,
+  editorVersionHistory: [],
+  editorAuditHistory: [],
+  editorHistoryLoading: false,
   devAiStatus: null,
   devAiMessages: [],
   devAiLoading: false,
@@ -2320,6 +2324,61 @@ function renderDeveloperAi() {
   }
 }
 
+
+async function loadEditorVersionHistory({ quiet = false } = {}) {
+  if (state.editorHistoryLoading || !staffCan("editor")) return;
+  state.editorHistoryLoading = true;
+  if (state.currentView === "editor" && state.editorHistoryOpen) renderWebEditor();
+
+  try {
+    const result = await apiRequest("/editor-history");
+    state.editorVersionHistory = Array.isArray(result.commits) ? result.commits : [];
+    state.editorAuditHistory = Array.isArray(result.audit) ? result.audit : [];
+  } catch (error) {
+    if (!quiet) showToast(error?.message || "Unable to load website history.", "error");
+  } finally {
+    state.editorHistoryLoading = false;
+    if (state.currentView === "editor" && state.editorHistoryOpen) renderWebEditor();
+  }
+}
+
+async function stageEditorProductionRestore(sourceSha) {
+  if (!staffCan("publish")) return;
+  if (editorPendingChangeCount() > 0) {
+    showToast("Discard or publish local editor changes before staging a restore.", "error");
+    return;
+  }
+
+  const commit = state.editorVersionHistory.find((item) => item.sha === sourceSha);
+  const label = commit?.message || sourceSha.slice(0, 7);
+  if (!window.confirm(`Stage “${label}” as a new beta preview? Production will not change yet.`)) {
+    return;
+  }
+
+  try {
+    const result = await apiRequest("/editor-restore", {
+      method: "POST",
+      body: {
+        confirm: "STAGE_PRODUCTION_RESTORE",
+        sourceSha,
+        expectedMainSha: state.editorStatus?.main?.sha || ""
+      }
+    });
+
+    state.editorStatus = result.status || state.editorStatus;
+    state.editorDraftKey = "";
+    state.editorCodeSource = null;
+    state.editorCodeSourceKey = "";
+    state.editorAssetsLoaded = false;
+    state.editorNavigationTarget = "";
+    state.editorLayoutTarget = "";
+    showToast("Previous production version staged on beta-main. Review the Cloudflare preview before publishing live.");
+    renderWebEditor();
+  } catch (error) {
+    showToast(error?.message || "Unable to stage that website version.", "error");
+  }
+}
+
 async function loadEditorCodeSource({ quiet = false } = {}) {
   if (!state.editorStatus?.connected || state.editorCodeLoading) return;
 
@@ -2539,6 +2598,40 @@ function renderWebEditor() {
                 <option value="/faqs.html">FAQs</option>
                 <option value="/contact.html">Contact</option>
               </select>
+            </section>
+
+            <section class="editor-inspector-section editor-history-section">
+              <button id="editor-history-toggle" class="editor-assets-toggle" type="button">
+                <span>
+                  <strong>Version history</strong>
+                  <small>Restore safely through beta preview</small>
+                </span>
+                <b aria-hidden="true">${state.editorHistoryOpen ? "−" : "+"}</b>
+              </button>
+
+              ${state.editorHistoryOpen ? `
+                <div class="editor-version-list">
+                  ${state.editorHistoryLoading
+                    ? `<div class="editor-nav-order-empty">Loading production history…</div>`
+                    : state.editorVersionHistory.length
+                      ? state.editorVersionHistory.slice(0, 10).map((commit, index) => `
+                          <article class="editor-version-item ${index === 0 ? "is-current" : ""}">
+                            <div>
+                              <strong>${escapeEditorAttribute(commit.message || "Website update")}</strong>
+                              <span>
+                                <code>${escapeEditorAttribute(String(commit.sha || "").slice(0, 7))}</code>
+                                ${commit.authoredAt ? ` · ${escapeEditorAttribute(formatTime(commit.authoredAt))}` : ""}
+                                ${commit.author ? ` · ${escapeEditorAttribute(commit.author)}` : ""}
+                              </span>
+                            </div>
+                            ${index > 0 && state.editorMode === "beta" && staffCan("publish") ? `
+                              <button type="button" data-editor-restore-sha="${escapeEditorAttribute(commit.sha || "")}">Restore in beta</button>
+                            ` : index === 0 ? `<b>LIVE</b>` : ""}
+                          </article>
+                        `).join("")
+                      : `<div class="editor-nav-order-empty">No production history loaded.</div>`}
+                </div>
+              ` : ""}
             </section>
 
             <section class="editor-inspector-section editor-visual-editor-info">
@@ -3806,6 +3899,24 @@ function renderWebEditor() {
       postDraft();
       requestColours();
     }, 80);
+  });
+
+  document.querySelector("#editor-history-toggle")?.addEventListener("click", () => {
+    state.editorHistoryOpen = !state.editorHistoryOpen;
+    renderWebEditor();
+    if (
+      state.editorHistoryOpen &&
+      !state.editorVersionHistory.length &&
+      !state.editorHistoryLoading
+    ) {
+      window.setTimeout(() => loadEditorVersionHistory({ quiet: true }), 0);
+    }
+  });
+
+  document.querySelector(".editor-version-list")?.addEventListener("click", (event) => {
+    const button = event.target?.closest?.("[data-editor-restore-sha]");
+    const sha = String(button?.dataset?.editorRestoreSha || "");
+    if (sha) stageEditorProductionRestore(sha);
   });
 
   document.querySelector("#editor-assets-toggle")?.addEventListener("click", () => {
