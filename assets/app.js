@@ -2078,9 +2078,17 @@ async function sendDeveloperAiMessage(event) {
 
     if (result.draft) {
       state.devAiProposal = {
+        type: "draft",
         draft: result.draft,
         betaSha: result.betaSha || null,
         summary: result.summary || "Developer AI draft"
+      };
+    } else if (Array.isArray(result.codeChanges) && result.codeChanges.length) {
+      state.devAiProposal = {
+        type: "code",
+        codeChanges: result.codeChanges,
+        betaSha: result.betaSha || null,
+        summary: result.summary || "Developer AI source patch"
       };
     }
   } catch (error) {
@@ -2099,6 +2107,51 @@ async function sendDeveloperAiMessage(event) {
 }
 
 async function applyDeveloperAiDraft() {
+  if (!state.devAiProposal) return;
+
+  if (state.devAiProposal.type === "code") {
+    const button = document.querySelector("#dev-ai-apply");
+    if (button) {
+      button.disabled = true;
+      button.textContent = "Building preview…";
+    }
+
+    try {
+      const result = await apiRequest("/dev-ai-apply", {
+        method: "POST",
+        body: {
+          expectedBetaSha: state.devAiProposal.betaSha || "",
+          changes: state.devAiProposal.codeChanges || []
+        }
+      });
+
+      state.devAiProposal = null;
+      state.editorCodeSource = null;
+      state.editorCodeSourceKey = "";
+      state.editorStatus = null;
+      state.editorDraftKey = "";
+      state.devAiMessages = [
+        ...state.devAiMessages,
+        {
+          role: "assistant",
+          text: `Applied the reviewed source patch to beta-main as ${String(result.commitSha || "").slice(0, 7)}. Cloudflare is building the preview now. Production was not changed.`,
+          files: result.files || []
+        }
+      ].slice(-30);
+
+      await loadWebEditorStatus({ quiet: true });
+      renderDeveloperAi();
+      showToast("Developer AI patch committed to beta-main. Review the Cloudflare preview before publishing live.");
+    } catch (error) {
+      showToast(error?.message || "Unable to build the AI beta preview.", "error");
+      if (button) {
+        button.disabled = false;
+        button.textContent = "Build beta preview";
+      }
+    }
+    return;
+  }
+
   if (!state.devAiProposal?.draft) return;
 
   if (!state.editorStatus && staffCan("editor")) {
@@ -2194,13 +2247,37 @@ function renderDeveloperAi() {
       </section>
 
       ${state.devAiProposal ? `
-        <section class="dev-ai-proposal">
+        <section class="dev-ai-proposal ${state.devAiProposal.type === "code" ? "is-code" : ""}">
           <div>
-            <span>Proposed visual-editor change</span>
+            <span>${state.devAiProposal.type === "code" ? "Proposed beta source patch" : "Proposed visual-editor change"}</span>
             <strong>${escapeEditorAttribute(state.devAiProposal.summary)}</strong>
-            <small>Applies locally only. Review it visually before publishing beta.</small>
+            <small>${state.devAiProposal.type === "code"
+              ? "Review the exact replacements below. Build beta preview commits only to beta-main."
+              : "Applies locally only. Review it visually before publishing beta."}</small>
           </div>
-          <button id="dev-ai-apply" type="button">Apply to draft</button>
+          ${state.devAiProposal.type === "code" ? `
+            <div class="dev-ai-patch-list">
+              ${(state.devAiProposal.codeChanges || []).map((change) => `
+                <details>
+                  <summary>
+                    <code>${escapeEditorAttribute(change.path || "")}</code>
+                    <span>${escapeEditorAttribute(change.reason || "Source change")}</span>
+                  </summary>
+                  <div class="dev-ai-patch-grid">
+                    <section>
+                      <b>Before</b>
+                      <pre><code>${escapeEditorAttribute(change.find || "")}</code></pre>
+                    </section>
+                    <section>
+                      <b>After</b>
+                      <pre><code>${escapeEditorAttribute(change.replace || "")}</code></pre>
+                    </section>
+                  </div>
+                </details>
+              `).join("")}
+            </div>
+          ` : ""}
+          <button id="dev-ai-apply" type="button">${state.devAiProposal.type === "code" ? "Build beta preview" : "Apply to draft"}</button>
         </section>
       ` : ""}
 
