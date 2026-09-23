@@ -8742,3 +8742,180 @@ body.is-resizing-editor-dock iframe {
     padding: 0;
   }
 }
+
+
+/* Unified single-row website editor header */
+.web-editor-fullscreen {
+  grid-template-rows: 60px minmax(0, 1fr) !important;
+}
+
+.editor-fullscreen-topbar {
+  min-height: 60px !important;
+  flex-wrap: nowrap !important;
+  align-content: center !important;
+  gap: 10px !important;
+  padding: 8px 12px !important;
+  overflow: hidden;
+}
+
+.editor-fullscreen-topbar-left {
+  flex: 1 1 auto !important;
+  flex-wrap: nowrap !important;
+  gap: 7px !important;
+  overflow-x: auto !important;
+  overflow-y: visible !important;
+  scrollbar-width: none;
+}
+
+.editor-fullscreen-topbar-left::-webkit-scrollbar {
+  display: none;
+}
+
+.editor-fullscreen-topbar-right {
+  flex: 0 0 auto !important;
+  flex-wrap: nowrap !important;
+  gap: 6px !important;
+  margin-left: 0 !important;
+}
+
+.editor-fullscreen-title {
+  display: flex;
+  min-width: max-content;
+  align-items: center;
+  padding-right: 2px;
+  line-height: 1;
+}
+
+.editor-fullscreen-title strong {
+  margin: 0;
+  color: var(--wcg-navy);
+  font-family: "DM Sans", system-ui, sans-serif;
+  font-size: .72rem;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.editor-mode-switcher,
+.editor-view-toolbar,
+.editor-interaction-toolbar,
+.editor-tool-toolbar,
+.editor-notes-mode-slot,
+.editor-device-toolbar {
+  flex: 0 0 auto;
+}
+
+.editor-mode-switcher button,
+.editor-view-toolbar button,
+.editor-interaction-toolbar button,
+.editor-tool-toolbar button,
+.editor-notes-mode-button,
+.editor-device-toolbar button {
+  min-height: 30px;
+  white-space: nowrap;
+}
+
+.editor-notes-mode-slot {
+  display: inline-flex;
+  align-items: center;
+}
+
+.editor-notes-mode-button {
+  display: inline-flex;
+  min-height: 36px;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border: 1px solid rgba(48,70,96,.11);
+  border-radius: 10px;
+  color: #6f7974;
+  background: rgba(255,255,255,.9);
+  font: 800 10px/1 "DM Sans", system-ui, sans-serif;
+  cursor: pointer;
+  transition:
+    color 140ms ease,
+    background 140ms ease,
+    border-color 140ms ease,
+    transform 140ms ease;
+}
+
+.editor-notes-mode-button:hover {
+  color: #304660;
+  border-color: rgba(48,70,96,.22);
+  background: #fff;
+}
+
+.editor-notes-mode-button.is-active {
+  color: #fff;
+  border-color: #304660;
+  background: #304660;
+}
+
+.editor-notes-mode-button.has-notes:not(.is-active)::after {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #2f65a0;
+}
+
+.editor-fullscreen-topbar .editor-device-toolbar {
+  order: 0 !important;
+  width: auto !important;
+}
+
+.editor-fullscreen-topbar .editor-device-toolbar button {
+  flex: 0 0 auto !important;
+}
+
+.editor-fullscreen-topbar .editor-tool-toolbar {
+  overflow: hidden;
+}
+
+.editor-fullscreen-topbar .editor-tool-toolbar.is-expanded {
+  max-width: 90px;
+}
+
+.editor-fullscreen-topbar .editor-tool-toolbar.is-collapsed {
+  max-width: 0;
+  margin-left: -7px;
+}
+
+.editor-fullscreen-topbar .editor-collab-presence {
+  max-width: 170px;
+}
+
+.editor-fullscreen-topbar .editor-collab-solo {
+  display: none;
+}
+
+@media (max-width: 1220px) {
+  .editor-fullscreen-topbar-right #web-editor-open-page,
+  .editor-fullscreen-topbar-right #web-editor-refresh {
+    display: none;
+  }
+}
+
+@media (max-width: 1040px) {
+  .editor-fullscreen-topbar .editor-device-toolbar button {
+    width: 31px;
+    padding: 0;
+    overflow: hidden;
+    font-size: 0;
+  }
+
+  .editor-fullscreen-topbar .editor-device-toolbar button::first-letter {
+    font-size: .56rem;
+  }
+
+  .editor-fullscreen-topbar .editor-interaction-toolbar button span,
+  .editor-fullscreen-topbar .editor-tool-toolbar button span,
+  .editor-notes-mode-button span {
+    display: none;
+  }
+
+  .editor-notes-mode-button {
+    width: 32px;
+    justify-content: center;
+    padding-inline: 0;
+  }
+}
