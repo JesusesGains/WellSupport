@@ -186,9 +186,9 @@ async function refreshSession(env, refreshToken) {
 
 const STAFF_ROLE_PERMISSIONS = Object.freeze({
   support: ["support"],
-  editor: ["support", "editor", "dev_ai"],
-  publisher: ["support", "editor", "dev_ai", "publish"],
-  admin: ["support", "editor", "dev_ai", "publish", "admin"]
+  editor: ["support", "editor"],
+  publisher: ["support", "editor", "publish"],
+  admin: ["support", "editor", "publish", "admin"]
 });
 
 function normaliseStaffRole(value, fallback = "support") {
