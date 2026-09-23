@@ -1,7 +1,7 @@
 const PREVIEW_ORIGIN = "https://wellwebsite.pages.dev";
-const PRESENCE_POLL_MS = 550;
+const PRESENCE_POLL_MS = 120;
 const NOTES_POLL_MS = 650;
-const CURSOR_WRITE_MS = 240;
+const CURSOR_WRITE_MS = 80;
 const HEARTBEAT_MS = 4000;
 
 const clientId =
@@ -31,6 +31,7 @@ const collab = {
   lastCursor: { visible: false },
   cursorWriteTimer: null,
   presenceTimer: null,
+  presenceLoading: false,
   notesTimer: null,
   notesLoading: false,
   heartbeatTimer: null,
@@ -308,6 +309,110 @@ function noteCard(note, { showPage = false } = {}) {
 
   actions.append(resolve, remove);
   card.append(bodyButton, actions);
+
+  const thread = document.createElement("div");
+  thread.className = "editor-note-thread";
+
+  const replies = Array.isArray(note.replies) ? note.replies : [];
+  for (const reply of replies) {
+    const row = document.createElement("div");
+    row.className = "editor-note-reply";
+    row.style.setProperty("--reply-colour", reply.colour || "#2F65A0");
+
+    const avatar = document.createElement("span");
+    avatar.className = "editor-note-reply-avatar";
+    avatar.textContent =
+      String(reply.created_by_name || "Staff").trim().slice(0, 1).toUpperCase() || "?";
+
+    const content = document.createElement("div");
+    content.className = "editor-note-reply-content";
+
+    const replyMeta = document.createElement("div");
+    replyMeta.className = "editor-note-reply-meta";
+    const name = document.createElement("strong");
+    name.textContent = reply.created_by_name || "Staff";
+    const replyDate = reply.created_at ? new Date(reply.created_at) : null;
+    const time = document.createElement("span");
+    time.textContent =
+      replyDate && !Number.isNaN(replyDate.getTime())
+        ? new Intl.DateTimeFormat(undefined, {
+            day: "numeric",
+            month: "short",
+            hour: "numeric",
+            minute: "2-digit"
+          }).format(replyDate)
+        : "";
+    replyMeta.append(name, time);
+
+    const replyBody = document.createElement("p");
+    replyBody.textContent = reply.body || "";
+
+    content.append(replyMeta, replyBody);
+
+    const deleteReply = document.createElement("button");
+    deleteReply.type = "button";
+    deleteReply.className = "editor-note-reply-delete";
+    deleteReply.dataset.replyDelete = reply.id;
+    deleteReply.dataset.noteId = note.id;
+    deleteReply.setAttribute("aria-label", "Delete reply");
+    deleteReply.title = "Delete reply";
+    deleteReply.textContent = "×";
+
+    row.append(avatar, content, deleteReply);
+    thread.appendChild(row);
+  }
+
+  const form = document.createElement("form");
+  form.className = "editor-note-reply-form";
+  form.dataset.replyNote = note.id;
+
+  const input = document.createElement("textarea");
+  input.className = "editor-note-reply-input";
+  input.rows = 1;
+  input.maxLength = 2000;
+  input.placeholder = replies.length ? "Reply…" : "Add a reply…";
+  input.setAttribute("aria-label", "Reply to note");
+
+  const send = document.createElement("button");
+  send.type = "submit";
+  send.textContent = "Send";
+
+  form.append(input, send);
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    const body = input.value.trim();
+    if (!body) return;
+
+    input.disabled = true;
+    send.disabled = true;
+    try {
+      await collabRequest("", {
+        method: "POST",
+        body: {
+          action: "reply_add",
+          page: note.page_path || currentPage(),
+          noteId: note.id,
+          body
+        }
+      });
+      input.value = "";
+      collab.notesSignature = "";
+      await loadNotes();
+    } catch (error) {
+      input.setCustomValidity(error?.message || "Unable to send reply.");
+      input.reportValidity();
+      window.setTimeout(() => input.setCustomValidity(""), 1400);
+    } finally {
+      input.disabled = false;
+      send.disabled = false;
+      input.focus();
+    }
+  });
+
+  thread.appendChild(form);
+  card.appendChild(thread);
   return card;
 }
 
@@ -574,9 +679,7 @@ function renderNotesPanel() {
   list.className = "editor-note-list";
 
   const pageNotes = collab.notes;
-  const otherNotes = collab.allNotes.filter(
-    (note) => note.page_path !== currentPage()
-  );
+  const allNotes = collab.allNotes;
 
   if (pageNotes.length) {
     list.appendChild(
@@ -588,10 +691,9 @@ function renderNotesPanel() {
     list.appendChild(separator);
 
     list.appendChild(
-      notesSection("All notes", otherNotes, { showPage: true })
+      notesSection("All notes", allNotes, { showPage: true })
     );
   } else {
-    const allNotes = collab.allNotes;
     if (allNotes.length) {
       list.appendChild(
         notesSection("All notes", allNotes, { showPage: true })
@@ -645,9 +747,10 @@ function sendRemoteCursors() {
 }
 
 async function loadPresence() {
-  if (!currentFrame()) return;
+  if (!currentFrame() || collab.presenceLoading) return;
   collab.page = currentPage();
   collab.device = currentDevice();
+  collab.presenceLoading = true;
 
   try {
     const result = await collabRequest(
@@ -701,6 +804,8 @@ async function loadPresence() {
     }
   } catch (error) {
     if (error?.status === 503) collab.unavailable = true;
+  } finally {
+    collab.presenceLoading = false;
   }
 }
 
@@ -738,7 +843,15 @@ async function loadNotes() {
         note.anchor?.box?.pageX,
         note.anchor?.box?.pageY,
         note.anchor?.box?.width,
-        note.anchor?.box?.height
+        note.anchor?.box?.height,
+        ...(Array.isArray(note.replies)
+          ? note.replies.flatMap((reply) => [
+              reply.id,
+              reply.updated_at,
+              reply.body,
+              reply.created_by_name
+            ])
+          : [])
       ])
     );
 
@@ -748,7 +861,11 @@ async function loadNotes() {
       collab.allNotes = nextAllNotes;
       ensurePresenceControl();
       ensureNoteTool();
-      if (document.activeElement?.id !== "editor-note-draft") renderNotesPanel();
+      const active = document.activeElement;
+      const isTyping =
+        active?.id === "editor-note-draft" ||
+        active?.classList?.contains("editor-note-reply-input");
+      if (!isTyping) renderNotesPanel();
       sendNotesToPreview();
     }
   } catch (error) {
@@ -811,6 +928,7 @@ function stopCollaboration() {
     if (timer) window.clearInterval(timer);
   }
   collab.presenceTimer = null;
+  collab.presenceLoading = false;
   collab.notesTimer = null;
   collab.notesLoading = false;
   collab.heartbeatTimer = null;
@@ -948,6 +1066,37 @@ document.addEventListener("click", async (event) => {
       await loadNotes();
     } finally {
       resolve.disabled = false;
+    }
+    return;
+  }
+
+  const replyDelete = event.target?.closest?.("[data-reply-delete]");
+  if (replyDelete) {
+    const replyId = String(replyDelete.dataset.replyDelete || "");
+    const noteId = String(replyDelete.dataset.noteId || "");
+    if (!replyId) return;
+
+    replyDelete.disabled = true;
+    try {
+      await collabRequest("", {
+        method: "POST",
+        body: {
+          action: "reply_delete",
+          page: currentPage(),
+          id: replyId
+        }
+      });
+
+      for (const note of [...collab.notes, ...collab.allNotes]) {
+        if (note?.id !== noteId || !Array.isArray(note.replies)) continue;
+        note.replies = note.replies.filter((reply) => reply.id !== replyId);
+      }
+      collab.notesSignature = "";
+      renderNotesPanel();
+      await loadNotes();
+    } catch (error) {
+      replyDelete.disabled = false;
+      replyDelete.title = error?.message || "Unable to delete reply.";
     }
     return;
   }
