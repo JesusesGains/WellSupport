@@ -2141,6 +2141,111 @@ function editorCodeFileLabel() {
   return state.editorCodeSource?.html?.path || "HTML";
 }
 
+
+function editorDevtoolsContentMarkup() {
+  const data = state.editorDevtoolsData;
+  const tab = state.editorDevtoolsTab;
+
+  if (!data || data.panel !== tab) {
+    return `<div class="editor-devtools-empty">Select an element in the preview or refresh this panel.</div>`;
+  }
+
+  if (tab === "elements") {
+    const target = data.target;
+    if (!target) return `<div class="editor-devtools-empty">No DOM node selected.</div>`;
+
+    return `
+      <div class="editor-devtools-elements">
+        <div class="editor-devtools-node-head">
+          <code>${escapeEditorAttribute(target.selector || target.tag || "element")}</code>
+          <span>${escapeEditorAttribute(target.box ? `${target.box.width} × ${target.box.height}` : "")}</span>
+        </div>
+        <pre><code>${escapeEditorAttribute(target.outerHTML || "")}</code></pre>
+        ${Array.isArray(target.children) && target.children.length ? `
+          <div class="editor-devtools-children">
+            <strong>Children</strong>
+            ${target.children.map((child) => `
+              <code>${escapeEditorAttribute(child.selector || child.tag || "")}</code>
+            `).join("")}
+          </div>
+        ` : ""}
+      </div>
+    `;
+  }
+
+  if (tab === "styles") {
+    const computed = data.computed && typeof data.computed === "object"
+      ? Object.entries(data.computed)
+      : [];
+    const rules = Array.isArray(data.rules) ? data.rules : [];
+
+    return `
+      <div class="editor-devtools-styles">
+        <section>
+          <h4>Matched CSS rules</h4>
+          ${data.inlineStyle ? `
+            <article class="editor-devtools-rule">
+              <div><code>element.style</code></div>
+              <pre><code>${escapeEditorAttribute(data.inlineStyle)}</code></pre>
+            </article>
+          ` : ""}
+          ${rules.length
+            ? rules.map((rule) => `
+                <article class="editor-devtools-rule">
+                  <div>
+                    <code>${escapeEditorAttribute(rule.selector || "")}</code>
+                    <span>${escapeEditorAttribute(rule.source || "")}</span>
+                  </div>
+                  <pre><code>${escapeEditorAttribute(rule.cssText || "")}</code></pre>
+                </article>
+              `).join("")
+            : `<div class="editor-devtools-empty is-small">No readable matching stylesheet rules.</div>`}
+        </section>
+        <section>
+          <h4>Computed</h4>
+          <div class="editor-devtools-computed">
+            ${computed.map(([property, value]) => `
+              <div><code>${escapeEditorAttribute(property)}</code><span>${escapeEditorAttribute(value)}</span></div>
+            `).join("")}
+          </div>
+        </section>
+      </div>
+    `;
+  }
+
+  const entries = Array.isArray(data.entries) ? data.entries : [];
+  const perf = data.performance || {};
+  return `
+    <div class="editor-devtools-console">
+      <div class="editor-devtools-console-meta">
+        <span>DOM nodes: <b>${Number(perf.domNodes || 0)}</b></span>
+        <span>Resources: <b>${Number(perf.resources || 0)}</b></span>
+      </div>
+      ${entries.length
+        ? entries.map((entry) => `
+            <div class="editor-devtools-console-row is-${escapeEditorAttribute(entry.level || "log")}">
+              <span>${escapeEditorAttribute(entry.level || "log")}</span>
+              <code>${escapeEditorAttribute(entry.text || "")}</code>
+              <time>${escapeEditorAttribute(entry.time ? formatTime(entry.time) : "")}</time>
+            </div>
+          `).join("")
+        : `<div class="editor-devtools-empty">No console messages captured in this preview session.</div>`}
+    </div>
+  `;
+}
+
+function renderEditorDevtoolsDock() {
+  const content = document.querySelector("#editor-devtools-content");
+  if (content) content.innerHTML = editorDevtoolsContentMarkup();
+
+  document.querySelectorAll("[data-editor-devtools-tab]").forEach((button) => {
+    button.classList.toggle(
+      "is-active",
+      button.dataset.editorDevtoolsTab === state.editorDevtoolsTab
+    );
+  });
+}
+
 function renderWebEditor() {
   const panel = document.querySelector("#chat-panel");
   if (!panel) return;
