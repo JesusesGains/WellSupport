@@ -2792,11 +2792,20 @@ function renderWebEditor() {
         if (!rect.width || !rect.height) return;
 
         const stacked = window.matchMedia("(max-width: 760px)").matches;
-        const ratio = stacked
-          ? (Math.min(rect.bottom, Math.max(rect.top, moveEvent.clientY)) - rect.top) / rect.height
-          : (Math.min(rect.right, Math.max(rect.left, moveEvent.clientX)) - rect.left) / rect.width;
+        const span = stacked ? rect.height : rect.width;
+        const usable = Math.max(1, span - 9);
+        const rightMinimum = previewCanvas.classList.contains("has-code-dock")
+          ? (stacked ? 260 : 360)
+          : (stacked ? 240 : 320);
+        const leftMinimum = stacked ? 260 : 320;
+        const minRatio = Math.min(0.48, leftMinimum / usable);
+        const maxRatio = Math.max(0.52, 1 - rightMinimum / usable);
 
-        state.editorDockRatio = Math.min(0.72, Math.max(0.28, ratio));
+        const rawRatio = stacked
+          ? (Math.min(rect.bottom, Math.max(rect.top, moveEvent.clientY)) - rect.top) / span
+          : (Math.min(rect.right, Math.max(rect.left, moveEvent.clientX)) - rect.left) / span;
+
+        state.editorDockRatio = Math.min(maxRatio, Math.max(minRatio, rawRatio));
         sessionStorage.setItem("well-editor-dock-ratio", String(state.editorDockRatio));
         applyDockRatio();
         syncPreviewViewport();
