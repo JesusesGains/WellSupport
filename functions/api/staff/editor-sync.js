@@ -2,6 +2,7 @@ import {
   assertSameOrigin,
   requireStaff,
   requireStaffPermission,
+  recordEditorAudit,
   sessionResponse
 } from "./_utils.js";
 import {
@@ -31,6 +32,9 @@ export async function onRequestPost({ request, env }) {
         MAIN_BRANCH,
         "Sync production main into beta-main"
       );
+      await recordEditorAudit(session, "editor_sync_main_to_beta", {
+        behind_by: comparison.behindBy
+      });
     }
 
     return sessionResponse({
