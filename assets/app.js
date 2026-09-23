@@ -3118,6 +3118,13 @@ function renderWebEditor() {
     );
   };
 
+  const requestDevtools = (panel = state.editorDevtoolsTab) => {
+    frame?.contentWindow?.postMessage(
+      { type: "WCG_EDITOR_DEVTOOLS_REQUEST", panel },
+      frameOrigin()
+    );
+  };
+
   const renderSelectedItem = () => {
     if (!selectedItem) return;
 
@@ -3338,7 +3345,19 @@ function renderWebEditor() {
           { type: "WCG_EDITOR_TOOL", tool: state.editorTool },
           frameOrigin()
         );
+        if (state.editorPreviewMode === "devtools") {
+          requestDevtools();
+        }
       }, 30);
+      return;
+    }
+
+    if (event.data.type === "WCG_EDITOR_DEVTOOLS_DATA") {
+      state.editorDevtoolsData = {
+        ...event.data,
+        type: undefined
+      };
+      renderEditorDevtoolsDock();
       return;
     }
 
@@ -3450,6 +3469,7 @@ function renderWebEditor() {
         tag: String(event.data.tag || "")
       };
       renderSelectedItem();
+      if (state.editorPreviewMode === "devtools") requestDevtools();
       return;
     }
 
@@ -3464,6 +3484,7 @@ function renderWebEditor() {
             : {}
       };
       renderSelectedItem();
+      if (state.editorPreviewMode === "devtools") requestDevtools();
       return;
     }
 
@@ -3833,7 +3854,10 @@ function renderWebEditor() {
 
   document.querySelectorAll("[data-editor-preview-mode]").forEach((button) => {
     button.addEventListener("click", () => {
-      const mode = button.dataset.editorPreviewMode === "code" ? "code" : "visual";
+      const requested = button.dataset.editorPreviewMode;
+      const mode = ["visual", "code", "devtools"].includes(requested)
+        ? requested
+        : "visual";
       if (mode === state.editorPreviewMode) return;
       state.editorPreviewMode = mode;
       renderWebEditor();
@@ -3848,6 +3872,29 @@ function renderWebEditor() {
       state.editorCodeTab = button.dataset.editorCodeTab === "css" ? "css" : "html";
       renderWebEditor();
     });
+  });
+
+  document.querySelectorAll("[data-editor-devtools-tab]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const tab = button.dataset.editorDevtoolsTab;
+      state.editorDevtoolsTab = ["elements", "styles", "console"].includes(tab)
+        ? tab
+        : "elements";
+      state.editorDevtoolsData = null;
+      renderEditorDevtoolsDock();
+      requestDevtools();
+    });
+  });
+
+  document.querySelector("#editor-devtools-refresh")?.addEventListener("click", () => {
+    requestDevtools();
+  });
+
+  document.querySelector("#editor-devtools-clear")?.addEventListener("click", () => {
+    frame?.contentWindow?.postMessage(
+      { type: "WCG_EDITOR_DEVTOOLS_CLEAR_CONSOLE" },
+      frameOrigin()
+    );
   });
 
   document.querySelectorAll("[data-editor-device]").forEach((button) => {
