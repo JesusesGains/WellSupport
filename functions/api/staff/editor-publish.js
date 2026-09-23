@@ -193,6 +193,37 @@ function cleanOrderOverrides(value) {
   return output;
 }
 
+function cleanElementOverrides(value) {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .slice(0, 40)
+    .filter((item) => item && typeof item === "object" && item.type === "text")
+    .map((item, index) => {
+      const colour = cleanText(item.color, 16);
+      const fontFamily = cleanText(item.fontFamily, 80);
+      const textAlign = cleanText(item.textAlign, 12);
+      return {
+        id: cleanText(item.id, 80) || `text-${index + 1}`,
+        type: "text",
+        text: cleanText(item.text, 4000) || "Text",
+        x: Math.max(0, Math.min(10000, Number(item.x || 0))),
+        y: Math.max(0, Math.min(50000, Number(item.y || 0))),
+        width: Math.max(80, Math.min(3000, Number(item.width || 240))),
+        minHeight: Math.max(34, Math.min(2000, Number(item.minHeight || 60))),
+        fontFamily: ["DM Sans", "DM Serif Display", "System Sans"].includes(fontFamily)
+          ? fontFamily
+          : "DM Sans",
+        fontSize: Math.max(8, Math.min(120, Number(item.fontSize || 24))),
+        fontWeight: Math.max(300, Math.min(900, Number(item.fontWeight || 500))),
+        lineHeight: Math.max(.8, Math.min(2.5, Number(item.lineHeight || 1.2))),
+        letterSpacing: Math.max(-4, Math.min(20, Number(item.letterSpacing || 0))),
+        color: /^#[0-9a-f]{6}$/i.test(colour) ? colour.toUpperCase() : "#304660",
+        textAlign: ["left", "center", "right"].includes(textAlign) ? textAlign : "left"
+      };
+    });
+}
+
 function normalisePagePatch(raw) {
   const input = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
   const heading = cleanText(input.heading, 300);
@@ -203,6 +234,7 @@ function normalisePagePatch(raw) {
   const attributes = cleanAttributeOverrides(input.attributes);
   const styles = cleanStyleOverrides(input.styles);
   const order = cleanOrderOverrides(input.order);
+  const elements = cleanElementOverrides(input.elements);
 
   if (accent && !/^#[0-9a-f]{6}$/i.test(accent)) {
     const error = new Error("Invalid accent colour.");
@@ -216,7 +248,7 @@ function normalisePagePatch(raw) {
   }
 
   return {
-    heading, copy, accent, font, text, attributes, styles, order,
+    heading, copy, accent, font, text, attributes, styles, order, elements,
     supplied: {
       heading: Object.prototype.hasOwnProperty.call(input, "heading"),
       copy: Object.prototype.hasOwnProperty.call(input, "copy"),
@@ -225,7 +257,8 @@ function normalisePagePatch(raw) {
       text: Object.prototype.hasOwnProperty.call(input, "text"),
       attributes: Object.prototype.hasOwnProperty.call(input, "attributes"),
       styles: Object.prototype.hasOwnProperty.call(input, "styles"),
-      order: Object.prototype.hasOwnProperty.call(input, "order")
+      order: Object.prototype.hasOwnProperty.call(input, "order"),
+      elements: Object.prototype.hasOwnProperty.call(input, "elements")
     }
   };
 }
@@ -257,6 +290,10 @@ function applyPagePatch(existing, patch) {
   if (patch.supplied.order) {
     if (Object.keys(patch.order).length) config.order = patch.order;
     else delete config.order;
+  }
+  if (patch.supplied.elements) {
+    if (patch.elements.length) config.elements = patch.elements;
+    else delete config.elements;
   }
   return config;
 }

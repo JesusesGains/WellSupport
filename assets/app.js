@@ -65,6 +65,9 @@ const state = {
   editorAttributeDrafts: {},
   editorStyleDrafts: {},
   editorOrderDrafts: {},
+  editorElementDrafts: [],
+  editorTool: "select",
+  editorStatusRenderKey: "",
   editorAccentDraft: "",
   editorFontDraft: "",
   editorHeadingDraft: "",
@@ -965,6 +968,7 @@ function setDashboardView(view, { historyMode = "push" } = {}) {
 async function loadWebEditorStatus({ quiet = false } = {}) {
   if (state.editorLoading) return;
   state.editorLoading = true;
+  const previousRenderKey = state.editorStatusRenderKey;
 
   try {
     const result = await apiRequest("/editor-status");
@@ -977,7 +981,22 @@ async function loadWebEditorStatus({ quiet = false } = {}) {
     if (!quiet) showToast(state.editorStatus.error, "error");
   } finally {
     state.editorLoading = false;
-    if (state.currentView === "editor") renderWebEditor();
+    const comparison = state.editorStatus?.comparison || {};
+    state.editorStatusRenderKey = [
+      state.editorStatus?.connected === true ? "1" : "0",
+      state.editorStatus?.main?.sha || "",
+      state.editorStatus?.beta?.sha || "",
+      Number(comparison.aheadBy || 0),
+      Number(comparison.behindBy || 0)
+    ].join(":");
+
+    if (
+      state.currentView === "editor" &&
+      (!document.querySelector("#web-editor-frame") ||
+        previousRenderKey !== state.editorStatusRenderKey)
+    ) {
+      renderWebEditor();
+    }
   }
 }
 
@@ -1029,6 +1048,15 @@ function cloneEditorOrderDrafts(value) {
 }
 
 
+function cloneEditorElementDrafts(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item) => item && typeof item === "object" && item.type === "text")
+    .slice(0, 40)
+    .map((item) => ({ ...item }));
+}
+
+
 function editorDraftFromConfig(config = {}) {
   return {
     heading: String(config.heading || ""),
@@ -1041,7 +1069,8 @@ function editorDraftFromConfig(config = {}) {
         : {},
     attributes: cloneEditorAttributeDrafts(config.attributes),
     styles: cloneEditorStyleDrafts(config.styles),
-    order: cloneEditorOrderDrafts(config.order)
+    order: cloneEditorOrderDrafts(config.order),
+    elements: cloneEditorElementDrafts(config.elements)
   };
 }
 
@@ -1054,7 +1083,8 @@ function currentEditorDraftSnapshot() {
     text: { ...state.editorTextDrafts },
     attributes: cloneEditorAttributeDrafts(state.editorAttributeDrafts),
     styles: cloneEditorStyleDrafts(state.editorStyleDrafts),
-    order: cloneEditorOrderDrafts(state.editorOrderDrafts)
+    order: cloneEditorOrderDrafts(state.editorOrderDrafts),
+    elements: cloneEditorElementDrafts(state.editorElementDrafts)
   };
 }
 
@@ -1068,6 +1098,7 @@ function applyEditorDraftSnapshot(snapshot = {}) {
   state.editorAttributeDrafts = draft.attributes;
   state.editorStyleDrafts = draft.styles;
   state.editorOrderDrafts = draft.order;
+  state.editorElementDrafts = draft.elements;
 }
 
 function storeCurrentEditorDraft() {
@@ -1556,7 +1587,6 @@ async function loadEditorLayout({ quiet = false } = {}) {
     if (!quiet) showToast(error?.message || "Unable to load website layout source.", "error");
   } finally {
     state.editorLayoutLoading = false;
-    if (state.currentView === "editor") renderWebEditor();
   }
 }
 
@@ -1575,7 +1605,7 @@ async function loadEditorAssets({ quiet = false } = {}) {
     if (!quiet) showToast(error?.message || "Unable to load website assets.", "error");
   } finally {
     state.editorAssetsLoading = false;
-    if (state.currentView === "editor") renderWebEditor();
+    if (state.currentView === "editor") postEditorAssetsToPreview();
   }
 }
 
@@ -1622,6 +1652,24 @@ function editorImageAssetOptions() {
     seen.add(asset.path);
     return true;
   });
+}
+
+function postEditorAssetsToPreview() {
+  const frame = document.querySelector("#web-editor-frame");
+  frame?.contentWindow?.postMessage(
+    {
+      type: "WCG_EDITOR_ASSETS",
+      assetOptions: editorImageAssetOptions(),
+      assetPreviewMap: editorAssetPreviewMap()
+    },
+    "https://wellwebsite.pages.dev"
+  );
+
+  const count = document.querySelector("#editor-assets-toggle small");
+  if (count) {
+    count.textContent =
+      `${state.editorAssetDrafts.length ? `${state.editorAssetDrafts.length} staged · ` : ""}${state.editorAssets.length} existing`;
+  }
 }
 
 function editorAssetKind(path = "") {
@@ -1703,7 +1751,7 @@ async function stageEditorAssetFiles(fileList) {
       showToast(
         `${staged.length} asset${staged.length === 1 ? "" : "s"} staged locally. Publish beta preview to upload.`
       );
-      renderWebEditor();
+      postEditorAssetsToPreview();
     }
   } catch (error) {
     showToast(error?.message || "Unable to stage that asset.", "error");
@@ -1740,7 +1788,6 @@ async function loadEditorNavigation({ quiet = false } = {}) {
     }
   } finally {
     state.editorNavigationLoading = false;
-    if (state.currentView === "editor") renderWebEditor();
   }
 }
 
@@ -2337,8 +2384,13 @@ function renderWebEditor() {
               <button class="${state.editorDevice === "mobile" ? "is-active" : ""}" type="button" data-editor-device="mobile">Mobile</button>
             </div>
 
+            <div class="editor-tool-toolbar" role="group" aria-label="Editor tools">
+              <button class="${state.editorTool === "select" ? "is-active" : ""}" type="button" data-editor-tool="select" title="Select and edit">↖ <span>Select</span></button>
+              <button class="${state.editorTool === "text-box" ? "is-active" : ""}" type="button" data-editor-tool="text-box" title="Draw a text box">T <span>Text box</span></button>
+            </div>
+
             <div class="editor-live-help">
-              ${editable ? "Click an item to edit it directly on the page · drag blue-handled sections to move them" : "Live website preview · view only"}
+              ${editable ? "Click an item to edit · use the ⋮⋮ handle only to move sections" : "Live website preview · view only"}
             </div>
           </div>
 
@@ -2509,6 +2561,7 @@ function renderWebEditor() {
     attributes: cloneEditorAttributeDrafts(state.editorAttributeDrafts),
     styles: cloneEditorStyleDrafts(state.editorStyleDrafts),
     order: cloneEditorOrderDrafts(state.editorOrderDrafts),
+    elements: cloneEditorElementDrafts(state.editorElementDrafts),
     linkDestinations: EDITOR_LINK_DESTINATIONS.map(([href, label]) => ({ href, label })),
     headerOrder: [...state.editorNavigationHeaderOrder],
     shortCourseGroupOrder: [...state.editorNavigationGroupOrder],
@@ -2774,6 +2827,10 @@ function renderWebEditor() {
       window.setTimeout(() => {
         postDraft();
         requestColours();
+        frame?.contentWindow?.postMessage(
+          { type: "WCG_EDITOR_TOOL", tool: state.editorTool },
+          frameOrigin()
+        );
       }, 30);
       return;
     }
@@ -2857,6 +2914,24 @@ function renderWebEditor() {
       const publish = document.querySelector("#web-editor-preview-submit");
       if (publish) publish.disabled = false;
       postDraft();
+      return;
+    }
+
+    if (event.data.type === "WCG_EDITOR_ELEMENTS_CHANGE" && editable) {
+      recordEditorHistory();
+      state.editorElementDrafts = cloneEditorElementDrafts(event.data.elements);
+      storeCurrentEditorDraft();
+      state.editorDirty = editorPendingChangeCount() > 0;
+      const publish = document.querySelector("#web-editor-preview-submit");
+      if (publish) publish.disabled = false;
+      return;
+    }
+
+    if (event.data.type === "WCG_EDITOR_TOOL_CHANGED") {
+      state.editorTool = event.data.tool === "text-box" ? "text-box" : "select";
+      document.querySelectorAll("[data-editor-tool]").forEach((button) => {
+        button.classList.toggle("is-active", button.dataset.editorTool === state.editorTool);
+      });
       return;
     }
 
@@ -3241,6 +3316,20 @@ function renderWebEditor() {
     });
   });
 
+  document.querySelectorAll("[data-editor-tool]").forEach((button) => {
+    button.addEventListener("click", () => {
+      if (!editable) return;
+      state.editorTool = button.dataset.editorTool === "text-box" ? "text-box" : "select";
+      document.querySelectorAll("[data-editor-tool]").forEach((item) => {
+        item.classList.toggle("is-active", item.dataset.editorTool === state.editorTool);
+      });
+      frame?.contentWindow?.postMessage(
+        { type: "WCG_EDITOR_TOOL", tool: state.editorTool },
+        frameOrigin()
+      );
+    });
+  });
+
   document.querySelector("#web-editor-refresh")?.addEventListener("click", () => {
     if (frame) frame.src = iframeUrl(true);
   });
@@ -3346,6 +3435,7 @@ function renderWebEditor() {
       Object.keys(state.editorAttributeDrafts || {}).length ||
       Object.keys(state.editorStyleDrafts || {}).length ||
       Object.keys(state.editorOrderDrafts || {}).length ||
+      state.editorElementDrafts.length ||
       state.editorHeadingDraft ||
       state.editorCopyDraft ||
       state.editorAccentDraft ||

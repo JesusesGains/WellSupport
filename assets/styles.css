@@ -6977,3 +6977,43 @@ body.has-support-confirm-modal {
     top: 7px;
   }
 }
+
+
+/* Visual editor tool palette */
+.editor-tool-toolbar{
+  display:flex;
+  align-items:center;
+  gap:4px;
+  padding:3px;
+  border:1px solid rgba(48,70,96,.10);
+  border-radius:10px;
+  background:#f7f9f8;
+}
+
+.editor-tool-toolbar button{
+  display:inline-flex;
+  min-height:30px;
+  align-items:center;
+  gap:5px;
+  padding:0 9px;
+  border:0;
+  border-radius:7px;
+  color:#66716c;
+  background:transparent;
+  font:700 10px/1 system-ui,sans-serif;
+  cursor:pointer;
+}
+
+.editor-tool-toolbar button.is-active{
+  color:#fff;
+  background:#304660;
+}
+
+.editor-tool-toolbar button span{
+  white-space:nowrap;
+}
+
+@media(max-width:980px){
+  .editor-tool-toolbar button span{display:none;}
+  .editor-tool-toolbar button{width:30px;justify-content:center;padding:0;}
+}
