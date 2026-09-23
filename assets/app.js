@@ -2276,9 +2276,6 @@ function renderWebEditor() {
             <button id="web-editor-promote" class="editor-topbar-button is-promote" type="button">Publish preview live</button>
           ` : ""}
 
-          ${staffCan("dev_ai") ? `
-            <button id="web-editor-ai" class="editor-topbar-button" type="button">${devAiIcon()} Developer AI</button>
-          ` : ""}
           <button id="web-editor-refresh" class="editor-topbar-button" type="button">Refresh preview</button>
           <a id="web-editor-open-page" class="editor-topbar-button" target="_blank" rel="noopener noreferrer">Open page ↗</a>
 
@@ -3448,10 +3445,6 @@ function renderWebEditor() {
       state.editorMessageHandler = null;
     }
     setDashboardView("dashboard");
-  });
-
-  document.querySelector("#web-editor-ai")?.addEventListener("click", () => {
-    setDashboardView("devai");
   });
 
   document.querySelectorAll("[data-editor-environment]").forEach((button) => {
@@ -4886,12 +4879,6 @@ function renderDashboard() {
           <button class="nav-button" type="button" data-dashboard-view="editor">
             ${editorIcon()}
             <span>Web Editor</span>
-          </button>
-          ` : ""}
-          ${staffCan("dev_ai") ? `
-          <button class="nav-button" type="button" data-dashboard-view="devai">
-            ${devAiIcon()}
-            <span>Developer AI</span>
           </button>
           ` : ""}
         </nav>
