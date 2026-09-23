@@ -2793,12 +2793,24 @@ function renderWebEditor() {
             <div class="editor-view-toolbar" role="group" aria-label="Preview type">
               <button class="${state.editorPreviewMode === "visual" ? "is-active" : ""}" type="button" data-editor-preview-mode="visual">Visual</button>
               <button class="${state.editorPreviewMode === "code" ? "is-active" : ""}" type="button" data-editor-preview-mode="code">&lt;/&gt; Code</button>
+              <button class="${state.editorPreviewMode === "devtools" ? "is-active" : ""}" type="button" data-editor-preview-mode="devtools">DevTools</button>
             </div>
 
             ${state.editorPreviewMode === "code" ? `
               <div class="editor-code-tabs" role="group" aria-label="Source type">
                 <button class="${state.editorCodeTab === "html" ? "is-active" : ""}" type="button" data-editor-code-tab="html">HTML</button>
                 <button class="${state.editorCodeTab === "css" ? "is-active" : ""}" type="button" data-editor-code-tab="css">CSS</button>
+              </div>
+            ` : state.editorPreviewMode === "devtools" ? `
+              <div class="editor-code-tabs" role="group" aria-label="DevTools panel">
+                <button class="${state.editorDevtoolsTab === "elements" ? "is-active" : ""}" type="button" data-editor-devtools-tab="elements">Elements</button>
+                <button class="${state.editorDevtoolsTab === "styles" ? "is-active" : ""}" type="button" data-editor-devtools-tab="styles">Styles</button>
+                <button class="${state.editorDevtoolsTab === "console" ? "is-active" : ""}" type="button" data-editor-devtools-tab="console">Console</button>
+              </div>
+              <div class="editor-device-toolbar" role="group" aria-label="Preview device size">
+                <button class="${state.editorDevice === "desktop" ? "is-active" : ""}" type="button" data-editor-device="desktop">Desktop</button>
+                <button class="${state.editorDevice === "tablet" ? "is-active" : ""}" type="button" data-editor-device="tablet">Tablet</button>
+                <button class="${state.editorDevice === "mobile" ? "is-active" : ""}" type="button" data-editor-device="mobile">Mobile</button>
               </div>
             ` : `
               <div class="editor-device-toolbar" role="group" aria-label="Preview device size">
@@ -2816,9 +2828,11 @@ function renderWebEditor() {
             <div class="editor-live-help">
               ${state.editorPreviewMode === "code"
                 ? "Read-only source from the selected GitHub branch"
-                : editable
-                  ? "Click an item to edit · use the ⋮⋮ handle only to move sections"
-                  : "Live website preview · view only"}
+                : state.editorPreviewMode === "devtools"
+                  ? "Inspect the rendered DOM, matched CSS and captured console output"
+                  : editable
+                    ? "Click an item to edit · use the ⋮⋮ handle only to move sections"
+                    : "Live website preview · view only"}
             </div>
           </div>
 
