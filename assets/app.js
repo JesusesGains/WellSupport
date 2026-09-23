@@ -2770,7 +2770,7 @@ function renderWebEditor() {
                 <span>Text, links, images and sections open controls beside the item you clicked. Drag supported sections and cards directly on the page. The sidebar now stays focused on page status, assets and publishing.</span>
               </div>
               <div class="editor-visual-info-status">
-                <span><i></i> Draft changes stay local</span>
+                <span><i></i> ${state.editorSharedDraftAvailable === false ? "Drafts stay local until shared storage is enabled" : state.editorSharedDraftConflict ? "Shared draft changed elsewhere · reload required" : "Page drafts sync across staff"}</span>
                 <span><i></i> Publish beta preview creates the build</span>
               </div>
             </section>
