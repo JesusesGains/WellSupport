@@ -2643,6 +2643,20 @@ function renderWebEditor() {
     window.setTimeout(() => loadEditorAssets({ quiet: true }), 0);
   }
 
+  if (
+    connected &&
+    state.editorPreviewMode === "code" &&
+    !state.editorCodeLoading
+  ) {
+    const codeTarget = state.editorMode === "production" ? "production" : "beta";
+    const expectedCodeKey = `${codeTarget}:${state.editorPage}:${codeTarget === "beta"
+      ? state.editorStatus?.beta?.sha || ""
+      : state.editorStatus?.main?.sha || ""}`;
+    if (state.editorCodeSourceKey !== expectedCodeKey) {
+      window.setTimeout(() => loadEditorCodeSource({ quiet: true }), 0);
+    }
+  }
+
   // Keep the in-editor canvas on the public website origin. Cloudflare preview
   // deployments can be protected by Access / anti-framing headers, which makes
   // beta-main unreliable inside an iframe. Draft changes are applied locally
@@ -3245,6 +3259,8 @@ function renderWebEditor() {
       state.editorLayoutDirty = false;
       state.editorAssetsLoaded = false;
       state.editorAssets = [];
+      state.editorCodeSource = null;
+      state.editorCodeSourceKey = "";
       if (next !== "beta") state.editorAssetDrafts = [];
       renderWebEditor();
     });
@@ -3258,6 +3274,8 @@ function renderWebEditor() {
     state.editorColours = [];
     state.editorSelectedText = null;
     state.editorSelectedObject = null;
+    state.editorCodeSource = null;
+    state.editorCodeSourceKey = "";
     renderWebEditor();
   });
 
@@ -3442,6 +3460,25 @@ function renderWebEditor() {
     showToast("Asset applied to the live draft.");
   });
 
+  document.querySelectorAll("[data-editor-preview-mode]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const mode = button.dataset.editorPreviewMode === "code" ? "code" : "visual";
+      if (mode === state.editorPreviewMode) return;
+      state.editorPreviewMode = mode;
+      renderWebEditor();
+      if (mode === "code") {
+        window.setTimeout(() => loadEditorCodeSource({ quiet: true }), 0);
+      }
+    });
+  });
+
+  document.querySelectorAll("[data-editor-code-tab]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.editorCodeTab = button.dataset.editorCodeTab === "css" ? "css" : "html";
+      renderWebEditor();
+    });
+  });
+
   document.querySelectorAll("[data-editor-device]").forEach((button) => {
     button.addEventListener("click", () => {
       state.editorDevice = button.dataset.editorDevice || "desktop";
@@ -3471,6 +3508,12 @@ function renderWebEditor() {
   });
 
   document.querySelector("#web-editor-refresh")?.addEventListener("click", () => {
+    if (state.editorPreviewMode === "code") {
+      state.editorCodeSource = null;
+      state.editorCodeSourceKey = "";
+      loadEditorCodeSource();
+      return;
+    }
     if (frame) frame.src = iframeUrl(true);
   });
 
