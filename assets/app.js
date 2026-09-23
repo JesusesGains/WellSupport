@@ -2869,6 +2869,23 @@ function renderWebEditor() {
                   referrerpolicy="strict-origin-when-cross-origin"
                 ></iframe>
               </div>
+              ${state.editorPreviewMode === "devtools" ? `
+                <section class="editor-devtools-dock">
+                  <header>
+                    <div>
+                      <strong>Chrome DevTools</strong>
+                      <span>Rendered preview inspector</span>
+                    </div>
+                    <div>
+                      <button id="editor-devtools-refresh" type="button">Refresh</button>
+                      ${state.editorDevtoolsTab === "console" ? `<button id="editor-devtools-clear" type="button">Clear console</button>` : ""}
+                    </div>
+                  </header>
+                  <div id="editor-devtools-content" class="editor-devtools-content">
+                    ${editorDevtoolsContentMarkup()}
+                  </div>
+                </section>
+              ` : ""}
             `}
           </div>
 
