@@ -2527,14 +2527,6 @@ function renderWebEditor() {
             </div>
           ` : ""}
 
-          ${state.editorPreviewMode === "devtools" ? `
-            <div class="editor-code-tabs" role="group" aria-label="DevTools panel">
-              <button class="${state.editorDevtoolsTab === "elements" ? "is-active" : ""}" type="button" data-editor-devtools-tab="elements">Elements</button>
-              <button class="${state.editorDevtoolsTab === "styles" ? "is-active" : ""}" type="button" data-editor-devtools-tab="styles">Styles</button>
-              <button class="${state.editorDevtoolsTab === "console" ? "is-active" : ""}" type="button" data-editor-devtools-tab="console">Console</button>
-            </div>
-          ` : ""}
-
           <span class="editor-connection-pill ${connected ? "is-connected" : "is-disconnected"}">
             <i></i>
             ${connected ? editorBranchSummary() : "Publishing unavailable"}
@@ -2698,14 +2690,16 @@ function renderWebEditor() {
                 title="Drag to resize"
               ></button>
               <section class="editor-devtools-dock">
-                <header>
-                  <div>
-                    <strong>DevTools</strong>
-                    <span>Rendered page inspector</span>
+                <header class="editor-devtools-toolbar">
+                  <div class="editor-devtools-tabs" role="tablist" aria-label="DevTools panels">
+                    <button class="${state.editorDevtoolsTab === "elements" ? "is-active" : ""}" type="button" data-editor-devtools-tab="elements">Elements</button>
+                    <button class="${state.editorDevtoolsTab === "styles" ? "is-active" : ""}" type="button" data-editor-devtools-tab="styles">Styles</button>
+                    <button class="${state.editorDevtoolsTab === "console" ? "is-active" : ""}" type="button" data-editor-devtools-tab="console">Console</button>
                   </div>
-                  <div>
-                    <button id="editor-devtools-refresh" type="button">Refresh</button>
-                    ${state.editorDevtoolsTab === "console" ? `<button id="editor-devtools-clear" type="button">Clear console</button>` : ""}
+                  <div class="editor-devtools-actions">
+                    <span class="editor-devtools-label">DevTools</span>
+                    <button id="editor-devtools-refresh" type="button" title="Refresh inspector">↻</button>
+                    ${state.editorDevtoolsTab === "console" ? `<button id="editor-devtools-clear" type="button" title="Clear console">⌫</button>` : ""}
                   </div>
                 </header>
                 <div id="editor-devtools-content" class="editor-devtools-content">
@@ -2795,9 +2789,13 @@ function renderWebEditor() {
 
       const onMove = (moveEvent) => {
         const rect = previewCanvas.getBoundingClientRect();
-        if (!rect.width) return;
-        const x = Math.min(rect.right, Math.max(rect.left, moveEvent.clientX));
-        const ratio = (x - rect.left) / rect.width;
+        if (!rect.width || !rect.height) return;
+
+        const stacked = window.matchMedia("(max-width: 760px)").matches;
+        const ratio = stacked
+          ? (Math.min(rect.bottom, Math.max(rect.top, moveEvent.clientY)) - rect.top) / rect.height
+          : (Math.min(rect.right, Math.max(rect.left, moveEvent.clientX)) - rect.left) / rect.width;
+
         state.editorDockRatio = Math.min(0.72, Math.max(0.28, ratio));
         sessionStorage.setItem("well-editor-dock-ratio", String(state.editorDockRatio));
         applyDockRatio();
