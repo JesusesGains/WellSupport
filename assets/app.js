@@ -3031,7 +3031,7 @@ function renderWebEditor() {
     state.editorCodePreviewTimer = window.setTimeout(() => {
       state.editorCodePreviewTimer = null;
       postCodeSourcePreview();
-    }, 180);
+    }, 480);
   };
 
   codeInput?.addEventListener("input", () => {
@@ -3048,7 +3048,7 @@ function renderWebEditor() {
     const meta = document.querySelector(".editor-code-meta small");
     if (meta && state.editorMode === "beta") {
       meta.textContent = state.editorCodeDirty
-        ? "Unsaved source changes · save to build a new beta preview"
+        ? "Unsaved source changes · live preview updates after you pause typing"
         : "beta-main source · editable";
     }
   });
