@@ -2913,8 +2913,16 @@ function renderWebEditor() {
     if (!browser || !previewCanvas) return;
 
     const viewport = previewViewportForDevice();
-    const availableWidth = Math.max(280, previewCanvas.clientWidth - 24);
-    const availableHeight = Math.max(420, previewCanvas.clientHeight - 24);
+    const docked =
+      previewCanvas.classList.contains("has-code-dock") ||
+      previewCanvas.classList.contains("has-devtools-dock");
+    const renderedBrowserRect = browser.getBoundingClientRect();
+    const availableWidth = docked
+      ? Math.max(280, renderedBrowserRect.width)
+      : Math.max(280, previewCanvas.clientWidth - 24);
+    const availableHeight = docked
+      ? Math.max(420, renderedBrowserRect.height)
+      : Math.max(420, previewCanvas.clientHeight - 24);
     const scale = Math.min(1, availableWidth / viewport.width);
     const sourceHeight = Math.max(
       viewport.minHeight,
