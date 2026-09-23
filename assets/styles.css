@@ -5177,7 +5177,8 @@ body.has-support-confirm-modal {
   }
 
   .editor-live-toolbar {
-    grid-template-columns: minmax(0, 1fr) auto;
+    display: flex;
+    flex-wrap: wrap;
   }
 
   .editor-live-toolbar .editor-device-toolbar {
@@ -8678,12 +8679,18 @@ body.is-resizing-editor-dock iframe {
 }
 
 .editor-live-toolbar {
-  grid-template-columns: minmax(160px, 1fr) auto auto auto minmax(170px, 1fr);
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
   gap: 8px;
 }
 
+.editor-live-location {
+  margin-right: auto;
+}
+
 .editor-live-help {
-  justify-self: end;
+  margin-left: auto;
 }
 
 .editor-note-actions [data-note-delete] {
@@ -8705,7 +8712,8 @@ body.is-resizing-editor-dock iframe {
 
 @media (max-width: 1180px) {
   .editor-live-toolbar {
-    grid-template-columns: minmax(140px, 1fr) auto auto auto;
+    display: flex;
+    gap: 7px;
   }
 
   .editor-live-help {
