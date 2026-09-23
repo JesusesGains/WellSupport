@@ -18,7 +18,13 @@ const collab = {
   notesOpen: false,
   notes: [],
   presence: [],
+  self: null,
+  selfColour: "#2F65A0",
   noteAnchor: null,
+  noteDraftBody: "",
+  noteDraftId: "",
+  noteSaveTimer: null,
+  noteSaveBusy: false,
   selectedNoteId: "",
   lastCursor: { visible: false },
   cursorWriteTimer: null,
@@ -122,9 +128,12 @@ function ensureNoteTool() {
     button.innerHTML = "✎ <span>Note</span>";
     button.addEventListener("click", () => {
       collab.noteMode = !collab.noteMode;
+      if (collab.noteMode) collab.notesOpen = true;
       button.classList.toggle("is-active", collab.noteMode);
+      renderNotesPanel();
       postToPreview("WCG_EDITOR_TOOL", {
-        tool: collab.noteMode ? "note" : "select"
+        tool: collab.noteMode ? "note" : "select",
+        colour: collab.selfColour
       });
     });
     toolbar.appendChild(button);
@@ -156,6 +165,7 @@ function renderPresence() {
     const chip = document.createElement("div");
     chip.className = "editor-collab-person";
     chip.title = `${person.display_name || "Staff"} · ${person.device || "desktop"}`;
+    chip.style.setProperty("--collab-colour", person.colour || "#2F65A0");
 
     const avatar = document.createElement("span");
     avatar.className = "editor-collab-avatar";
@@ -179,6 +189,7 @@ function noteCard(note) {
   const card = document.createElement("article");
   card.className = `editor-note-card${note.resolved ? " is-resolved" : ""}`;
   card.dataset.noteId = note.id;
+  card.style.setProperty("--note-colour", note.colour || "#2F65A0");
 
   const bodyButton = document.createElement("button");
   bodyButton.type = "button";
@@ -218,20 +229,102 @@ function noteCard(note) {
   return card;
 }
 
-function renderNotesPanel() {
-  const root = document.querySelector(".web-editor-fullscreen");
-  if (!root) return;
+function upsertLocalNote(note) {
+  if (!note?.id) return;
+  const index = collab.notes.findIndex((item) => item.id === note.id);
+  if (index >= 0) collab.notes[index] = { ...collab.notes[index], ...note };
+  else collab.notes.unshift(note);
+  ensurePresenceControl();
+  sendNotesToPreview();
+}
 
-  let panel = root.querySelector("#editor-notes-panel");
+function clearPendingNoteHighlight() {
+  postToPreview("WCG_EDITOR_NOTE_DRAFT", {
+    active: false,
+    anchor: collab.noteAnchor || {},
+    colour: collab.selfColour
+  });
+}
+
+async function saveCurrentDraftNote() {
+  const body = String(collab.noteDraftBody || "").trim();
+  if (!collab.noteAnchor || !body || collab.noteSaveBusy) return;
+
+  collab.noteSaveBusy = true;
+  try {
+    const result = await collabRequest("", {
+      method: "POST",
+      body: collab.noteDraftId
+        ? {
+            action: "note_update",
+            page: currentPage(),
+            id: collab.noteDraftId,
+            body
+          }
+        : {
+            action: "note_add",
+            page: currentPage(),
+            anchor: collab.noteAnchor,
+            body
+          }
+    });
+
+    if (result?.note?.id) {
+      collab.noteDraftId = result.note.id;
+      collab.selectedNoteId = result.note.id;
+      upsertLocalNote(result.note);
+    }
+  } catch (error) {
+    const textarea = document.querySelector("#editor-note-draft");
+    if (textarea) {
+      textarea.setCustomValidity(error?.message || "Unable to save note.");
+      textarea.reportValidity();
+      window.setTimeout(() => textarea.setCustomValidity(""), 1400);
+    }
+  } finally {
+    collab.noteSaveBusy = false;
+    if (String(collab.noteDraftBody || "").trim() !== body) {
+      queueDraftNoteSave();
+    }
+  }
+}
+
+function queueDraftNoteSave() {
+  if (collab.noteSaveTimer) window.clearTimeout(collab.noteSaveTimer);
+  collab.noteSaveTimer = window.setTimeout(() => {
+    collab.noteSaveTimer = null;
+    saveCurrentDraftNote();
+  }, 450);
+}
+
+function renderNotesPanel() {
+  const workspace = document.querySelector(".editor-preview-placeholder.is-fullscreen");
+  if (!workspace) return;
+
+  let panel = workspace.querySelector("#editor-notes-panel");
   if (!panel) {
     panel = document.createElement("aside");
     panel.id = "editor-notes-panel";
     panel.className = "editor-notes-panel";
-    root.appendChild(panel);
+    workspace.appendChild(panel);
   }
 
-  panel.classList.toggle("is-open", collab.notesOpen);
-  if (!collab.notesOpen) return;
+  const canDock = !workspace.classList.contains("has-code-dock");
+  const open = collab.notesOpen && canDock;
+  workspace.classList.toggle("has-notes-dock", open);
+  panel.classList.toggle("is-open", open);
+  if (!open) return;
+
+  const activeDraft =
+    collab.noteAnchor &&
+    document.activeElement?.id === "editor-note-draft";
+
+  const preservedSelection = activeDraft
+    ? {
+        start: document.activeElement.selectionStart,
+        end: document.activeElement.selectionEnd
+      }
+    : null;
 
   panel.replaceChildren();
 
@@ -240,7 +333,7 @@ function renderNotesPanel() {
   const title = document.createElement("strong");
   title.textContent = "Page notes";
   const subtitle = document.createElement("span");
-  subtitle.textContent = "Pinned to exact areas of this page";
+  subtitle.textContent = "Highlights and notes shared with staff";
   titleWrap.append(title, subtitle);
 
   const close = document.createElement("button");
@@ -249,6 +342,9 @@ function renderNotesPanel() {
   close.textContent = "×";
   close.addEventListener("click", () => {
     collab.notesOpen = false;
+    collab.noteMode = false;
+    document.querySelector("#editor-collab-note-tool")?.classList.remove("is-active");
+    postToPreview("WCG_EDITOR_TOOL", { tool: "select", colour: collab.selfColour });
     renderNotesPanel();
   });
   header.append(titleWrap, close);
@@ -257,59 +353,66 @@ function renderNotesPanel() {
   if (collab.noteAnchor) {
     const composer = document.createElement("section");
     composer.className = "editor-note-composer";
+    composer.style.setProperty("--note-colour", collab.selfColour);
 
+    const labelRow = document.createElement("div");
+    labelRow.className = "editor-note-composer-label";
+    const colour = document.createElement("i");
+    colour.style.background = collab.selfColour;
     const label = document.createElement("strong");
-    label.textContent = "New pinned note";
+    label.textContent = collab.noteDraftId ? "Linked note" : "New highlighted note";
+    const saving = document.createElement("small");
+    saving.textContent = "Autosaves while you type";
+    labelRow.append(colour, label, saving);
+
     const textarea = document.createElement("textarea");
     textarea.id = "editor-note-draft";
     textarea.maxLength = 2000;
-    textarea.placeholder = "Write a note for the team…";
+    textarea.placeholder = "Type your note…";
+    textarea.value = collab.noteDraftBody;
+    textarea.addEventListener("input", () => {
+      collab.noteDraftBody = textarea.value;
+      postToPreview("WCG_EDITOR_NOTE_DRAFT", {
+        active: true,
+        anchor: collab.noteAnchor,
+        colour: collab.selfColour,
+        body: collab.noteDraftBody
+      });
+      if (textarea.value.trim()) queueDraftNoteSave();
+    });
 
     const actions = document.createElement("div");
-    const cancel = document.createElement("button");
-    cancel.type = "button";
-    cancel.className = "editor-note-secondary";
-    cancel.textContent = "Cancel";
-    cancel.addEventListener("click", () => {
+    const done = document.createElement("button");
+    done.type = "button";
+    done.className = "editor-note-secondary";
+    done.textContent = "Done";
+    done.addEventListener("click", async () => {
+      if (collab.noteSaveTimer) {
+        window.clearTimeout(collab.noteSaveTimer);
+        collab.noteSaveTimer = null;
+      }
+      if (collab.noteDraftBody.trim()) await saveCurrentDraftNote();
+      else clearPendingNoteHighlight();
+
       collab.noteAnchor = null;
-      renderNotesPanel();
+      collab.noteDraftBody = "";
+      collab.noteDraftId = "";
+      collab.noteMode = false;
+      document.querySelector("#editor-collab-note-tool")?.classList.remove("is-active");
+      postToPreview("WCG_EDITOR_TOOL", { tool: "select", colour: collab.selfColour });
+      await loadNotes();
     });
 
-    const save = document.createElement("button");
-    save.type = "button";
-    save.className = "editor-note-primary";
-    save.textContent = "Pin note";
-    save.addEventListener("click", async () => {
-      const body = textarea.value.trim();
-      if (!body) {
-        textarea.focus();
-        return;
-      }
-      save.disabled = true;
-      try {
-        await collabRequest("", {
-          method: "POST",
-          body: {
-            action: "note_add",
-            page: currentPage(),
-            anchor: collab.noteAnchor,
-            body
-          }
-        });
-        collab.noteAnchor = null;
-        await loadNotes();
-      } catch (error) {
-        save.disabled = false;
-        textarea.setCustomValidity(error?.message || "Unable to save note.");
-        textarea.reportValidity();
-      }
-    });
-
-    actions.append(cancel, save);
-    composer.append(label, textarea, actions);
+    actions.append(done);
+    composer.append(labelRow, textarea, actions);
     panel.appendChild(composer);
 
-    window.setTimeout(() => textarea.focus(), 0);
+    window.setTimeout(() => {
+      textarea.focus();
+      if (preservedSelection) {
+        textarea.setSelectionRange(preservedSelection.start, preservedSelection.end);
+      }
+    }, 0);
   }
 
   const list = document.createElement("div");
@@ -322,7 +425,7 @@ function renderNotesPanel() {
   if (!ordered.length) {
     const empty = document.createElement("div");
     empty.className = "editor-note-empty";
-    empty.textContent = "No notes on this page yet. Choose Note, then click anywhere in the preview.";
+    empty.textContent = "Choose Note, then click a section of the page to highlight it and start typing.";
     list.appendChild(empty);
   } else {
     for (const note of ordered) list.appendChild(noteCard(note));
@@ -347,6 +450,7 @@ function sendNotesToPreview() {
       body: note.body,
       resolved: note.resolved,
       createdByName: note.created_by_name,
+      colour: note.colour || "#2F65A0",
       anchor: note.anchor || {}
     }))
   });
@@ -361,6 +465,7 @@ function sendRemoteCursors() {
         id: person.session_id,
         name: person.display_name || "Staff",
         avatarUrl: person.avatar_url || "",
+        colour: person.colour || "#2F65A0",
         ...person.cursor
       }))
   });
@@ -377,6 +482,10 @@ async function loadPresence() {
     );
     collab.unavailable = result.available === false;
     collab.presence = Array.isArray(result.presence) ? result.presence : [];
+    if (result.self) {
+      collab.self = result.self;
+      collab.selfColour = result.self.colour || collab.selfColour;
+    }
     renderPresence();
     sendRemoteCursors();
   } catch (error) {
@@ -394,8 +503,12 @@ async function loadNotes() {
     );
     collab.unavailable = result.available === false;
     collab.notes = Array.isArray(result.notes) ? result.notes : [];
+    if (result.self) {
+      collab.self = result.self;
+      collab.selfColour = result.self.colour || collab.selfColour;
+    }
     ensurePresenceControl();
-    renderNotesPanel();
+    if (document.activeElement?.id !== "editor-note-draft") renderNotesPanel();
     sendNotesToPreview();
   } catch (error) {
     if (error?.status === 503) collab.unavailable = true;
@@ -457,6 +570,8 @@ function stopCollaboration() {
   collab.presenceTimer = null;
   collab.notesTimer = null;
   collab.heartbeatTimer = null;
+  if (collab.noteSaveTimer) window.clearTimeout(collab.noteSaveTimer);
+  collab.noteSaveTimer = null;
   leavePresence();
   collab.frame = null;
   collab.presence = [];
@@ -473,6 +588,7 @@ function startCollaboration() {
   if (collab.active && collab.frame === frame) {
     ensurePresenceControl();
     ensureNoteTool();
+    if (collab.notesOpen) renderNotesPanel();
     return;
   }
 
@@ -486,7 +602,7 @@ function startCollaboration() {
     window.setTimeout(() => {
       sendNotesToPreview();
       sendRemoteCursors();
-      if (collab.noteMode) postToPreview("WCG_EDITOR_TOOL", { tool: "note" });
+      if (collab.noteMode) postToPreview("WCG_EDITOR_TOOL", { tool: "note", colour: collab.selfColour });
     }, 120);
     return;
   }
@@ -570,6 +686,8 @@ document.addEventListener("change", (event) => {
   collab.lastCursor = { visible: false };
   collab.notes = [];
   collab.noteAnchor = null;
+  collab.noteDraftBody = "";
+  collab.noteDraftId = "";
   writePresence();
   loadPresence();
   loadNotes();
@@ -598,6 +716,9 @@ window.addEventListener("message", (event) => {
   if (event.data.type === "WCG_EDITOR_NOTE_ANCHOR") {
     collab.noteMode = false;
     collab.noteAnchor = event.data.anchor || {};
+    collab.noteDraftBody = "";
+    collab.noteDraftId = "";
+    collab.selfColour = event.data.colour || collab.selfColour;
     collab.notesOpen = true;
     document.querySelector("#editor-collab-note-tool")?.classList.remove("is-active");
     renderNotesPanel();
@@ -606,6 +727,9 @@ window.addEventListener("message", (event) => {
 
   if (event.data.type === "WCG_EDITOR_NOTE_OPEN") {
     collab.selectedNoteId = String(event.data.noteId || "");
+    collab.noteAnchor = null;
+    collab.noteDraftBody = "";
+    collab.noteDraftId = "";
     collab.notesOpen = true;
     renderNotesPanel();
     return;
@@ -615,7 +739,7 @@ window.addEventListener("message", (event) => {
     window.setTimeout(() => {
       sendNotesToPreview();
       sendRemoteCursors();
-      if (collab.noteMode) postToPreview("WCG_EDITOR_TOOL", { tool: "note" });
+      if (collab.noteMode) postToPreview("WCG_EDITOR_TOOL", { tool: "note", colour: collab.selfColour });
     }, 80);
   }
 });
