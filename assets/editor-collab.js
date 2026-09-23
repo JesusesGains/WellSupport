@@ -4,17 +4,10 @@ const NOTES_POLL_MS = 2000;
 const CURSOR_WRITE_MS = 240;
 const HEARTBEAT_MS = 4000;
 
-const clientId = (() => {
-  const key = "well-editor-collab-client";
-  const existing = sessionStorage.getItem(key);
-  if (existing) return existing;
-  const value =
-    typeof crypto?.randomUUID === "function"
-      ? crypto.randomUUID().replaceAll("-", "")
-      : `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
-  sessionStorage.setItem(key, value);
-  return value;
-})();
+const clientId =
+  typeof crypto?.randomUUID === "function"
+    ? crypto.randomUUID().replaceAll("-", "")
+    : `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
 
 const collab = {
   active: false,
@@ -110,7 +103,8 @@ function ensurePresenceControl() {
 
   const notesButton = host.querySelector("#editor-collab-notes-toggle");
   if (notesButton) {
-    notesButton.textContent = `Notes ${noteCount() ? `(${noteCount()})` : ""}`;
+    const label = `Notes ${noteCount() ? `(${noteCount()})` : ""}`;
+    if (notesButton.textContent !== label) notesButton.textContent = label;
     notesButton.classList.toggle("has-notes", noteCount() > 0);
   }
 }
@@ -476,12 +470,16 @@ function startCollaboration() {
     return;
   }
 
+  if (collab.active && collab.frame === frame) {
+    ensurePresenceControl();
+    ensureNoteTool();
+    return;
+  }
+
   ensurePresenceControl();
   ensureNoteTool();
   renderPresence();
   renderNotesPanel();
-
-  if (collab.active && collab.frame === frame) return;
 
   if (collab.active && collab.frame !== frame) {
     collab.frame = frame;
