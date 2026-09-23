@@ -2207,73 +2207,124 @@ function escapeSourceRegExp(value) {
     specials.has(character) ? "\\" + character : character
   ).join("");
 }
+function sourceTagAttribute(tagSource, name) {
+  const lower = String(tagSource || "").toLowerCase();
+  const needle = String(name || "").toLowerCase() + "=";
+  let index = lower.indexOf(needle);
+  if (index < 0) {
+    index = lower.indexOf(String(name || "").toLowerCase() + " =");
+  }
+  if (index < 0) return "";
+
+  const equals = lower.indexOf("=", index);
+  if (equals < 0) return "";
+  let cursor = equals + 1;
+  while (/\s/.test(tagSource[cursor] || "")) cursor += 1;
+  const quote = tagSource[cursor];
+  if (quote === "\"" || quote === "'") {
+    const close = tagSource.indexOf(quote, cursor + 1);
+    return close >= 0 ? tagSource.slice(cursor + 1, close) : "";
+  }
+  let close = cursor;
+  while (close < tagSource.length && !/[\s>]/.test(tagSource[close])) close += 1;
+  return tagSource.slice(cursor, close);
+}
+
+function sourceOpeningTags(source, tag) {
+  const html = String(source || "");
+  const lower = html.toLowerCase();
+  const needle = "<" + String(tag || "").toLowerCase();
+  const output = [];
+  let cursor = 0;
+
+  while (needle.length > 1 && output.length < 500) {
+    const start = lower.indexOf(needle, cursor);
+    if (start < 0) break;
+    const afterName = lower[start + needle.length] || "";
+    if (afterName && /[a-z0-9:-]/i.test(afterName)) {
+      cursor = start + needle.length;
+      continue;
+    }
+    const end = html.indexOf(">", start);
+    if (end < 0) break;
+    output.push({ start, end: end + 1, source: html.slice(start, end + 1) });
+    cursor = end + 1;
+  }
+
+  return output;
+}
+
 function sourceRangeForSelection(source, hint) {
   const html = String(source || "");
   if (!html || !hint || typeof hint !== "object") return null;
 
   const tag = String(hint.tag || "").toLowerCase();
+  if (!tag) return null;
+
   const id = String(hint.id || hint.attributes?.id || "").trim();
   const className = String(hint.className || hint.attributes?.class || "").trim();
   const attributes = hint.attributes && typeof hint.attributes === "object" ? hint.attributes : {};
-  let anchor = -1;
+  const tags = sourceOpeningTags(html, tag);
+  let chosen = null;
 
-  if (id && tag) {
-    const pattern = new RegExp("<" + escapeSourceRegExp(tag) + "\\b[^>]*\\bid\\s*=\\s*[\\"\']" + escapeSourceRegExp(id) + "[\\"\'][^>]*>", "i");
-    const match = pattern.exec(html);
-    if (match) anchor = match.index;
+  if (id) {
+    chosen = tags.find((item) => sourceTagAttribute(item.source, "id") === id) || null;
   }
 
-  if (anchor < 0 && tag && className) {
-    const classToken = className.split(/\\s+/).find(Boolean);
-    if (classToken) {
-      const pattern = new RegExp("<" + escapeSourceRegExp(tag) + "\\b[^>]*\\bclass\\s*=\\s*[\\"\'][^\\"\']*\\b" + escapeSourceRegExp(classToken) + "\\b[^\\"\']*[\\"\'][^>]*>", "i");
-      const match = pattern.exec(html);
-      if (match) anchor = match.index;
-    }
+  if (!chosen && className) {
+    const wanted = className.split(/\s+/).filter(Boolean);
+    chosen = tags.find((item) => {
+      const actual = sourceTagAttribute(item.source, "class").split(/\s+/).filter(Boolean);
+      return wanted.some((name) => actual.includes(name));
+    }) || null;
   }
 
-  if (anchor < 0 && tag) {
+  if (!chosen) {
     for (const name of ["href", "src", "alt", "data-wcg-editor-layout-key"]) {
       const value = String(attributes[name] || "").trim();
       if (!value) continue;
-      const pattern = new RegExp("<" + escapeSourceRegExp(tag) + "\\b[^>]*\\b" + escapeSourceRegExp(name) + "\\s*=\\s*[\\"\']" + escapeSourceRegExp(value) + "[\\"\'][^>]*>", "i");
-      const match = pattern.exec(html);
-      if (match) { anchor = match.index; break; }
+      chosen = tags.find((item) => sourceTagAttribute(item.source, name) === value) || null;
+      if (chosen) break;
     }
   }
 
-  if (anchor < 0 && tag && hint.text) {
-    const words = String(hint.text).trim().split(/\\s+/).filter(Boolean).slice(0, 7);
-    if (words.length >= 2) {
-      const textPattern = new RegExp(words.map(escapeSourceRegExp).join("\\s+"), "i");
-      const textMatch = textPattern.exec(html);
-      if (textMatch) {
-        const before = html.slice(0, textMatch.index);
-        const open = before.toLowerCase().lastIndexOf("<" + tag);
-        if (open >= 0) anchor = open;
+  if (!chosen && hint.text) {
+    const firstWords = String(hint.text).trim().split(/\s+/).filter(Boolean).slice(0, 5);
+    if (firstWords.length) {
+      const first = firstWords[0].toLowerCase();
+      const lower = html.toLowerCase();
+      let textIndex = lower.indexOf(first);
+      while (textIndex >= 0 && !chosen) {
+        for (let index = tags.length - 1; index >= 0; index -= 1) {
+          if (tags[index].start <= textIndex) {
+            chosen = tags[index];
+            break;
+          }
+        }
+        textIndex = lower.indexOf(first, textIndex + first.length);
       }
     }
   }
 
-  if (anchor < 0 && hint.openingTag) {
+  if (!chosen && hint.openingTag) {
     const direct = html.indexOf(String(hint.openingTag || "").trim());
-    if (direct >= 0) anchor = direct;
+    if (direct >= 0) {
+      const close = html.indexOf(">", direct);
+      if (close >= 0) chosen = { start: direct, end: close + 1 };
+    }
   }
 
-  if (anchor < 0) return null;
-  const openingEnd = html.indexOf(">", anchor);
-  if (openingEnd < 0) return null;
+  if (!chosen) return null;
 
-  let end = openingEnd + 1;
-  if (tag && !["img","br","hr","input","meta","link","source"].includes(tag)) {
+  let end = chosen.end;
+  if (!["img","br","hr","input","meta","link","source"].includes(tag)) {
     const closeTag = "</" + tag + ">";
-    const close = html.toLowerCase().indexOf(closeTag, openingEnd + 1);
-    if (close >= 0 && close - anchor <= 3200) end = close + closeTag.length;
+    const close = html.toLowerCase().indexOf(closeTag, chosen.end);
+    if (close >= 0 && close - chosen.start <= 3200) end = close + closeTag.length;
   }
 
-  return { start: anchor, end: Math.max(anchor + 1, end) };
+  return { start: chosen.start, end: Math.max(chosen.start + 1, end) };
 }
-
 function revealCodeSelection(hint) {
   if (state.editorPreviewMode !== "code") return;
   const input = document.querySelector("#editor-code-input");
