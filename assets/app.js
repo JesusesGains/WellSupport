@@ -2202,24 +2202,8 @@ function highlightHtmlSource(source) {
   return result;
 }
 function escapeSourceRegExp(value) {
-  return String(value || "").replace(/[.*+?^${}()|[\\]\\\\]/g, "\\function highlightHtmlSource(source) {
-  const text = String(source || "");
-  const pattern = /<!--[\s\S]*?-->|<!DOCTYPE[\s\S]*?>|<\/?[A-Za-z][^>]*>/gi;
-  let result = "";
-  let cursor = 0;
-  let match;
-
-  while ((match = pattern.exec(text))) {
-    result += escapeEditorAttribute(text.slice(cursor, match.index));
-    result += highlightHtmlTag(match[0]);
-    cursor = pattern.lastIndex;
-  }
-
-  result += escapeEditorAttribute(text.slice(cursor));
-  return result;
-}");
+  return String(value || "").replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&");
 }
-
 function sourceRangeForSelection(source, hint) {
   const html = String(source || "");
   if (!html || !hint || typeof hint !== "object") return null;
