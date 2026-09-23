@@ -2591,21 +2591,37 @@ function renderWebEditor() {
 
           <div class="editor-preview-placeholder is-fullscreen">
             ${state.editorPreviewMode === "code" ? `
-              <div class="editor-code-browser">
+              <div class="editor-code-browser is-editable">
                 <div class="editor-preview-browser-bar">
                   <i></i><i></i><i></i>
                   <span>${escapeEditorAttribute(editorCodeFileLabel())}</span>
-                  <b class="${state.editorMode === "beta" ? "is-beta" : ""}">${state.editorMode === "beta" ? "BETA" : "PROD"}</b>
+                  <b class="${state.editorMode === "beta" ? "is-beta" : ""}">${state.editorMode === "beta" ? "BETA HTML" : "LIVE HTML"}</b>
                 </div>
                 <div class="editor-code-meta">
-                  <span>${state.editorCodeTab.toUpperCase()}</span>
-                  <small>${state.editorMode === "beta" ? "beta-main" : "main"} source · local visual drafts appear after Publish beta preview</small>
+                  <span>HTML</span>
+                  <small>${state.editorMode === "beta"
+                    ? state.editorCodeDirty
+                      ? "Unsaved source changes · save to build a new beta preview"
+                      : "beta-main source · editable"
+                    : "main source · read only"}</small>
                 </div>
-                <pre class="editor-code-pre" aria-live="polite"><code>${state.editorCodeLoading
-                  ? "Loading source…"
-                  : state.editorCodeSource?.error
-                    ? escapeEditorAttribute(state.editorCodeSource.error)
-                    : escapeEditorAttribute(editorCodeContent() || "No source available.")}</code></pre>
+                <div class="editor-code-editor">
+                  <pre id="editor-code-highlight" class="editor-code-highlight" aria-hidden="true"><code>${state.editorCodeLoading
+                    ? "Loading source…"
+                    : state.editorCodeSource?.error
+                      ? escapeEditorAttribute(state.editorCodeSource.error)
+                      : highlightHtmlSource(editorCodeContent() || "")}</code></pre>
+                  <textarea
+                    id="editor-code-input"
+                    class="editor-code-input"
+                    spellcheck="false"
+                    autocomplete="off"
+                    autocapitalize="off"
+                    wrap="off"
+                    ${editable ? "" : "readonly"}
+                    aria-label="HTML source editor"
+                  >${escapeEditorAttribute(editorCodeContent())}</textarea>
+                </div>
               </div>
             ` : `
               <div id="web-editor-browser" class="editor-preview-browser is-fullscreen" data-device="${state.editorDevice}">
