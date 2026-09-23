@@ -798,7 +798,7 @@ function renderLogin(message = "") {
     <main class="auth-shell">
       <section class="auth-card" aria-labelledby="staff-sign-in-title">
         <div class="auth-brand">
-          <span class="brand-mark" aria-hidden="true">W</span>
+          <img class="brand-mark" src="/well-college-icon.svg" alt="" aria-hidden="true" />
           <div class="auth-brand-copy">
             <strong>Well College Global</strong>
             <span>Dashboard</span>
@@ -5390,7 +5390,7 @@ function renderDashboard() {
       </div>
       <aside class="sidebar">
         <div class="sidebar-brand">
-          <span class="brand-mark" aria-hidden="true">W</span>
+          <img class="brand-mark" src="/well-college-icon.svg" alt="" aria-hidden="true" />
           <div class="sidebar-brand-copy">
             <strong>Well College Global</strong>
             <span>Dashboard</span>
