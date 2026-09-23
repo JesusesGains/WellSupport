@@ -8,6 +8,38 @@ import {
 
 const PRESENCE_TTL_MS = 9000;
 const MAX_NOTES = 200;
+const STAFF_COLOURS = Object.freeze([
+  "#2F65A0",
+  "#2F7D73",
+  "#8A6A2F",
+  "#A65353",
+  "#6C5FA7",
+  "#3E7A4F",
+  "#9A5A2F",
+  "#3C6F8C"
+]);
+
+function staffColour(value) {
+  const seed = String(value || "staff");
+  let hash = 2166136261;
+  for (let index = 0; index < seed.length; index += 1) {
+    hash ^= seed.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return STAFF_COLOURS[Math.abs(hash) % STAFF_COLOURS.length];
+}
+
+function decorateNote(note) {
+  return note && typeof note === "object"
+    ? { ...note, colour: staffColour(note.created_by || note.created_by_name) }
+    : note;
+}
+
+function decoratePresence(person) {
+  return person && typeof person === "object"
+    ? { ...person, colour: staffColour(person.user_id || person.display_name) }
+    : person;
+}
 
 function cleanPage(value) {
   const raw = String(value || "/").trim();
@@ -89,7 +121,15 @@ export async function onRequestGet({ request, env }) {
         `/rest/v1/support_editor_notes?${query.toString()}`,
         session
       );
-      return sessionResponse({ notes: Array.isArray(notes) ? notes : [] }, session);
+      return sessionResponse({
+        notes: Array.isArray(notes) ? notes.map(decorateNote) : [],
+        self: {
+          user_id: session.user.id,
+          display_name: String(session.agent?.display_name || "Staff").slice(0, 120),
+          avatar_url: session.agent?.avatar_url || null,
+          colour: staffColour(session.user.id)
+        }
+      }, session);
     }
 
     const cutoff = new Date(Date.now() - PRESENCE_TTL_MS).toISOString();
@@ -107,8 +147,16 @@ export async function onRequestGet({ request, env }) {
 
     return sessionResponse({
       presence: Array.isArray(presence)
-        ? presence.filter((row) => row?.user_id !== session.user.id)
-        : []
+        ? presence
+            .filter((row) => row?.user_id !== session.user.id)
+            .map(decoratePresence)
+        : [],
+      self: {
+        user_id: session.user.id,
+        display_name: String(session.agent?.display_name || "Staff").slice(0, 120),
+        avatar_url: session.agent?.avatar_url || null,
+        colour: staffColour(session.user.id)
+      }
     }, session);
   } catch (error) {
     if ([400, 404].includes(Number(error.status || 0))) {
@@ -205,7 +253,10 @@ export async function onRequestPost({ request, env }) {
           }
         }
       );
-      return sessionResponse({ ok: true, note: Array.isArray(notes) ? notes[0] || null : null }, session);
+      return sessionResponse({
+        ok: true,
+        note: Array.isArray(notes) ? decorateNote(notes[0] || null) : null
+      }, session);
     }
 
     if (action === "note_update") {
@@ -234,7 +285,10 @@ export async function onRequestPost({ request, env }) {
           body: patch
         }
       );
-      return sessionResponse({ ok: true, note: Array.isArray(notes) ? notes[0] || null : null }, session);
+      return sessionResponse({
+        ok: true,
+        note: Array.isArray(notes) ? decorateNote(notes[0] || null) : null
+      }, session);
     }
 
     if (action === "note_delete") {
