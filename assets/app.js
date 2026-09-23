@@ -2639,14 +2639,13 @@ function renderWebEditor() {
     <div class="web-editor-fullscreen">
       <header class="editor-fullscreen-topbar">
         <div class="editor-fullscreen-topbar-left">
-          <button id="web-editor-exit" class="editor-topbar-icon-button" type="button" aria-label="Exit website editor">←</button>
+          <button id="web-editor-exit" class="editor-topbar-icon-button" type="button" aria-label="Exit website editor" title="Back">←</button>
 
           <div class="editor-fullscreen-title">
-            <span>Well College Global</span>
-            <strong>Website Editor</strong>
+            <strong>Well Website Editor</strong>
           </div>
 
-          <select id="web-editor-page" class="editor-header-select" aria-label="Website page">
+          <select id="web-editor-page" class="editor-header-select" aria-label="Website page" hidden>
             <option value="/">Home</option>
             <option value="/qualifications.html">Qualifications</option>
             <option value="/short-courses.html">Short Courses</option>
@@ -2656,28 +2655,58 @@ function renderWebEditor() {
             <option value="/contact.html">Contact</option>
           </select>
 
-          <div class="editor-mode-switcher" role="group" aria-label="Website branch">
-            <button type="button" data-editor-environment="beta" class="${state.editorMode === "beta" ? "is-active" : ""}">Edit preview</button>
-            <button type="button" data-editor-environment="production" class="${state.editorMode === "production" ? "is-active" : ""}">View live</button>
+          <div class="editor-mode-switcher" role="group" aria-label="Website environment">
+            <button type="button" data-editor-environment="beta" class="${state.editorMode === "beta" ? "is-active" : ""}">BETA</button>
+            <button type="button" data-editor-environment="production" class="${state.editorMode === "production" ? "is-active" : ""}">PRODUCTION</button>
           </div>
 
-          <div class="editor-view-toolbar" role="group" aria-label="Editor mode">
+          <div class="editor-view-toolbar" role="group" aria-label="Editor surface">
             <button class="${state.editorPreviewMode === "visual" ? "is-active" : ""}" type="button" data-editor-preview-mode="visual">Visual</button>
             <button class="${state.editorPreviewMode === "code" ? "is-active" : ""}" type="button" data-editor-preview-mode="code">&lt;/&gt; Code</button>
           </div>
 
-          ${state.editorPreviewMode !== "code" ? `
-            <div class="editor-device-toolbar" role="group" aria-label="Preview device size">
-              <button class="${state.editorDevice === "desktop" ? "is-active" : ""}" type="button" data-editor-device="desktop">Desktop</button>
-              <button class="${state.editorDevice === "tablet" ? "is-active" : ""}" type="button" data-editor-device="tablet">Tablet</button>
-              <button class="${state.editorDevice === "mobile" ? "is-active" : ""}" type="button" data-editor-device="mobile">Mobile</button>
+          ${state.editorPreviewMode === "visual" ? `
+            <div class="editor-interaction-toolbar" role="group" aria-label="Website interaction mode">
+              <button
+                class="${state.editorMode === "production" || state.editorTool === "view" ? "is-active" : ""}"
+                type="button"
+                data-editor-interaction="view"
+                title="Navigate the website without editing"
+                aria-label="View and navigate website"
+              >↖ <span>View</span></button>
+              <button
+                class="${state.editorMode === "beta" && state.editorTool !== "view" ? "is-active" : ""}"
+                type="button"
+                data-editor-interaction="edit"
+                title="Click website content to edit it"
+                aria-label="Edit website"
+                ${editable ? "" : "disabled"}
+              >✦ <span>Edit</span></button>
             </div>
+
+            <div
+              class="editor-tool-toolbar ${state.editorMode === "beta" && state.editorTool !== "view" ? "is-expanded" : "is-collapsed"}"
+              role="group"
+              aria-label="Edit tools"
+            >
+              <button
+                class="${state.editorTool === "text-box" ? "is-active" : ""}"
+                type="button"
+                data-editor-tool="text-box"
+                title="Draw a new text area"
+                aria-label="Draw a new text area"
+                ${editable ? "" : "disabled"}
+              >✎ <span>Text</span></button>
+            </div>
+
+            <div class="editor-notes-mode-slot" aria-label="Page notes"></div>
           ` : ""}
 
-          <span class="editor-connection-pill ${connected ? "is-connected" : "is-disconnected"}">
-            <i></i>
-            ${connected ? editorBranchSummary() : "Publishing unavailable"}
-          </span>
+          <div class="editor-device-toolbar" role="group" aria-label="Preview device size">
+            <button class="${state.editorDevice === "desktop" ? "is-active" : ""}" type="button" data-editor-device="desktop">Desktop</button>
+            <button class="${state.editorDevice === "tablet" ? "is-active" : ""}" type="button" data-editor-device="tablet">Tablet</button>
+            <button class="${state.editorDevice === "mobile" ? "is-active" : ""}" type="button" data-editor-device="mobile">Phone</button>
+          </div>
         </div>
 
         <div class="editor-fullscreen-topbar-right">
@@ -3593,10 +3622,10 @@ function renderWebEditor() {
         : "select";
       document.querySelectorAll("[data-editor-interaction]").forEach((button) => {
     button.addEventListener("click", () => {
-      if (!editable) return;
-
       const nextMode =
         button.dataset.editorInteraction === "view" ? "view" : "edit";
+      if (nextMode === "edit" && !editable) return;
+
       state.editorTool = nextMode === "view" ? "view" : "select";
 
       document.querySelectorAll("[data-editor-interaction]").forEach((item) => {
@@ -3805,6 +3834,7 @@ function renderWebEditor() {
 
       if (next === state.editorMode) return;
       state.editorMode = next;
+      state.editorTool = next === "production" ? "view" : "select";
       state.editorDirty =
         next === "beta" && editorPendingChangeCount() > 0;
       state.editorDraftKey = "";
