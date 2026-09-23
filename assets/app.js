@@ -114,6 +114,7 @@ const state = {
   editorCodeOriginal: "",
   editorCodeDirty: false,
   editorCodeSaving: false,
+  editorCodePreviewTimer: null,
   editorHistoryOpen: false,
   editorVersionHistory: [],
   editorAuditHistory: [],
@@ -2525,7 +2526,7 @@ function renderEditorDevtoolsDock() {
     const meta = document.querySelector(".editor-code-meta small");
     if (meta && state.editorMode === "beta") {
       meta.textContent = state.editorCodeDirty
-        ? "Unsaved source changes · save to build a new beta preview"
+        ? "Unsaved source changes · live previewing locally · save to build beta"
         : "beta-main source · editable";
     }
   });
@@ -2553,6 +2554,11 @@ function renderEditorDevtoolsDock() {
 function renderWebEditor() {
   const panel = document.querySelector("#chat-panel");
   if (!panel) return;
+
+  if (state.editorCodePreviewTimer) {
+    window.clearTimeout(state.editorCodePreviewTimer);
+    state.editorCodePreviewTimer = null;
+  }
 
   state.editorPreviewResizeObserver?.disconnect?.();
   state.editorPreviewResizeObserver = null;
@@ -3001,10 +3007,41 @@ function renderWebEditor() {
     syncCodeEditorScroll();
   };
 
+  const postCodeSourcePreview = () => {
+    if (
+      state.editorPreviewMode !== "code" ||
+      !frame?.contentWindow
+    ) {
+      return;
+    }
+
+    const source = editorCodeContent();
+    if (!source.trim()) return;
+
+    frame.contentWindow.postMessage(
+      {
+        type: "WCG_EDITOR_SOURCE_PREVIEW",
+        source
+      },
+      frameOrigin()
+    );
+  };
+
+  const scheduleCodeSourcePreview = () => {
+    if (state.editorCodePreviewTimer) {
+      window.clearTimeout(state.editorCodePreviewTimer);
+    }
+    state.editorCodePreviewTimer = window.setTimeout(() => {
+      state.editorCodePreviewTimer = null;
+      postCodeSourcePreview();
+    }, 180);
+  };
+
   codeInput?.addEventListener("input", () => {
     state.editorCodeDraft = codeInput.value;
     state.editorCodeDirty = state.editorCodeDraft !== state.editorCodeOriginal;
     refreshCodeHighlight();
+    scheduleCodeSourcePreview();
 
     const save = document.querySelector("#editor-code-save");
     if (save) {
@@ -3897,6 +3934,9 @@ function renderWebEditor() {
   frame?.addEventListener("load", () => {
     window.setTimeout(() => {
       postDraft();
+      if (state.editorPreviewMode === "code") {
+        postCodeSourcePreview();
+      }
       requestColours();
     }, 80);
   });
