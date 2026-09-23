@@ -2201,6 +2201,116 @@ function highlightHtmlSource(source) {
   result += escapeEditorAttribute(text.slice(cursor));
   return result;
 }
+function escapeSourceRegExp(value) {
+  return String(value || "").replace(/[.*+?^${}()|[\\]\\\\]/g, "\\function highlightHtmlSource(source) {
+  const text = String(source || "");
+  const pattern = /<!--[\s\S]*?-->|<!DOCTYPE[\s\S]*?>|<\/?[A-Za-z][^>]*>/gi;
+  let result = "";
+  let cursor = 0;
+  let match;
+
+  while ((match = pattern.exec(text))) {
+    result += escapeEditorAttribute(text.slice(cursor, match.index));
+    result += highlightHtmlTag(match[0]);
+    cursor = pattern.lastIndex;
+  }
+
+  result += escapeEditorAttribute(text.slice(cursor));
+  return result;
+}");
+}
+
+function sourceRangeForSelection(source, hint) {
+  const html = String(source || "");
+  if (!html || !hint || typeof hint !== "object") return null;
+
+  const tag = String(hint.tag || "").toLowerCase();
+  const id = String(hint.id || hint.attributes?.id || "").trim();
+  const className = String(hint.className || hint.attributes?.class || "").trim();
+  const attributes = hint.attributes && typeof hint.attributes === "object" ? hint.attributes : {};
+  let anchor = -1;
+
+  if (id && tag) {
+    const pattern = new RegExp("<" + escapeSourceRegExp(tag) + "\\b[^>]*\\bid\\s*=\\s*[\\"\']" + escapeSourceRegExp(id) + "[\\"\'][^>]*>", "i");
+    const match = pattern.exec(html);
+    if (match) anchor = match.index;
+  }
+
+  if (anchor < 0 && tag && className) {
+    const classToken = className.split(/\\s+/).find(Boolean);
+    if (classToken) {
+      const pattern = new RegExp("<" + escapeSourceRegExp(tag) + "\\b[^>]*\\bclass\\s*=\\s*[\\"\'][^\\"\']*\\b" + escapeSourceRegExp(classToken) + "\\b[^\\"\']*[\\"\'][^>]*>", "i");
+      const match = pattern.exec(html);
+      if (match) anchor = match.index;
+    }
+  }
+
+  if (anchor < 0 && tag) {
+    for (const name of ["href", "src", "alt", "data-wcg-editor-layout-key"]) {
+      const value = String(attributes[name] || "").trim();
+      if (!value) continue;
+      const pattern = new RegExp("<" + escapeSourceRegExp(tag) + "\\b[^>]*\\b" + escapeSourceRegExp(name) + "\\s*=\\s*[\\"\']" + escapeSourceRegExp(value) + "[\\"\'][^>]*>", "i");
+      const match = pattern.exec(html);
+      if (match) { anchor = match.index; break; }
+    }
+  }
+
+  if (anchor < 0 && tag && hint.text) {
+    const words = String(hint.text).trim().split(/\\s+/).filter(Boolean).slice(0, 7);
+    if (words.length >= 2) {
+      const textPattern = new RegExp(words.map(escapeSourceRegExp).join("\\s+"), "i");
+      const textMatch = textPattern.exec(html);
+      if (textMatch) {
+        const before = html.slice(0, textMatch.index);
+        const open = before.toLowerCase().lastIndexOf("<" + tag);
+        if (open >= 0) anchor = open;
+      }
+    }
+  }
+
+  if (anchor < 0 && hint.openingTag) {
+    const direct = html.indexOf(String(hint.openingTag || "").trim());
+    if (direct >= 0) anchor = direct;
+  }
+
+  if (anchor < 0) return null;
+  const openingEnd = html.indexOf(">", anchor);
+  if (openingEnd < 0) return null;
+
+  let end = openingEnd + 1;
+  if (tag && !["img","br","hr","input","meta","link","source"].includes(tag)) {
+    const closeTag = "</" + tag + ">";
+    const close = html.toLowerCase().indexOf(closeTag, openingEnd + 1);
+    if (close >= 0 && close - anchor <= 3200) end = close + closeTag.length;
+  }
+
+  return { start: anchor, end: Math.max(anchor + 1, end) };
+}
+
+function revealCodeSelection(hint) {
+  if (state.editorPreviewMode !== "code") return;
+  const input = document.querySelector("#editor-code-input");
+  const editor = document.querySelector(".editor-code-editor");
+  if (!(input instanceof HTMLTextAreaElement) || !editor) return;
+
+  const range = sourceRangeForSelection(input.value, hint);
+  if (!range) return;
+
+  input.focus({ preventScroll: true });
+  input.setSelectionRange(range.start, range.end);
+  const before = input.value.slice(0, range.start);
+  const lineIndex = before.split("\\n").length - 1;
+  const lineHeight = Number.parseFloat(getComputedStyle(input).lineHeight) || 19.4;
+  input.scrollTop = Math.max(0, lineIndex * lineHeight - input.clientHeight * 0.28);
+  const firstLineStart = before.lastIndexOf("\\n") + 1;
+  input.scrollLeft = Math.max(0, (range.start - firstLineStart) * 7.2 - input.clientWidth * 0.18);
+  input.dispatchEvent(new Event("scroll"));
+
+  editor.classList.remove("is-source-flash");
+  void editor.offsetWidth;
+  editor.classList.add("is-source-flash");
+  window.setTimeout(() => editor.classList.remove("is-source-flash"), 900);
+}
 
 async function saveEditorCodeSource() {
   if (
@@ -2926,10 +3036,10 @@ function renderWebEditor() {
     const renderedBrowserRect = browser.getBoundingClientRect();
     const availableWidth = docked
       ? Math.max(280, renderedBrowserRect.width)
-      : Math.max(280, previewCanvas.clientWidth - 24);
+      : Math.max(280, previewCanvas.clientWidth - 4);
     const availableHeight = docked
       ? Math.max(420, renderedBrowserRect.height)
-      : Math.max(420, previewCanvas.clientHeight - 24);
+      : Math.max(420, previewCanvas.clientHeight - 4);
     const scale = Math.min(1, availableWidth / viewport.width);
     const sourceHeight = Math.max(
       viewport.minHeight,
@@ -3349,9 +3459,16 @@ function renderWebEditor() {
       state.editorSelectedText = {
         selector: String(event.data.selector || ""),
         text: String(event.data.text || ""),
-        tag: String(event.data.tag || "")
+        tag: String(event.data.tag || ""),
+        sourceHint:
+          event.data.sourceHint && typeof event.data.sourceHint === "object"
+            ? { ...event.data.sourceHint }
+            : null
       };
       renderSelectedItem();
+      if (state.editorPreviewMode === "code") {
+        revealCodeSelection(state.editorSelectedText.sourceHint);
+      }
       if (state.editorPreviewMode === "devtools") requestDevtools();
       return;
     }
@@ -3361,12 +3478,20 @@ function renderWebEditor() {
       state.editorSelectedObject = {
         selector: String(event.data.selector || ""),
         tag: String(event.data.tag || ""),
+        selectionKind: String(event.data.selectionKind || "object"),
         attributes:
           event.data.attributes && typeof event.data.attributes === "object"
             ? { ...event.data.attributes }
-            : {}
+            : {},
+        sourceHint:
+          event.data.sourceHint && typeof event.data.sourceHint === "object"
+            ? { ...event.data.sourceHint }
+            : null
       };
       renderSelectedItem();
+      if (state.editorPreviewMode === "code") {
+        revealCodeSelection(state.editorSelectedObject.sourceHint);
+      }
       if (state.editorPreviewMode === "devtools") requestDevtools();
       return;
     }
