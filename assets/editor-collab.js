@@ -27,6 +27,7 @@ const collab = {
   noteSaveTimer: null,
   noteSaveBusy: false,
   selectedNoteId: "",
+  pendingNoteJump: null,
   lastCursor: { visible: false },
   cursorWriteTimer: null,
   presenceTimer: null,
@@ -898,7 +899,31 @@ document.addEventListener("click", async (event) => {
       collab.notes.find((item) => item.id === goto.dataset.noteGoto) ||
       collab.allNotes.find((item) => item.id === goto.dataset.noteGoto);
     if (!note) return;
+
     collab.selectedNoteId = note.id;
+
+    if (note.page_path && note.page_path !== currentPage()) {
+      collab.pendingNoteJump = {
+        id: note.id,
+        page: note.page_path,
+        anchor: note.anchor || {}
+      };
+
+      const select = document.querySelector("#web-editor-page");
+      if (select) {
+        if (![...select.options].some((option) => option.value === note.page_path)) {
+          const option = document.createElement("option");
+          option.value = note.page_path;
+          option.textContent = notePageLabel(note.page_path);
+          select.appendChild(option);
+        }
+        select.value = note.page_path;
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+      return;
+    }
+
+    collab.pendingNoteJump = null;
     postToPreview("WCG_EDITOR_GOTO_NOTE", { anchor: note.anchor || {}, noteId: note.id });
     return;
   }
@@ -1028,8 +1053,22 @@ window.addEventListener("message", (event) => {
     window.setTimeout(() => {
       sendNotesToPreview();
       sendRemoteCursors();
-      if (collab.noteMode) postToPreview("WCG_EDITOR_TOOL", { tool: "note", colour: collab.selfColour });
-    }, 80);
+      if (collab.noteMode) {
+        postToPreview("WCG_EDITOR_TOOL", { tool: "note", colour: collab.selfColour });
+      }
+
+      if (
+        collab.pendingNoteJump &&
+        collab.pendingNoteJump.page === currentPage()
+      ) {
+        const jump = collab.pendingNoteJump;
+        collab.pendingNoteJump = null;
+        postToPreview("WCG_EDITOR_GOTO_NOTE", {
+          anchor: jump.anchor || {},
+          noteId: jump.id
+        });
+      }
+    }, 120);
   }
 });
 
