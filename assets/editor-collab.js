@@ -94,12 +94,17 @@ function ensurePresenceControl() {
     host = document.createElement("div");
     host.id = "editor-collab-presence";
     host.className = "editor-collab-presence";
+    host.setAttribute("aria-label", "People currently viewing the editor");
+
+    const heading = document.createElement("span");
+    heading.className = "editor-collab-heading";
+    heading.textContent = "Viewing";
 
     const people = document.createElement("div");
     people.className = "editor-collab-people";
-    people.setAttribute("aria-label", "Other staff in this page");
+    people.setAttribute("aria-label", "People currently viewing");
 
-    host.appendChild(people);
+    host.append(heading, people);
     target.appendChild(host);
   }
 }
@@ -147,15 +152,38 @@ function avatarNode(person) {
 
 function renderPresence() {
   ensurePresenceControl();
-  const host = document.querySelector(".editor-collab-people");
-  if (!host) return;
-  host.replaceChildren();
 
-  const people = collab.presence.slice(0, 5);
-  for (const person of people) {
+  const peopleHost = document.querySelector(".editor-collab-people");
+  const heading = document.querySelector(".editor-collab-heading");
+  if (!peopleHost) return;
+  peopleHost.replaceChildren();
+
+  const self = collab.self
+    ? {
+        ...collab.self,
+        session_id: "self",
+        device: currentDevice(),
+        isSelf: true
+      }
+    : null;
+
+  const allPeople = [
+    ...(self ? [self] : []),
+    ...collab.presence
+  ];
+
+  const visiblePeople = allPeople.slice(0, 5);
+
+  if (heading) {
+    heading.textContent = `Viewing ${Math.max(1, allPeople.length)}`;
+  }
+
+  for (const person of visiblePeople) {
     const chip = document.createElement("div");
-    chip.className = "editor-collab-person";
-    chip.title = `${person.display_name || "Staff"} · ${person.device || "desktop"}`;
+    chip.className = `editor-collab-person${person.isSelf ? " is-self" : ""}`;
+    chip.title = person.isSelf
+      ? `${person.display_name || "You"} · you`
+      : `${person.display_name || "Staff"} · ${person.device || "desktop"}`;
     chip.style.setProperty("--collab-colour", person.colour || "#2F65A0");
 
     const avatar = document.createElement("span");
@@ -163,16 +191,20 @@ function renderPresence() {
     avatar.appendChild(avatarNode(person));
 
     const label = document.createElement("span");
-    label.textContent = person.display_name || "Staff";
+    label.className = "editor-collab-name";
+    label.textContent = person.isSelf
+      ? `${person.display_name || "You"} (you)`
+      : person.display_name || "Staff";
+
     chip.append(avatar, label);
-    host.appendChild(chip);
+    peopleHost.appendChild(chip);
   }
 
-  if (!people.length) {
-    const solo = document.createElement("span");
-    solo.className = "editor-collab-solo";
-    solo.textContent = "Only you";
-    host.appendChild(solo);
+  if (allPeople.length > visiblePeople.length) {
+    const overflow = document.createElement("span");
+    overflow.className = "editor-collab-more";
+    overflow.textContent = `+${allPeople.length - visiblePeople.length}`;
+    peopleHost.appendChild(overflow);
   }
 }
 
@@ -539,15 +571,25 @@ async function loadPresence() {
       collab.self = result.self;
       collab.selfColour = result.self.colour || collab.selfColour;
     }
-    const peopleSignature = JSON.stringify(
-      nextPresence.map((person) => [
+    const peopleSignature = JSON.stringify([
+      result.self
+        ? [
+            "self",
+            result.self.user_id,
+            result.self.display_name,
+            result.self.avatar_url,
+            result.self.colour,
+            currentDevice()
+          ]
+        : null,
+      ...nextPresence.map((person) => [
         person.session_id,
         person.display_name,
         person.avatar_url,
         person.colour,
         person.device
       ])
-    );
+    ]);
     const cursorSignature = JSON.stringify(
       nextPresence.map((person) => [
         person.session_id,
