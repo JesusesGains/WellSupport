@@ -108,6 +108,11 @@ const state = {
   editorAssetsLoading: false,
   editorAssetDrafts: [],
   editorAssetUploadBusy: false,
+  editorPreviewMode: "visual",
+  editorCodeTab: "html",
+  editorCodeSource: null,
+  editorCodeSourceKey: "",
+  editorCodeLoading: false,
   devAiStatus: null,
   devAiMessages: [],
   devAiLoading: false,
@@ -1917,6 +1922,59 @@ function bindEditorNavigationSortable(list, orderKey, editable) {
     finish();
   });
   list.addEventListener("dragend", finish);
+}
+
+
+async function loadEditorCodeSource({ quiet = false } = {}) {
+  if (!state.editorStatus?.connected || state.editorCodeLoading) return;
+
+  const target = state.editorMode === "production" ? "production" : "beta";
+  const key = `${target}:${state.editorPage}:${target === "beta"
+    ? state.editorStatus?.beta?.sha || ""
+    : state.editorStatus?.main?.sha || ""}`;
+
+  if (state.editorCodeSourceKey === key && state.editorCodeSource) return;
+
+  state.editorCodeLoading = true;
+  if (state.currentView === "editor" && state.editorPreviewMode === "code") {
+    renderWebEditor();
+  }
+
+  try {
+    const result = await apiRequest(
+      `/editor-source?target=${encodeURIComponent(target)}&page=${encodeURIComponent(state.editorPage || "/")}`
+    );
+    state.editorCodeSource = result;
+    state.editorCodeSourceKey = key;
+  } catch (error) {
+    state.editorCodeSource = {
+      error: error?.message || "Unable to load website source."
+    };
+    state.editorCodeSourceKey = key;
+    if (!quiet) showToast(state.editorCodeSource.error, "error");
+  } finally {
+    state.editorCodeLoading = false;
+    if (state.currentView === "editor" && state.editorPreviewMode === "code") {
+      renderWebEditor();
+    }
+  }
+}
+
+function editorCodeContent() {
+  if (!state.editorCodeSource) return "";
+  return state.editorCodeTab === "css"
+    ? String(state.editorCodeSource?.css?.content || "")
+    : String(state.editorCodeSource?.html?.content || "");
+}
+
+function editorCodeFileLabel() {
+  if (state.editorCodeTab === "css") {
+    const files = Array.isArray(state.editorCodeSource?.css?.files)
+      ? state.editorCodeSource.css.files.map((item) => item.path).filter(Boolean)
+      : [];
+    return files.length ? files.join(" + ") : "CSS";
+  }
+  return state.editorCodeSource?.html?.path || "HTML";
 }
 
 function renderWebEditor() {
