@@ -126,6 +126,10 @@ const state = {
   editorSharedDraftSaving: false,
   editorDevtoolsTab: "elements",
   editorDevtoolsData: null,
+  editorDockRatio: (() => {
+    const value = Number(sessionStorage.getItem("well-editor-dock-ratio") || 0.58);
+    return Number.isFinite(value) ? Math.min(0.72, Math.max(0.28, value)) : 0.58;
+  })(),
   supportPagePickerSection: ""
 };
 
@@ -2646,6 +2650,12 @@ function renderWebEditor() {
             </div>
 
             ${state.editorPreviewMode === "code" ? `
+              <button
+                class="editor-dock-resizer"
+                type="button"
+                aria-label="Resize code editor"
+                title="Drag to resize"
+              ></button>
               <aside class="editor-code-dock">
                 <div class="editor-preview-browser-bar">
                   <i></i><i></i><i></i>
@@ -2681,11 +2691,17 @@ function renderWebEditor() {
             ` : ""}
 
             ${state.editorPreviewMode === "devtools" ? `
+              <button
+                class="editor-dock-resizer"
+                type="button"
+                aria-label="Resize DevTools"
+                title="Drag to resize"
+              ></button>
               <section class="editor-devtools-dock">
                 <header>
                   <div>
-                    <strong>Chrome DevTools</strong>
-                    <span>Rendered preview inspector</span>
+                    <strong>DevTools</strong>
+                    <span>Rendered page inspector</span>
                   </div>
                   <div>
                     <button id="editor-devtools-refresh" type="button">Refresh</button>
@@ -2759,6 +2775,49 @@ function renderWebEditor() {
   const frame = document.querySelector("#web-editor-frame");
   const browser = document.querySelector("#web-editor-browser");
   const previewCanvas = document.querySelector(".editor-preview-placeholder.is-fullscreen");
+  const dockResizer = document.querySelector(".editor-dock-resizer");
+
+  const applyDockRatio = () => {
+    if (!previewCanvas) return;
+    const ratio = Math.min(0.72, Math.max(0.28, Number(state.editorDockRatio || 0.58)));
+    previewCanvas.style.setProperty("--editor-dock-left", `${ratio * 100}%`);
+    previewCanvas.style.setProperty("--editor-dock-right", `${(1 - ratio) * 100}%`);
+  };
+
+  applyDockRatio();
+
+  if (dockResizer && previewCanvas) {
+    const beginDockResize = (event) => {
+      if (event.button !== undefined && event.button !== 0) return;
+      event.preventDefault();
+      dockResizer.setPointerCapture?.(event.pointerId);
+      document.body.classList.add("is-resizing-editor-dock");
+
+      const onMove = (moveEvent) => {
+        const rect = previewCanvas.getBoundingClientRect();
+        if (!rect.width) return;
+        const x = Math.min(rect.right, Math.max(rect.left, moveEvent.clientX));
+        const ratio = (x - rect.left) / rect.width;
+        state.editorDockRatio = Math.min(0.72, Math.max(0.28, ratio));
+        sessionStorage.setItem("well-editor-dock-ratio", String(state.editorDockRatio));
+        applyDockRatio();
+        syncPreviewViewport();
+      };
+
+      const finish = () => {
+        document.body.classList.remove("is-resizing-editor-dock");
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", finish);
+        window.removeEventListener("pointercancel", finish);
+      };
+
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", finish, { once: true });
+      window.addEventListener("pointercancel", finish, { once: true });
+    };
+
+    dockResizer.addEventListener("pointerdown", beginDockResize);
+  }
   const openPage = document.querySelector("#web-editor-open-page");
   const previewPath = document.querySelector("#web-editor-preview-path");
   const browserUrl = document.querySelector("#web-editor-browser-url");
