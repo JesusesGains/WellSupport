@@ -96,14 +96,14 @@ textarea {
 .auth-brand {
   display: flex;
   align-items: center;
-  gap: 13px;
   margin-bottom: 34px;
 }
 
-.auth-brand .brand-mark {
-  width: 52px;
-  height: 52px;
-  border-radius: 16px;
+.auth-logo {
+  display: block;
+  width: min(100%, 300px);
+  height: auto;
+  object-fit: contain;
 }
 
 .brand-mark {
@@ -111,8 +111,8 @@ textarea {
   width: 44px;
   height: 44px;
   flex: 0 0 auto;
-  border-radius: 14px;
-  object-fit: cover;
+  border-radius: 999px;
+  object-fit: contain;
 }
 
 .auth-brand-copy,
@@ -270,9 +270,9 @@ textarea {
 }
 
 .sidebar-brand .brand-mark {
-  width: 40px;
-  height: 40px;
-  border-radius: 13px;
+  width: 44px;
+  height: 44px;
+  border-radius: 999px;
 }
 
 .sidebar-brand-copy strong {
