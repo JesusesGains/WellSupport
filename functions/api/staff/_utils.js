@@ -253,7 +253,11 @@ export function hasStaffPermission(session, permission) {
 export function requireStaffPermission(session, permission) {
   if (hasStaffPermission(session, permission)) return null;
   return sessionResponse(
-    { error: "Your Well Support role does not allow this action." },
+    {
+      error: "Your Well Support role does not allow this action.",
+      code: "insufficient_role",
+      requiredPermission: String(permission || "")
+    },
     session,
     403
   );
