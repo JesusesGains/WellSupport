@@ -1,6 +1,6 @@
 const PREVIEW_ORIGIN = "https://wellwebsite.pages.dev";
 const PRESENCE_POLL_MS = 550;
-const NOTES_POLL_MS = 2000;
+const NOTES_POLL_MS = 650;
 const CURSOR_WRITE_MS = 240;
 const HEARTBEAT_MS = 4000;
 
@@ -30,6 +30,7 @@ const collab = {
   cursorWriteTimer: null,
   presenceTimer: null,
   notesTimer: null,
+  notesLoading: false,
   heartbeatTimer: null,
   unavailable: false,
   presenceSignature: "",
@@ -617,8 +618,9 @@ async function loadPresence() {
 }
 
 async function loadNotes() {
-  if (!currentFrame()) return;
+  if (!currentFrame() || collab.notesLoading) return;
   collab.page = currentPage();
+  collab.notesLoading = true;
 
   try {
     const result = await collabRequest(
@@ -655,6 +657,8 @@ async function loadNotes() {
     }
   } catch (error) {
     if (error?.status === 503) collab.unavailable = true;
+  } finally {
+    collab.notesLoading = false;
   }
 }
 
@@ -712,6 +716,7 @@ function stopCollaboration() {
   }
   collab.presenceTimer = null;
   collab.notesTimer = null;
+  collab.notesLoading = false;
   collab.heartbeatTimer = null;
   if (collab.noteSaveTimer) window.clearTimeout(collab.noteSaveTimer);
   collab.noteSaveTimer = null;
