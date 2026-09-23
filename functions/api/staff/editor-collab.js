@@ -83,7 +83,11 @@ function cleanAnchor(value) {
           pageX: Math.max(0, finiteNumber(box.pageX)),
           pageY: Math.max(0, finiteNumber(box.pageY)),
           width: Math.min(5000, Math.max(8, finiteNumber(box.width, 8))),
-          height: Math.min(5000, Math.max(8, finiteNumber(box.height, 8)))
+          height: Math.min(5000, Math.max(8, finiteNumber(box.height, 8))),
+          offsetX: Math.min(1, Math.max(0, finiteNumber(box.offsetX))),
+          offsetY: Math.min(1, Math.max(0, finiteNumber(box.offsetY))),
+          widthRatio: Math.min(1, Math.max(0.002, finiteNumber(box.widthRatio, 0.002))),
+          heightRatio: Math.min(1, Math.max(0.002, finiteNumber(box.heightRatio, 0.002)))
         }
       : null
   };
