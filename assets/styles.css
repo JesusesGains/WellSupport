@@ -8895,27 +8895,3 @@ body.is-resizing-editor-dock iframe {
   }
 }
 
-@media (max-width: 1040px) {
-  .editor-fullscreen-topbar .editor-device-toolbar button {
-    width: 31px;
-    padding: 0;
-    overflow: hidden;
-    font-size: 0;
-  }
-
-  .editor-fullscreen-topbar .editor-device-toolbar button::first-letter {
-    font-size: .56rem;
-  }
-
-  .editor-fullscreen-topbar .editor-interaction-toolbar button span,
-  .editor-fullscreen-topbar .editor-tool-toolbar button span,
-  .editor-notes-mode-button span {
-    display: none;
-  }
-
-  .editor-notes-mode-button {
-    width: 32px;
-    justify-content: center;
-    padding-inline: 0;
-  }
-}
