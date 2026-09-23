@@ -107,10 +107,13 @@ const state = {
   editorAssetDrafts: [],
   editorAssetUploadBusy: false,
   editorPreviewMode: "visual",
-  editorCodeTab: "html",
   editorCodeSource: null,
   editorCodeSourceKey: "",
   editorCodeLoading: false,
+  editorCodeDraft: "",
+  editorCodeOriginal: "",
+  editorCodeDirty: false,
+  editorCodeSaving: false,
   editorHistoryOpen: false,
   editorVersionHistory: [],
   editorAuditHistory: [],
@@ -2089,7 +2092,7 @@ async function stageEditorProductionRestore(sourceSha) {
   }
 }
 
-async function loadEditorCodeSource({ quiet = false } = {}) {
+async function loadEditorCodeSource({ quiet = false, force = false } = {}) {
   if (!state.editorStatus?.connected || state.editorCodeLoading) return;
 
   const target = state.editorMode === "production" ? "production" : "beta";
@@ -2097,7 +2100,7 @@ async function loadEditorCodeSource({ quiet = false } = {}) {
     ? state.editorStatus?.beta?.sha || ""
     : state.editorStatus?.main?.sha || ""}`;
 
-  if (state.editorCodeSourceKey === key && state.editorCodeSource) return;
+  if (!force && state.editorCodeSourceKey === key && state.editorCodeSource) return;
 
   state.editorCodeLoading = true;
   if (state.currentView === "editor" && state.editorPreviewMode === "code") {
@@ -2110,11 +2113,17 @@ async function loadEditorCodeSource({ quiet = false } = {}) {
     );
     state.editorCodeSource = result;
     state.editorCodeSourceKey = key;
+    state.editorCodeOriginal = String(result?.html?.content || "");
+    state.editorCodeDraft = state.editorCodeOriginal;
+    state.editorCodeDirty = false;
   } catch (error) {
     state.editorCodeSource = {
       error: error?.message || "Unable to load website source."
     };
     state.editorCodeSourceKey = key;
+    state.editorCodeOriginal = "";
+    state.editorCodeDraft = "";
+    state.editorCodeDirty = false;
     if (!quiet) showToast(state.editorCodeSource.error, "error");
   } finally {
     state.editorCodeLoading = false;
@@ -2125,20 +2134,123 @@ async function loadEditorCodeSource({ quiet = false } = {}) {
 }
 
 function editorCodeContent() {
-  if (!state.editorCodeSource) return "";
-  return state.editorCodeTab === "css"
-    ? String(state.editorCodeSource?.css?.content || "")
-    : String(state.editorCodeSource?.html?.content || "");
+  return String(
+    state.editorCodeDraft ||
+    state.editorCodeSource?.html?.content ||
+    ""
+  );
 }
 
 function editorCodeFileLabel() {
-  if (state.editorCodeTab === "css") {
-    const files = Array.isArray(state.editorCodeSource?.css?.files)
-      ? state.editorCodeSource.css.files.map((item) => item.path).filter(Boolean)
-      : [];
-    return files.length ? files.join(" + ") : "CSS";
-  }
   return state.editorCodeSource?.html?.path || "HTML";
+}
+
+function highlightHtmlTag(tag) {
+  if (/^<!--/.test(tag)) {
+    return `<span class="html-comment">${escapeEditorAttribute(tag)}</span>`;
+  }
+  if (/^<!doctype/i.test(tag)) {
+    return `<span class="html-doctype">${escapeEditorAttribute(tag)}</span>`;
+  }
+
+  const match = tag.match(/^(<\/?)([A-Za-z][A-Za-z0-9:-]*)([\s\S]*?)(\/?>)$/);
+  if (!match) return escapeEditorAttribute(tag);
+
+  const [, open, name, rawAttrs, close] = match;
+  let attrs = "";
+  let cursor = 0;
+  const attrPattern = /(\s+)([A-Za-z_:][A-Za-z0-9:._-]*)(\s*=\s*)("[^"]*"|'[^']*'|[^\s>]+)/g;
+  let attrMatch;
+
+  while ((attrMatch = attrPattern.exec(rawAttrs))) {
+    attrs += escapeEditorAttribute(rawAttrs.slice(cursor, attrMatch.index));
+    attrs += escapeEditorAttribute(attrMatch[1]);
+    attrs += `<span class="html-attr">${escapeEditorAttribute(attrMatch[2])}</span>`;
+    attrs += `<span class="html-punct">${escapeEditorAttribute(attrMatch[3])}</span>`;
+    attrs += `<span class="html-string">${escapeEditorAttribute(attrMatch[4])}</span>`;
+    cursor = attrPattern.lastIndex;
+  }
+
+  attrs += escapeEditorAttribute(rawAttrs.slice(cursor));
+
+  return [
+    `<span class="html-punct">${escapeEditorAttribute(open)}</span>`,
+    `<span class="html-tag">${escapeEditorAttribute(name)}</span>`,
+    attrs,
+    `<span class="html-punct">${escapeEditorAttribute(close)}</span>`
+  ].join("");
+}
+
+function highlightHtmlSource(source) {
+  const text = String(source || "");
+  const pattern = /<!--[\s\S]*?-->|<!DOCTYPE[\s\S]*?>|<\/?[A-Za-z][^>]*>/gi;
+  let result = "";
+  let cursor = 0;
+  let match;
+
+  while ((match = pattern.exec(text))) {
+    result += escapeEditorAttribute(text.slice(cursor, match.index));
+    result += highlightHtmlTag(match[0]);
+    cursor = pattern.lastIndex;
+  }
+
+  result += escapeEditorAttribute(text.slice(cursor));
+  return result;
+}
+
+async function saveEditorCodeSource() {
+  if (
+    state.editorMode !== "beta" ||
+    state.editorCodeSaving ||
+    !state.editorCodeDirty
+  ) {
+    return;
+  }
+
+  const expectedBetaSha = state.editorStatus?.beta?.sha || "";
+  const expectedFileSha = state.editorCodeSource?.html?.sha || "";
+  if (!expectedBetaSha || !expectedFileSha) {
+    showToast("Reload the page source before saving.", "error");
+    return;
+  }
+
+  state.editorCodeSaving = true;
+  const button = document.querySelector("#editor-code-save");
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Building preview…";
+  }
+
+  try {
+    const result = await apiRequest("/editor-code-save", {
+      method: "POST",
+      body: {
+        page: state.editorPage,
+        expectedBetaSha,
+        expectedFileSha,
+        content: state.editorCodeDraft
+      }
+    });
+
+    state.editorCodeOriginal = state.editorCodeDraft;
+    state.editorCodeDirty = false;
+    state.editorCodeSource = null;
+    state.editorCodeSourceKey = "";
+    state.editorStatus = null;
+    state.editorDraftKey = "";
+
+    await loadWebEditorStatus({ quiet: true });
+    await loadEditorCodeSource({ quiet: true, force: true });
+
+    showToast(
+      `HTML saved to beta-main as ${String(result.commitSha || "").slice(0, 7)}. Review the Cloudflare preview before publishing live.`
+    );
+  } catch (error) {
+    showToast(error?.message || "Unable to save HTML source.", "error");
+  } finally {
+    state.editorCodeSaving = false;
+    if (state.currentView === "editor") renderWebEditor();
+  }
 }
 
 
