@@ -17,6 +17,7 @@ const collab = {
   noteMode: false,
   notesOpen: false,
   notes: [],
+  allNotes: [],
   presence: [],
   self: null,
   selfColour: "#2F65A0",
@@ -209,7 +210,62 @@ function renderPresence() {
   }
 }
 
-function noteCard(note) {
+function notePageLabel(pagePath) {
+  const value = String(pagePath || "/");
+  if (value === "/") return "Home";
+  return value
+    .replace(/^\/+|\.html$/g, "")
+    .split("/")
+    .filter(Boolean)
+    .map((part) =>
+      part
+        .replace(/[-_]+/g, " ")
+        .replace(/\b\w/g, (letter) => letter.toUpperCase())
+    )
+    .join(" · ") || "Home";
+}
+
+function orderedNotes(notes) {
+  const open = notes.filter((note) => !note.resolved);
+  const resolved = notes.filter((note) => note.resolved);
+  return [...open, ...resolved];
+}
+
+function notesSection(title, notes, { showPage = false } = {}) {
+  const section = document.createElement("section");
+  section.className = "editor-note-section";
+
+  const heading = document.createElement("div");
+  heading.className = "editor-note-section-heading";
+
+  const label = document.createElement("strong");
+  label.textContent = title;
+
+  const count = document.createElement("span");
+  count.textContent = String(notes.length);
+
+  heading.append(label, count);
+  section.appendChild(heading);
+
+  const items = document.createElement("div");
+  items.className = "editor-note-section-items";
+
+  if (!notes.length) {
+    const empty = document.createElement("div");
+    empty.className = "editor-note-empty";
+    empty.textContent = "No notes yet.";
+    items.appendChild(empty);
+  } else {
+    for (const note of orderedNotes(notes)) {
+      items.appendChild(noteCard(note, { showPage }));
+    }
+  }
+
+  section.appendChild(items);
+  return section;
+}
+
+function noteCard(note, { showPage = false } = {}) {
   const card = document.createElement("article");
   card.className = `editor-note-card${note.resolved ? " is-resolved" : ""}`;
   card.dataset.noteId = note.id;
@@ -227,6 +283,7 @@ function noteCard(note) {
   const meta = document.createElement("small");
   const date = note.created_at ? new Date(note.created_at) : null;
   meta.textContent = [
+    showPage ? notePageLabel(note.page_path) : "",
     note.created_by_name || "Staff",
     date && !Number.isNaN(date.getTime())
       ? new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }).format(date)
@@ -255,10 +312,21 @@ function noteCard(note) {
 
 function upsertLocalNote(note) {
   if (!note?.id) return;
-  const index = collab.notes.findIndex((item) => item.id === note.id);
-  if (index >= 0) collab.notes[index] = { ...collab.notes[index], ...note };
-  else collab.notes.unshift(note);
+
+  const pageIndex = collab.notes.findIndex((item) => item.id === note.id);
+  if (note.page_path === currentPage()) {
+    if (pageIndex >= 0) collab.notes[pageIndex] = { ...collab.notes[pageIndex], ...note };
+    else collab.notes.unshift(note);
+  } else if (pageIndex >= 0) {
+    collab.notes.splice(pageIndex, 1);
+  }
+
+  const allIndex = collab.allNotes.findIndex((item) => item.id === note.id);
+  if (allIndex >= 0) collab.allNotes[allIndex] = { ...collab.allNotes[allIndex], ...note };
+  else collab.allNotes.unshift(note);
+
   ensurePresenceControl();
+  ensureNoteTool();
   sendNotesToPreview();
 }
 
@@ -504,17 +572,35 @@ function renderNotesPanel() {
   const list = document.createElement("div");
   list.className = "editor-note-list";
 
-  const openNotes = collab.notes.filter((note) => !note.resolved);
-  const resolvedNotes = collab.notes.filter((note) => note.resolved);
-  const ordered = [...openNotes, ...resolvedNotes];
+  const pageNotes = collab.notes;
+  const otherNotes = collab.allNotes.filter(
+    (note) => note.page_path !== currentPage()
+  );
 
-  if (!ordered.length) {
-    const empty = document.createElement("div");
-    empty.className = "editor-note-empty";
-    empty.textContent = "Click + above, then click a section or drag over the exact area you want to highlight.";
-    list.appendChild(empty);
+  if (pageNotes.length) {
+    list.appendChild(
+      notesSection("This page’s notes", pageNotes)
+    );
+
+    const separator = document.createElement("div");
+    separator.className = "editor-note-section-separator";
+    list.appendChild(separator);
+
+    list.appendChild(
+      notesSection("All notes", otherNotes, { showPage: true })
+    );
   } else {
-    for (const note of ordered) list.appendChild(noteCard(note));
+    const allNotes = collab.allNotes;
+    if (allNotes.length) {
+      list.appendChild(
+        notesSection("All notes", allNotes, { showPage: true })
+      );
+    } else {
+      const empty = document.createElement("div");
+      empty.className = "editor-note-empty";
+      empty.textContent = "No notes yet. Click + above to create one.";
+      list.appendChild(empty);
+    }
   }
 
   panel.appendChild(list);
@@ -628,13 +714,19 @@ async function loadNotes() {
     );
     collab.unavailable = result.available === false;
     const nextNotes = Array.isArray(result.notes) ? result.notes : [];
+    const nextAllNotes = Array.isArray(result.allNotes)
+      ? result.allNotes
+      : nextNotes;
+
     if (result.self) {
       collab.self = result.self;
       collab.selfColour = result.self.colour || collab.selfColour;
     }
+
     const signature = JSON.stringify(
-      nextNotes.map((note) => [
+      nextAllNotes.map((note) => [
         note.id,
+        note.page_path,
         note.updated_at,
         note.resolved,
         note.body,
@@ -648,10 +740,13 @@ async function loadNotes() {
         note.anchor?.box?.height
       ])
     );
+
     if (signature !== collab.notesSignature) {
       collab.notesSignature = signature;
       collab.notes = nextNotes;
+      collab.allNotes = nextAllNotes;
       ensurePresenceControl();
+      ensureNoteTool();
       if (document.activeElement?.id !== "editor-note-draft") renderNotesPanel();
       sendNotesToPreview();
     }
@@ -724,6 +819,7 @@ function stopCollaboration() {
   collab.frame = null;
   collab.presence = [];
   collab.notes = [];
+  collab.allNotes = [];
   collab.presenceSignature = "";
   collab.peopleSignature = "";
   collab.notesSignature = "";
@@ -798,7 +894,9 @@ document.addEventListener("click", async (event) => {
 
   const goto = event.target?.closest?.("[data-note-goto]");
   if (goto) {
-    const note = collab.notes.find((item) => item.id === goto.dataset.noteGoto);
+    const note =
+      collab.notes.find((item) => item.id === goto.dataset.noteGoto) ||
+      collab.allNotes.find((item) => item.id === goto.dataset.noteGoto);
     if (!note) return;
     collab.selectedNoteId = note.id;
     postToPreview("WCG_EDITOR_GOTO_NOTE", { anchor: note.anchor || {}, noteId: note.id });
@@ -807,7 +905,9 @@ document.addEventListener("click", async (event) => {
 
   const resolve = event.target?.closest?.("[data-note-resolve]");
   if (resolve) {
-    const note = collab.notes.find((item) => item.id === resolve.dataset.noteResolve);
+    const note =
+      collab.notes.find((item) => item.id === resolve.dataset.noteResolve) ||
+      collab.allNotes.find((item) => item.id === resolve.dataset.noteResolve);
     if (!note) return;
     resolve.disabled = true;
     try {
@@ -829,7 +929,9 @@ document.addEventListener("click", async (event) => {
 
   const remove = event.target?.closest?.("[data-note-delete]");
   if (remove) {
-    const note = collab.notes.find((item) => item.id === remove.dataset.noteDelete);
+    const note =
+      collab.notes.find((item) => item.id === remove.dataset.noteDelete) ||
+      collab.allNotes.find((item) => item.id === remove.dataset.noteDelete);
     if (!note) return;
 
     const card = remove.closest(".editor-note-card");
@@ -847,6 +949,7 @@ document.addEventListener("click", async (event) => {
       });
 
       collab.notes = collab.notes.filter((item) => item.id !== note.id);
+      collab.allNotes = collab.allNotes.filter((item) => item.id !== note.id);
       collab.selectedNoteId =
         collab.selectedNoteId === note.id ? "" : collab.selectedNoteId;
       collab.notesSignature = "";
@@ -867,6 +970,7 @@ document.addEventListener("change", (event) => {
   collab.page = currentPage();
   collab.lastCursor = { visible: false };
   collab.notes = [];
+  collab.allNotes = [];
   collab.notesSignature = "";
   collab.presenceSignature = "";
   collab.peopleSignature = "";
