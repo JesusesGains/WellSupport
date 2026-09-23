@@ -8895,3 +8895,53 @@ body.is-resizing-editor-dock iframe {
   }
 }
 
+
+
+/* Persistent notes header controls */
+.editor-notes-panel > header > .editor-notes-header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.editor-notes-header-actions button {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid rgba(48,70,96,.11);
+  border-radius: 8px;
+  color: #64746c;
+  background: #f7f9f8;
+  cursor: pointer;
+  transition:
+    color 120ms ease,
+    background 120ms ease,
+    border-color 120ms ease,
+    transform 120ms ease;
+}
+
+.editor-notes-header-actions button:hover {
+  color: #304660;
+  border-color: rgba(47,101,160,.28);
+  background: #f3f8fd;
+}
+
+.editor-notes-header-actions .editor-notes-add {
+  color: #fff;
+  border-color: #2f65a0;
+  background: #2f65a0;
+  font: 800 20px/1 "DM Sans",system-ui,sans-serif;
+}
+
+.editor-notes-header-actions .editor-notes-add:hover {
+  color: #fff;
+  border-color: #24578a;
+  background: #24578a;
+  transform: translateY(-1px);
+}
+
+.editor-notes-header-actions .editor-notes-close {
+  font: 700 18px/1 system-ui,sans-serif;
+}
