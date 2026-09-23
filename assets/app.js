@@ -3444,6 +3444,9 @@ function renderWebEditor() {
       state.editorAssets = [];
       state.editorCodeSource = null;
       state.editorCodeSourceKey = "";
+      state.editorCodeDraft = "";
+      state.editorCodeOriginal = "";
+      state.editorCodeDirty = false;
       if (next !== "beta") state.editorAssetDrafts = [];
       renderWebEditor();
     });
@@ -3459,6 +3462,9 @@ function renderWebEditor() {
     state.editorSelectedObject = null;
     state.editorCodeSource = null;
     state.editorCodeSourceKey = "";
+    state.editorCodeDraft = "";
+    state.editorCodeOriginal = "";
+    state.editorCodeDirty = false;
     renderWebEditor();
   });
 
@@ -3729,11 +3735,22 @@ function renderWebEditor() {
 
   document.querySelector("#web-editor-refresh")?.addEventListener("click", () => {
     if (state.editorPreviewMode === "code") {
+      if (
+        state.editorCodeDirty &&
+        !window.confirm("Discard unsaved HTML changes and reload the current source?")
+      ) {
+        return;
+      }
+
       state.editorCodeSource = null;
       state.editorCodeSourceKey = "";
-      loadEditorCodeSource();
+      state.editorCodeDraft = "";
+      state.editorCodeOriginal = "";
+      state.editorCodeDirty = false;
+      loadEditorCodeSource({ force: true });
       return;
     }
+
     if (frame) frame.src = iframeUrl(true);
   });
 
