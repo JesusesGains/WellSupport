@@ -143,6 +143,8 @@ The Web Editor has two embedded preview modes:
 
 The source endpoint reads from the selected `WellWebsite` branch server-side. It does not expose the GitHub token to the browser and it does not allow source writes.
 
+Page-level visual drafts are also persisted through `public.support_editor_drafts` when the companion Supabase schema has been applied. Draft saves use the current beta SHA plus a revision number so a stale browser cannot silently overwrite another staff member's newer draft. Uploaded image binaries remain local until beta publish.
+
 ## Developer AI
 
 `/developer-ai` is an internal staff-only coding assistant connected to `WellWebsite/beta-main`.
@@ -167,9 +169,11 @@ Developer AI cannot:
 
 Source patches are guarded by the beta commit SHA used to generate them. If `beta-main` changes before a staff member applies the patch, the write is rejected and the AI proposal must be regenerated.
 
+The Web Editor also exposes production version history. A publisher/admin can stage an older production tree as a **new beta restore commit** only when beta is clean. The restored version must then pass the normal Cloudflare preview and reviewed-SHA promotion flow; history restore never rewrites `main` directly.
+
 ## Editor audit and permissions
 
-The companion schema in `WellWebsite/supabase/support_chat.sql` adds staff roles and `public.support_editor_audit`. Beta publishes, main→beta syncs, production promotions and applied Developer AI patches write an audit event when the audit schema is available.
+The companion schema in `WellWebsite/supabase/support_chat.sql` adds staff roles, `public.support_editor_audit`, and `public.support_editor_drafts`. Beta publishes, main→beta syncs, production promotions and applied Developer AI patches write an audit event when the audit schema is available.
 
 During migration, existing staff rows are assigned `admin` to preserve the access they already had. New staff rows default to `support`.
 
