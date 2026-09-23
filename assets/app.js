@@ -2202,7 +2202,10 @@ function highlightHtmlSource(source) {
   return result;
 }
 function escapeSourceRegExp(value) {
-  return String(value || "").replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&");
+  const specials = new Set(["\\", "^", "$", ".", "*", "+", "?", "(", ")", "[", "]", "{", "}", "|"]);
+  return [...String(value || "")].map((character) =>
+    specials.has(character) ? "\\" + character : character
+  ).join("");
 }
 function sourceRangeForSelection(source, hint) {
   const html = String(source || "");
