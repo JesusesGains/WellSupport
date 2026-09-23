@@ -96,23 +96,23 @@ textarea {
 .auth-brand {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 13px;
   margin-bottom: 34px;
 }
 
+.auth-brand .brand-mark {
+  width: 52px;
+  height: 52px;
+  border-radius: 16px;
+}
+
 .brand-mark {
-  display: grid;
+  display: block;
   width: 44px;
   height: 44px;
   flex: 0 0 auto;
-  place-items: center;
   border-radius: 14px;
-  color: #fff;
-  background:
-    linear-gradient(145deg, rgba(255,255,255,.12), transparent 46%),
-    var(--wcg-navy);
-  font-family: "DM Serif Display", Georgia, serif;
-  font-size: 1.15rem;
+  object-fit: cover;
 }
 
 .auth-brand-copy,
@@ -273,7 +273,6 @@ textarea {
   width: 40px;
   height: 40px;
   border-radius: 13px;
-  font-size: 1.05rem;
 }
 
 .sidebar-brand-copy strong {
