@@ -4231,6 +4231,7 @@ function renderWebEditor() {
     );
 
     state.editorDirty = editorPendingChangeCount() > 0;
+    scheduleSharedEditorDraft();
     state.editorSelectedText = null;
     state.editorSelectedObject = null;
 
