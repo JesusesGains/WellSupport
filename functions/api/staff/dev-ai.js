@@ -62,14 +62,61 @@ function scorePath(path, tokens, pageFile) {
   let score = 0;
   if (lower === pageFile.toLowerCase()) score += 100;
   if (lower.endsWith(`/${pageFile.toLowerCase()}`)) score += 90;
-  if (lower === "editor-overrides.json") score += 26;
-  if (lower === "src/data/navigation.js") score += 18;
-  if (lower === "src/data/editorlayout.json") score += 16;
-  if (/^(src|pages|components|styles|assets\/css)\//.test(lower)) score += 5;
+  if (lower === "styles.css") score += 42;
+  if (lower === "site-shell.js") score += 34;
+  if (lower === "script.js") score += 24;
+  if (lower === "editor-overrides.json") score += 18;
+  if (lower === "src/data/navigation.js") score += 16;
+  if (lower === "src/data/editorlayout.json") score += 14;
+  if (/^(src|pages|components|styles|assets\/css)\//.test(lower)) score += 6;
   for (const token of tokens) {
     if (lower.includes(token)) score += token.length >= 7 ? 9 : 5;
   }
   return score;
+}
+
+function sourceExcerpt(source, tokens, limit = 18000) {
+  const text = String(source || "");
+  if (text.length <= limit) return text;
+
+  const lower = text.toLowerCase();
+  const ranges = [[0, Math.min(3200, text.length)]];
+
+  for (const token of tokens.slice(0, 18)) {
+    let index = lower.indexOf(token);
+    let occurrences = 0;
+    while (index >= 0 && occurrences < 3 && ranges.length < 14) {
+      ranges.push([
+        Math.max(0, index - 1300),
+        Math.min(text.length, index + token.length + 2300)
+      ]);
+      occurrences += 1;
+      index = lower.indexOf(token, index + token.length);
+    }
+  }
+
+  ranges.sort((a, b) => a[0] - b[0]);
+  const merged = [];
+  for (const range of ranges) {
+    const previous = merged[merged.length - 1];
+    if (previous && range[0] <= previous[1] + 200) {
+      previous[1] = Math.max(previous[1], range[1]);
+    } else {
+      merged.push([...range]);
+    }
+  }
+
+  let output = "";
+  for (const [start, end] of merged) {
+    const chunk = text.slice(start, end);
+    if (output.length + chunk.length > limit) {
+      output += chunk.slice(0, Math.max(0, limit - output.length));
+      break;
+    }
+    output += `${output ? "\n\n/* … relevant excerpt … */\n\n" : ""}${chunk}`;
+  }
+
+  return output || text.slice(0, limit);
 }
 
 async function sourceContext(env, message, pagePath) {
@@ -112,7 +159,11 @@ async function sourceContext(env, message, pagePath) {
     try {
       const file = await readTextFile(env, BETA_BRANCH, candidate.path);
       const remaining = MAX_CONTEXT_CHARS - used;
-      const source = String(file.content || "").slice(0, Math.min(remaining, 18000));
+      const source = sourceExcerpt(
+        String(file.content || ""),
+        tokens,
+        Math.min(remaining, 18000)
+      );
       if (!source) continue;
       files.push({
         path: candidate.path,
@@ -213,7 +264,11 @@ export async function onRequestPost({ request, env }) {
     : null;
 
   try {
-    const context = await sourceContext(env, message, pagePath);
+    const context = await sourceContext(
+      env,
+      `${message}\n${safeJson(selection, 2200)}`,
+      pagePath
+    );
     const sourceBundle = context.files
       .map((file) => `--- ${file.path} @ ${file.sha} ---\n${file.source}`)
       .join("\n\n");
