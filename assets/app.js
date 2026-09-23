@@ -2986,6 +2986,75 @@ function renderWebEditor() {
   const bannerSave = document.querySelector("#editor-banner-save");
   const headerOrderList = document.querySelector("#editor-header-order-list");
   const shortCourseOrderList = document.querySelector("#editor-short-course-order-list");
+  const codeInput = document.querySelector("#editor-code-input");
+  const codeHighlight = document.querySelector("#editor-code-highlight");
+
+  const syncCodeEditorScroll = () => {
+    if (!codeInput || !codeHighlight) return;
+    codeHighlight.scrollTop = codeInput.scrollTop;
+    codeHighlight.scrollLeft = codeInput.scrollLeft;
+  };
+
+  const refreshCodeHighlight = () => {
+    if (!codeInput || !codeHighlight) return;
+    codeHighlight.innerHTML = `<code>${highlightHtmlSource(codeInput.value)}</code>`;
+    syncCodeEditorScroll();
+  };
+
+  codeInput?.addEventListener("input", () => {
+    state.editorCodeDraft = codeInput.value;
+    state.editorCodeDirty = state.editorCodeDraft !== state.editorCodeOriginal;
+    refreshCodeHighlight();
+
+    const save = document.querySelector("#editor-code-save");
+    if (save) {
+      save.disabled = !(editable && state.editorCodeDirty && !state.editorCodeSaving);
+    }
+
+    const meta = document.querySelector(".editor-code-meta small");
+    if (meta && state.editorMode === "beta") {
+      meta.textContent = state.editorCodeDirty
+        ? "Unsaved source changes · save to build a new beta preview"
+        : "beta-main source · editable";
+    }
+  });
+
+  codeInput?.addEventListener("scroll", syncCodeEditorScroll, { passive: true });
+
+  codeInput?.addEventListener("wheel", (event) => {
+    const maxTop = Math.max(0, codeInput.scrollHeight - codeInput.clientHeight);
+    const maxLeft = Math.max(0, codeInput.scrollWidth - codeInput.clientWidth);
+    if (!maxTop && !maxLeft) return;
+
+    const horizontal = event.shiftKey || Math.abs(event.deltaX) > Math.abs(event.deltaY);
+    const beforeTop = codeInput.scrollTop;
+    const beforeLeft = codeInput.scrollLeft;
+
+    if (horizontal && maxLeft) {
+      codeInput.scrollLeft = Math.min(maxLeft, Math.max(0, codeInput.scrollLeft + event.deltaX + event.deltaY));
+    } else if (maxTop) {
+      codeInput.scrollTop = Math.min(maxTop, Math.max(0, codeInput.scrollTop + event.deltaY));
+    }
+
+    if (
+      codeInput.scrollTop !== beforeTop ||
+      codeInput.scrollLeft !== beforeLeft
+    ) {
+      event.preventDefault();
+      syncCodeEditorScroll();
+    }
+  }, { passive: false });
+
+  codeInput?.addEventListener("keydown", (event) => {
+    if (event.key !== "Tab" || !editable) return;
+    event.preventDefault();
+    const start = codeInput.selectionStart;
+    const end = codeInput.selectionEnd;
+    codeInput.setRangeText("  ", start, end, "end");
+    codeInput.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+
+  document.querySelector("#editor-code-save")?.addEventListener("click", saveEditorCodeSource);
 
   if (pageSelect) pageSelect.value = state.editorPage;
 
