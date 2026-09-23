@@ -7508,7 +7508,11 @@ body.has-support-confirm-modal {
 }
 
 .editor-live-workspace {
-  grid-template-rows: minmax(0, 1fr) 52px;
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.editor-fullscreen-footer {
+  display: none !important;
 }
 
 .editor-live-toolbar {
