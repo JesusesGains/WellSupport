@@ -1925,6 +1925,324 @@ function bindEditorNavigationSortable(list, orderKey, editable) {
 }
 
 
+
+async function loadDeveloperAiStatus({ quiet = false } = {}) {
+  try {
+    state.devAiStatus = await apiRequest("/dev-ai");
+  } catch (error) {
+    state.devAiStatus = {
+      configured: false,
+      error: error?.message || "Developer AI is unavailable."
+    };
+    if (!quiet && error.status !== 403) {
+      showToast(state.devAiStatus.error, "error");
+    }
+  }
+
+  if (state.currentView === "devai") renderDeveloperAi();
+}
+
+function developerAiDraftBase() {
+  return editorDraftFromConfig(
+    state.editorPendingPages?.[state.editorPage] ||
+    editorPageConfig("beta", state.editorPage) ||
+    {}
+  );
+}
+
+function mergeDeveloperAiDraft(base, patch) {
+  const current = editorDraftFromConfig(base || {});
+  const incoming =
+    patch && typeof patch === "object" && !Array.isArray(patch)
+      ? patch
+      : {};
+
+  for (const key of ["heading", "copy", "accent", "font"]) {
+    if (Object.prototype.hasOwnProperty.call(incoming, key)) {
+      current[key] = String(incoming[key] ?? "");
+    }
+  }
+
+  if (incoming.text && typeof incoming.text === "object" && !Array.isArray(incoming.text)) {
+    current.text = { ...current.text, ...incoming.text };
+  }
+
+  for (const key of ["attributes", "styles"]) {
+    const section = incoming[key];
+    if (!section || typeof section !== "object" || Array.isArray(section)) continue;
+    current[key] = { ...current[key] };
+
+    for (const [selector, values] of Object.entries(section)) {
+      if (!values || typeof values !== "object" || Array.isArray(values)) continue;
+      current[key][selector] = {
+        ...(current[key][selector] || {}),
+        ...values
+      };
+    }
+  }
+
+  if (incoming.order && typeof incoming.order === "object" && !Array.isArray(incoming.order)) {
+    current.order = { ...current.order, ...incoming.order };
+  }
+
+  if (Array.isArray(incoming.elements)) {
+    const elements = new Map(
+      current.elements
+        .filter((item) => item?.id)
+        .map((item) => [String(item.id), { ...item }])
+    );
+
+    for (const item of incoming.elements) {
+      if (!item || typeof item !== "object") continue;
+      const id = String(item.id || "").trim();
+      if (!id) continue;
+      elements.set(id, { ...(elements.get(id) || {}), ...item, id });
+    }
+
+    current.elements = [...elements.values()];
+  }
+
+  return editorDraftFromConfig(current);
+}
+
+function developerAiMessageMarkup(message) {
+  const assistant = message?.role === "assistant";
+  const files = Array.isArray(message?.files) ? message.files.slice(0, 8) : [];
+  const warnings = Array.isArray(message?.warnings) ? message.warnings.slice(0, 5) : [];
+  const text = escapeEditorAttribute(message?.text || "").replace(/\n/g, "<br>");
+
+  return `
+    <article class="dev-ai-message ${assistant ? "is-assistant" : "is-user"}">
+      <div class="dev-ai-message-label">${assistant ? "Developer AI" : "You"}</div>
+      <div class="dev-ai-message-copy">${text}</div>
+      ${files.length ? `
+        <div class="dev-ai-file-list">
+          ${files.map((file) => `<code>${escapeEditorAttribute(file)}</code>`).join("")}
+        </div>
+      ` : ""}
+      ${warnings.length ? `
+        <div class="dev-ai-warning-list">
+          ${warnings.map((warning) => `<span>${escapeEditorAttribute(warning)}</span>`).join("")}
+        </div>
+      ` : ""}
+    </article>
+  `;
+}
+
+async function sendDeveloperAiMessage(event) {
+  event?.preventDefault?.();
+  if (state.devAiLoading) return;
+
+  const input = document.querySelector("#dev-ai-input");
+  const message = String(input?.value || "").trim();
+  if (!message) return;
+
+  if (!state.editorStatus && staffCan("editor")) {
+    await loadWebEditorStatus({ quiet: true });
+  }
+
+  const history = state.devAiMessages
+    .slice(-8)
+    .map((item) => ({ role: item.role, text: item.text }));
+
+  state.devAiMessages = [
+    ...state.devAiMessages.slice(-27),
+    { role: "user", text: message }
+  ];
+  state.devAiLoading = true;
+  state.devAiProposal = null;
+  if (input) input.value = "";
+  renderDeveloperAi();
+
+  try {
+    const result = await apiRequest("/dev-ai", {
+      method: "POST",
+      body: {
+        message,
+        pagePath: state.editorPage || "/",
+        selection: state.editorSelectedObject || state.editorSelectedText || null,
+        currentDraft: developerAiDraftBase(),
+        history
+      }
+    });
+
+    state.devAiMessages = [
+      ...state.devAiMessages,
+      {
+        role: "assistant",
+        text: result.answer || result.summary || "No explanation was returned.",
+        files: result.files || [],
+        warnings: result.warnings || []
+      }
+    ].slice(-30);
+
+    if (result.draft) {
+      state.devAiProposal = {
+        draft: result.draft,
+        betaSha: result.betaSha || null,
+        summary: result.summary || "Developer AI draft"
+      };
+    }
+  } catch (error) {
+    state.devAiMessages = [
+      ...state.devAiMessages,
+      {
+        role: "assistant",
+        text: error?.message || "Developer AI could not inspect the website.",
+        warnings: ["No change was applied."]
+      }
+    ].slice(-30);
+  } finally {
+    state.devAiLoading = false;
+    renderDeveloperAi();
+  }
+}
+
+async function applyDeveloperAiDraft() {
+  if (!state.devAiProposal?.draft) return;
+
+  if (!state.editorStatus && staffCan("editor")) {
+    await loadWebEditorStatus({ quiet: true });
+  }
+
+  const currentBetaSha = state.editorStatus?.beta?.sha || null;
+  if (
+    state.devAiProposal.betaSha &&
+    currentBetaSha &&
+    state.devAiProposal.betaSha !== currentBetaSha
+  ) {
+    showToast(
+      "beta-main changed after this AI suggestion was created. Ask Developer AI again before applying it.",
+      "error"
+    );
+    return;
+  }
+
+  state.editorMode = "beta";
+  const base = developerAiDraftBase();
+  applyEditorDraftSnapshot(base);
+  recordEditorHistory();
+  applyEditorDraftSnapshot(
+    mergeDeveloperAiDraft(base, state.devAiProposal.draft)
+  );
+  storeCurrentEditorDraft();
+  state.editorDirty = editorPendingChangeCount() > 0;
+  state.editorDraftKey = "";
+  state.devAiProposal = null;
+
+  showToast("AI change applied to the local editor draft. Nothing has been committed.");
+  setDashboardView("editor");
+}
+
+function renderDeveloperAi() {
+  const panel = document.querySelector("#chat-panel");
+  if (!panel) return;
+
+  panel.className = "chat-panel dev-ai-panel";
+  const status = state.devAiStatus;
+  const selection = state.editorSelectedObject || state.editorSelectedText;
+  const selectedLabel =
+    selection?.selector ||
+    selection?.tag ||
+    String(selection?.text || "").slice(0, 60) ||
+    "No element selected";
+
+  panel.innerHTML = `
+    <div class="dev-ai-view">
+      <header class="dev-ai-header">
+        <div>
+          <span class="dev-ai-eyebrow">beta-main · production stays human-only</span>
+          <h1>Developer AI</h1>
+          <p>Ask about the site, investigate implementation, or generate a safe visual-editor draft from the current beta source.</p>
+        </div>
+        <button id="dev-ai-open-editor" class="dev-ai-editor-button" type="button">
+          ${editorIcon()}
+          Web Editor
+        </button>
+      </header>
+
+      <section class="dev-ai-context-grid">
+        <article><span>Page</span><strong>${escapeEditorAttribute(state.editorPage || "/")}</strong></article>
+        <article><span>Selected</span><strong>${escapeEditorAttribute(selectedLabel)}</strong></article>
+        <article><span>Beta commit</span><strong class="is-mono">${escapeEditorAttribute(state.editorStatus?.beta?.sha || "Not loaded")}</strong></article>
+        <article><span>Model</span><strong>${escapeEditorAttribute(status?.model || (status?.configured === false ? "Not connected" : "Checking…"))}</strong></article>
+      </section>
+
+      ${status?.configured === false ? `
+        <section class="dev-ai-setup">
+          <strong>Connect Developer AI</strong>
+          <span>Add <code>${escapeEditorAttribute(status.requiredSecret || "OPENAI_API_KEY")}</code> as a server-side WellSupport Cloudflare secret. It is never exposed to the browser.</span>
+        </section>
+      ` : ""}
+
+      <section id="dev-ai-thread" class="dev-ai-thread" aria-live="polite">
+        ${state.devAiMessages.length
+          ? state.devAiMessages.map(developerAiMessageMarkup).join("")
+          : `
+            <div class="dev-ai-empty">
+              <div class="dev-ai-orb">${devAiIcon()}</div>
+              <h2>Work on the website in plain language</h2>
+              <p>Examples: “why is this section overflowing?”, “make the selected hero more compact”, or “which file controls this page?”</p>
+            </div>
+          `}
+        ${state.devAiLoading ? `
+          <article class="dev-ai-message is-assistant is-loading">
+            <div class="dev-ai-message-label">Developer AI</div>
+            <div class="dev-ai-thinking"><i></i><i></i><i></i></div>
+          </article>
+        ` : ""}
+      </section>
+
+      ${state.devAiProposal ? `
+        <section class="dev-ai-proposal">
+          <div>
+            <span>Proposed visual-editor change</span>
+            <strong>${escapeEditorAttribute(state.devAiProposal.summary)}</strong>
+            <small>Applies locally only. Review it visually before publishing beta.</small>
+          </div>
+          <button id="dev-ai-apply" type="button">Apply to draft</button>
+        </section>
+      ` : ""}
+
+      <form id="dev-ai-form" class="dev-ai-composer">
+        <textarea
+          id="dev-ai-input"
+          maxlength="5000"
+          rows="3"
+          placeholder="Ask Developer AI to inspect or change the website…"
+          ${state.devAiLoading || status?.configured === false ? "disabled" : ""}
+        ></textarea>
+        <div>
+          <span>Reads WellWebsite <b>beta-main</b> · no direct production write</span>
+          <button type="submit" ${state.devAiLoading || status?.configured === false ? "disabled" : ""}>Send</button>
+        </div>
+      </form>
+    </div>
+  `;
+
+  document.querySelector("#dev-ai-open-editor")?.addEventListener("click", () => {
+    setDashboardView("editor");
+  });
+  document.querySelector("#dev-ai-form")?.addEventListener("submit", sendDeveloperAiMessage);
+  document.querySelector("#dev-ai-input")?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      sendDeveloperAiMessage(event);
+    }
+  });
+  document.querySelector("#dev-ai-apply")?.addEventListener("click", applyDeveloperAiDraft);
+
+  const thread = document.querySelector("#dev-ai-thread");
+  if (thread) thread.scrollTop = thread.scrollHeight;
+
+  if (!state.devAiStatus) {
+    window.setTimeout(() => loadDeveloperAiStatus({ quiet: true }), 0);
+  }
+  if (!state.editorStatus && staffCan("editor")) {
+    window.setTimeout(() => loadWebEditorStatus({ quiet: true }), 0);
+  }
+}
+
 async function loadEditorCodeSource({ quiet = false } = {}) {
   if (!state.editorStatus?.connected || state.editorCodeLoading) return;
 
