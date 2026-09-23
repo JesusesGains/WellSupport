@@ -1032,12 +1032,16 @@ async function loadWebEditorStatus({ quiet = false } = {}) {
       state.editorStatus?.beta?.previewGate?.conclusion || ""
     ].join(":");
 
-    if (
-      state.currentView === "editor" &&
-      (!document.querySelector("#web-editor-frame") ||
-        previousRenderKey !== state.editorStatusRenderKey)
-    ) {
-      renderWebEditor();
+    if (state.currentView === "editor") {
+      const hasFrame = Boolean(document.querySelector("#web-editor-frame"));
+
+      if (!hasFrame || !previousRenderKey) {
+        // Initial hydration may build the editor once. After that, status
+        // polling must not replace the iframe or reset scroll/selection.
+        renderWebEditor();
+      } else if (previousRenderKey !== state.editorStatusRenderKey) {
+        postCurrentEditorDraftToPreview();
+      }
     }
   }
 }
@@ -1703,6 +1707,56 @@ function editorImageAssetOptions() {
   });
 }
 
+function currentEditorPreviewPayload() {
+  const comparison = state.editorStatus?.comparison || {};
+  const editable =
+    state.editorMode === "beta" &&
+    state.editorStatus?.connected === true &&
+    Number(comparison.behindBy || 0) <= 0;
+
+  return {
+    heading: state.editorHeadingDraft || "",
+    copy: state.editorCopyDraft || "",
+    accent: state.editorAccentDraft || "",
+    font: state.editorFontDraft || "",
+    text: { ...state.editorTextDrafts },
+    attributes: cloneEditorAttributeDrafts(state.editorAttributeDrafts),
+    styles: cloneEditorStyleDrafts(state.editorStyleDrafts),
+    order: cloneEditorOrderDrafts(state.editorOrderDrafts),
+    elements: cloneEditorElementDrafts(state.editorElementDrafts),
+    linkDestinations: EDITOR_LINK_DESTINATIONS.map(([href, label]) => ({ href, label })),
+    headerOrder: [...state.editorNavigationHeaderOrder],
+    shortCourseGroupOrder: [...state.editorNavigationGroupOrder],
+    layoutOrders: Object.fromEntries(
+      Object.entries(state.editorLayoutOrders || {}).map(([scope, order]) => [
+        scope,
+        Array.isArray(order) ? [...order] : []
+      ])
+    ),
+    banner: {
+      intervalMs: Number(state.editorBannerInterval || 5200),
+      items: state.editorBannerItems.map((item) => ({ ...item }))
+    },
+    assetPreviewMap: editorAssetPreviewMap(),
+    assetOptions: editorImageAssetOptions(),
+    editable
+  };
+}
+
+function postCurrentEditorDraftToPreview() {
+  const frame = document.querySelector("#web-editor-frame");
+  if (!frame?.contentWindow) return false;
+
+  frame.contentWindow.postMessage(
+    {
+      type: "WCG_EDITOR_PREVIEW",
+      payload: currentEditorPreviewPayload()
+    },
+    "https://wellwebsite.pages.dev"
+  );
+  return true;
+}
+
 function postEditorAssetsToPreview() {
   const frame = document.querySelector("#web-editor-frame");
   frame?.contentWindow?.postMessage(
@@ -1983,7 +2037,9 @@ async function loadSharedEditorDraft({ quiet = false } = {}) {
       showToast(error?.message || "Unable to load the shared website draft.", "error");
     }
   } finally {
-    if (state.currentView === "editor") renderWebEditor();
+    if (state.currentView === "editor") {
+      if (!postCurrentEditorDraftToPreview()) renderWebEditor();
+    }
   }
 }
 
@@ -3232,33 +3288,7 @@ function renderWebEditor() {
     browser.dataset.sourceWidth = String(viewport.width);
   };
 
-  const draftPayload = () => ({
-    heading: state.editorHeadingDraft || "",
-    copy: state.editorCopyDraft || "",
-    accent: state.editorAccentDraft || "",
-    font: state.editorFontDraft || "",
-    text: { ...state.editorTextDrafts },
-    attributes: cloneEditorAttributeDrafts(state.editorAttributeDrafts),
-    styles: cloneEditorStyleDrafts(state.editorStyleDrafts),
-    order: cloneEditorOrderDrafts(state.editorOrderDrafts),
-    elements: cloneEditorElementDrafts(state.editorElementDrafts),
-    linkDestinations: EDITOR_LINK_DESTINATIONS.map(([href, label]) => ({ href, label })),
-    headerOrder: [...state.editorNavigationHeaderOrder],
-    shortCourseGroupOrder: [...state.editorNavigationGroupOrder],
-    layoutOrders: Object.fromEntries(
-      Object.entries(state.editorLayoutOrders || {}).map(([scope, order]) => [
-        scope,
-        Array.isArray(order) ? [...order] : []
-      ])
-    ),
-    banner: {
-      intervalMs: Number(state.editorBannerInterval || 5200),
-      items: state.editorBannerItems.map((item) => ({ ...item }))
-    },
-    assetPreviewMap: editorAssetPreviewMap(),
-    assetOptions: editorImageAssetOptions(),
-    editable
-  });
+  const draftPayload = () => currentEditorPreviewPayload();
 
   const setDirty = () => {
     if (!editable) return;
@@ -4403,7 +4433,6 @@ function renderWebEditor() {
     postDraft();
     renderSelectedItem();
     showToast("Last change undone.");
-    renderWebEditor();
   });
 
   document.querySelector("#web-editor-redo")?.addEventListener("click", () => {
@@ -4413,7 +4442,6 @@ function renderWebEditor() {
     postDraft();
     renderSelectedItem();
     showToast("Change reapplied.");
-    renderWebEditor();
   });
 
   document.querySelector("#web-editor-sync")?.addEventListener(
