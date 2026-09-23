@@ -1481,12 +1481,14 @@ async function syncWebEditorBeta() {
     state.editorDirty = false;
     showToast("Preview updated from the live website.");
     renderWebEditor();
+    return true;
   } catch (error) {
     showToast(error?.message || "Unable to update the preview website.", "error");
     if (button) {
       button.disabled = false;
       button.textContent = "Update preview from live site";
     }
+    return false;
   }
 }
 
@@ -2575,7 +2577,8 @@ function renderWebEditor() {
   const comparison = state.editorStatus?.comparison || {};
   const betaBehind = Number(comparison.behindBy || 0) > 0;
   const betaAhead = Number(comparison.aheadBy || 0) > 0;
-  const editable = state.editorMode === "beta" && connected && !betaBehind;
+  const canEnterEdit = state.editorMode === "beta" && connected;
+  const editable = canEnterEdit && !betaBehind;
   const activeBannerTarget = state.editorMode === "production" ? "production" : "beta";
 
   if (state.editorBannerTarget !== activeBannerTarget && !state.editorBannerDirty) {
@@ -2678,9 +2681,9 @@ function renderWebEditor() {
                 class="${state.editorMode === "beta" && state.editorTool !== "view" ? "is-active" : ""}"
                 type="button"
                 data-editor-interaction="edit"
-                title="Click website content to edit it"
+                title="${betaBehind ? "Update the beta preview and enter Edit mode" : "Click website content to edit it"}"
                 aria-label="Edit website"
-                ${editable ? "" : "disabled"}
+                ${canEnterEdit ? "" : "disabled"}
               >✦ <span>Edit</span></button>
             </div>
 
@@ -4124,14 +4127,21 @@ function renderWebEditor() {
   });
 
   document.querySelectorAll("[data-editor-interaction]").forEach((button) => {
-    button.addEventListener("click", () => {
+    button.addEventListener("click", async () => {
       const nextMode =
         button.dataset.editorInteraction === "view" ? "view" : "edit";
 
-      // View is always available in BETA. Edit remains restricted to an
-      // editable beta branch. Switching modes never changes BETA/PRODUCTION
-      // and never reloads the iframe.
-      if (nextMode === "edit" && !editable) return;
+      // View is always available. Edit is always clickable on a connected
+      // BETA workspace. If beta-main is behind main, sync it first instead
+      // of dead-disabling the Edit button.
+      if (nextMode === "edit" && !canEnterEdit) return;
+
+      if (nextMode === "edit" && betaBehind) {
+        state.editorTool = "select";
+        showToast("Updating the beta preview before editing…");
+        await syncWebEditorBeta();
+        return;
+      }
 
       state.editorTool = nextMode === "view" ? "view" : "select";
 
