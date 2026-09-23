@@ -2441,23 +2441,55 @@ function renderWebEditor() {
       <header class="editor-fullscreen-topbar">
         <div class="editor-fullscreen-topbar-left">
           <button id="web-editor-exit" class="editor-topbar-icon-button" type="button" aria-label="Exit website editor">←</button>
+
           <div class="editor-fullscreen-title">
             <span>Well College Global</span>
             <strong>Website Editor</strong>
           </div>
 
-          <div class="editor-mode-switcher" role="group" aria-label="Website view">
-            <button
-              type="button"
-              data-editor-environment="beta"
-              class="${state.editorMode === "beta" ? "is-active" : ""}"
-            >Edit preview</button>
-            <button
-              type="button"
-              data-editor-environment="production"
-              class="${state.editorMode === "production" ? "is-active" : ""}"
-            >View live site</button>
+          <select id="web-editor-page" class="editor-header-select" aria-label="Website page">
+            <option value="/">Home</option>
+            <option value="/qualifications.html">Qualifications</option>
+            <option value="/short-courses.html">Short Courses</option>
+            <option value="/about.html">About</option>
+            <option value="/testimonials.html">Testimonials</option>
+            <option value="/faqs.html">FAQs</option>
+            <option value="/contact.html">Contact</option>
+          </select>
+
+          <div class="editor-mode-switcher" role="group" aria-label="Website branch">
+            <button type="button" data-editor-environment="beta" class="${state.editorMode === "beta" ? "is-active" : ""}">Edit preview</button>
+            <button type="button" data-editor-environment="production" class="${state.editorMode === "production" ? "is-active" : ""}">View live</button>
           </div>
+
+          <div class="editor-view-toolbar" role="group" aria-label="Editor mode">
+            <button class="${state.editorPreviewMode === "visual" ? "is-active" : ""}" type="button" data-editor-preview-mode="visual">Visual</button>
+            <button class="${state.editorPreviewMode === "code" ? "is-active" : ""}" type="button" data-editor-preview-mode="code">&lt;/&gt; Code</button>
+            <button class="${state.editorPreviewMode === "devtools" ? "is-active" : ""}" type="button" data-editor-preview-mode="devtools">DevTools</button>
+          </div>
+
+          ${state.editorPreviewMode !== "code" ? `
+            <div class="editor-device-toolbar" role="group" aria-label="Preview device size">
+              <button class="${state.editorDevice === "desktop" ? "is-active" : ""}" type="button" data-editor-device="desktop">Desktop</button>
+              <button class="${state.editorDevice === "tablet" ? "is-active" : ""}" type="button" data-editor-device="tablet">Tablet</button>
+              <button class="${state.editorDevice === "mobile" ? "is-active" : ""}" type="button" data-editor-device="mobile">Mobile</button>
+            </div>
+          ` : ""}
+
+          ${state.editorPreviewMode === "visual" ? `
+            <div class="editor-tool-toolbar" role="group" aria-label="Editor tools">
+              <button class="${state.editorTool === "select" ? "is-active" : ""}" type="button" data-editor-tool="select">↖ <span>Select</span></button>
+              <button class="${state.editorTool === "text-box" ? "is-active" : ""}" type="button" data-editor-tool="text-box">T <span>Text box</span></button>
+            </div>
+          ` : ""}
+
+          ${state.editorPreviewMode === "devtools" ? `
+            <div class="editor-code-tabs" role="group" aria-label="DevTools panel">
+              <button class="${state.editorDevtoolsTab === "elements" ? "is-active" : ""}" type="button" data-editor-devtools-tab="elements">Elements</button>
+              <button class="${state.editorDevtoolsTab === "styles" ? "is-active" : ""}" type="button" data-editor-devtools-tab="styles">Styles</button>
+              <button class="${state.editorDevtoolsTab === "console" ? "is-active" : ""}" type="button" data-editor-devtools-tab="console">Console</button>
+            </div>
+          ` : ""}
 
           <span class="editor-connection-pill ${connected ? "is-connected" : "is-disconnected"}">
             <i></i>
@@ -2467,22 +2499,8 @@ function renderWebEditor() {
 
         <div class="editor-fullscreen-topbar-right">
           <div class="editor-history-actions" role="group" aria-label="Undo and redo">
-            <button
-              id="web-editor-undo"
-              class="editor-topbar-icon-button"
-              type="button"
-              aria-label="Undo last change"
-              title="Undo"
-              ${canUndo ? "" : "disabled"}
-            >↶</button>
-            <button
-              id="web-editor-redo"
-              class="editor-topbar-icon-button"
-              type="button"
-              aria-label="Redo change"
-              title="Redo"
-              ${canRedo ? "" : "disabled"}
-            >↷</button>
+            <button id="web-editor-undo" class="editor-topbar-icon-button" type="button" aria-label="Undo last change" title="Undo" ${canUndo ? "" : "disabled"}>↶</button>
+            <button id="web-editor-redo" class="editor-topbar-icon-button" type="button" aria-label="Redo change" title="Redo" ${canRedo ? "" : "disabled"}>↷</button>
           </div>
 
           ${connected && betaBehind ? `
@@ -2493,405 +2511,28 @@ function renderWebEditor() {
             <button id="web-editor-promote" class="editor-topbar-button is-promote" type="button">Publish preview live</button>
           ` : ""}
 
-          <button id="web-editor-refresh" class="editor-topbar-button" type="button">Refresh preview</button>
+          <button id="web-editor-refresh" class="editor-topbar-button" type="button">${state.editorPreviewMode === "code" ? "Reload code" : "Refresh"}</button>
           <a id="web-editor-open-page" class="editor-topbar-button" target="_blank" rel="noopener noreferrer">Open page ↗</a>
 
-          <button
-            id="web-editor-preview-submit"
-            class="editor-topbar-button is-primary"
-            type="button"
-            ${editable && state.editorDirty ? "" : "disabled"}
-          >Publish beta preview</button>
+          ${state.editorPreviewMode === "code" ? `
+            <button
+              id="editor-code-save"
+              class="editor-topbar-button is-primary"
+              type="button"
+              ${editable && state.editorCodeDirty && !state.editorCodeSaving ? "" : "disabled"}
+            >${state.editorCodeSaving ? "Building preview…" : "Save code to beta preview"}</button>
+          ` : `
+            <button
+              id="web-editor-preview-submit"
+              class="editor-topbar-button is-primary"
+              type="button"
+              ${editable && state.editorDirty ? "" : "disabled"}
+            >Publish beta preview</button>
+          `}
         </div>
       </header>
 
       <div class="editor-fullscreen-body">
-        <aside class="editor-inspector">
-          <div class="editor-inspector-scroll">
-            <section class="editor-inspector-section is-first">
-              <div class="editor-inspector-heading">
-                <span>Choose a page</span>
-                <small>${state.editorMode === "beta" ? "Changes stay in preview until you publish" : "Live site is view-only"}</small>
-              </div>
-              <select id="web-editor-page" class="editor-inspector-select">
-                <option value="/">Home</option>
-                <option value="/qualifications.html">Qualifications</option>
-                <option value="/short-courses.html">Short Courses</option>
-                <option value="/about.html">About</option>
-                <option value="/testimonials.html">Testimonials</option>
-                <option value="/faqs.html">FAQs</option>
-                <option value="/contact.html">Contact</option>
-              </select>
-            </section>
-
-            <section class="editor-inspector-section editor-history-section">
-              <button id="editor-history-toggle" class="editor-assets-toggle" type="button">
-                <span>
-                  <strong>Version history</strong>
-                  <small>Restore safely through beta preview</small>
-                </span>
-                <b aria-hidden="true">${state.editorHistoryOpen ? "−" : "+"}</b>
-              </button>
-
-              ${state.editorHistoryOpen ? `
-                <div class="editor-version-list">
-                  ${state.editorHistoryLoading
-                    ? `<div class="editor-nav-order-empty">Loading production history…</div>`
-                    : state.editorVersionHistory.length
-                      ? state.editorVersionHistory.slice(0, 10).map((commit, index) => `
-                          <article class="editor-version-item ${index === 0 ? "is-current" : ""}">
-                            <div>
-                              <strong>${escapeEditorAttribute(commit.message || "Website update")}</strong>
-                              <span>
-                                <code>${escapeEditorAttribute(String(commit.sha || "").slice(0, 7))}</code>
-                                ${commit.authoredAt ? ` · ${escapeEditorAttribute(formatTime(commit.authoredAt))}` : ""}
-                                ${commit.author ? ` · ${escapeEditorAttribute(commit.author)}` : ""}
-                              </span>
-                            </div>
-                            ${index > 0 && state.editorMode === "beta" && staffCan("publish") ? `
-                              <button type="button" data-editor-restore-sha="${escapeEditorAttribute(commit.sha || "")}">Restore in beta</button>
-                            ` : index === 0 ? `<b>LIVE</b>` : ""}
-                          </article>
-                        `).join("")
-                      : `<div class="editor-nav-order-empty">No production history loaded.</div>`}
-                </div>
-                ${state.editorAuditHistory.length ? `
-                  <div class="editor-audit-list">
-                    <strong>Recent dashboard actions</strong>
-                    ${state.editorAuditHistory.slice(0, 8).map((entry) => `
-                      <div>
-                        <span>${escapeEditorAttribute(String(entry.action || "").replaceAll("_", " "))}</span>
-                        <small>${escapeEditorAttribute(entry.actor_display_name || "Staff")}${entry.created_at ? ` · ${escapeEditorAttribute(formatTime(entry.created_at))}` : ""}</small>
-                      </div>
-                    `).join("")}
-                  </div>
-                ` : ""}
-              ` : ""}
-            </section>
-
-            <section class="editor-inspector-section editor-visual-editor-info">
-              <div class="editor-inspector-heading">
-                <span>Visual editor</span>
-                <small>Edits happen on the page</small>
-              </div>
-              <div class="editor-visual-info-card">
-                <strong>Click directly in the preview</strong>
-                <span>Text, links, images and sections open controls beside the item you clicked. Drag supported sections and cards directly on the page. The sidebar now stays focused on page status, assets and publishing.</span>
-              </div>
-              <div class="editor-visual-info-status">
-                <span><i></i> ${state.editorSharedDraftAvailable === false ? "Drafts stay local until shared storage is enabled" : state.editorSharedDraftConflict ? "Shared draft changed elsewhere · reload required" : "Page drafts sync across staff"}</span>
-                <span><i></i> Publish beta preview creates the build</span>
-              </div>
-            </section>
-
-            <section class="editor-inspector-section editor-navigation-section editor-legacy-edit-controls">
-              <div class="editor-inspector-heading">
-                <span>Header navigation</span>
-                <small>Live draft · no commit yet</small>
-              </div>
-
-              <div class="editor-source-edit-note">
-                <strong>Edits website code</strong>
-                <span>Drag here or directly inside the website preview. Everything reflows live in the editor only. Nothing touches GitHub or Cloudflare until you click <b>Publish beta preview</b> in the top-right.</span>
-              </div>
-
-              <div class="editor-nav-order-group">
-                <div class="editor-nav-order-heading">
-                  <strong>Header sections</strong>
-                  <span>Drag here or directly in the live preview · desktop and mobile stay in sync</span>
-                </div>
-                <div id="editor-header-order-list" class="editor-nav-order-list">
-                  ${state.editorNavigationHeaderOrder.length
-                    ? state.editorNavigationHeaderOrder.map((key) =>
-                        editorNavigationItemMarkup(
-                          key,
-                          EDITOR_HEADER_NAV_LABELS[key] || key,
-                          editable
-                        )
-                      ).join("")
-                    : `<div class="editor-nav-order-empty">${state.editorNavigationLoading ? "Loading source…" : "Header source unavailable."}</div>`}
-                </div>
-              </div>
-
-              <div class="editor-nav-order-group">
-                <div class="editor-nav-order-heading">
-                  <strong>Short Courses dropdown sections</strong>
-                  <span>Open Short Courses in the preview and drag the dropdown columns directly</span>
-                </div>
-                <div id="editor-short-course-order-list" class="editor-nav-order-list">
-                  ${state.editorNavigationGroupOrder.length
-                    ? state.editorNavigationGroupOrder.map((title) =>
-                        editorNavigationItemMarkup(title, title, editable)
-                      ).join("")
-                    : `<div class="editor-nav-order-empty">${state.editorNavigationLoading ? "Loading source…" : "Dropdown source unavailable."}</div>`}
-                </div>
-              </div>
-
-              <button
-                id="editor-navigation-save"
-                class="editor-source-save"
-                type="button"
-                disabled
-              >${state.editorNavigationDirty ? "Staged · publish top right" : "No unpublished navigation changes"}</button>
-            </section>
-
-            <section class="editor-inspector-section editor-layout-section editor-legacy-edit-controls">
-              <div class="editor-inspector-heading">
-                <span>Move sections &amp; containers</span>
-                <small>Live draft</small>
-              </div>
-              <div class="editor-layout-help">
-                <strong>Drag directly in the preview</strong>
-                <span>Blue <b>Drag</b> handles appear on supported sections, cards and containers. Drop them where you want and surrounding content reflows immediately. The order stays local until you publish the beta preview.</span>
-              </div>
-            </section>
-
-            <section class="editor-inspector-section editor-banner-section editor-legacy-edit-controls">
-              <div class="editor-inspector-heading">
-                <span>Rolling banner</span>
-                <small>${state.editorMode === "production" ? "Live website" : "Preview website"}</small>
-              </div>
-
-              <div class="editor-banner-toolbar is-current-branch">
-                <div class="editor-banner-branch">
-                  <span>Where this appears</span>
-                  <strong>${state.editorMode === "production" ? "Live website" : "Preview website"}</strong>
-                </div>
-                <label>
-                  <span>Swap every</span>
-                  <select id="editor-banner-interval">
-                    ${[4000, 5200, 6500, 8000].map((value) => `
-                      <option value="${value}" ${Number(state.editorBannerInterval) === value ? "selected" : ""}>${(value / 1000).toFixed(value % 1000 ? 1 : 0)}s</option>
-                    `).join("")}
-                  </select>
-                </label>
-              </div>
-
-              <div id="editor-banner-list" class="editor-banner-list">
-                ${state.editorBannerItems.map((item, index) => {
-                  const isOpen = state.editorBannerOpenId === item.id;
-                  const scheduleLabel =
-                    item.startsAt || item.endsAt
-                      ? `${item.startsAt ? `From ${editorDateTimeLocal(item.startsAt).replace("T", " ")}` : "Now"} · ${item.endsAt ? `until ${editorDateTimeLocal(item.endsAt).replace("T", " ")}` : "no end"}`
-                      : "Always visible";
-
-                  return `
-                    <article class="editor-banner-card${isOpen ? " is-open" : ""}" data-banner-index="${index}" data-banner-id="${escapeEditorAttribute(item.id)}">
-                      <div class="editor-banner-card-head">
-                        <button
-                          class="editor-banner-card-toggle"
-                          type="button"
-                          data-banner-toggle="${index}"
-                          aria-expanded="${isOpen ? "true" : "false"}"
-                        >
-                          <span
-                            class="editor-banner-card-colour"
-                            style="--banner-preview:${/^#[0-9a-f]{6}$/i.test(item.background || "") ? item.background : "#304660"}"
-                            aria-hidden="true"
-                          ></span>
-                          <span class="editor-banner-card-summary">
-                            <strong>${escapeEditorAttribute(item.message || `Announcement ${index + 1}`)}</strong>
-                            <small>${escapeEditorAttribute(scheduleLabel)}</small>
-                          </span>
-                          <span class="editor-banner-card-chevron" aria-hidden="true">⌄</span>
-                        </button>
-
-                        <button
-                          class="editor-banner-delete"
-                          type="button"
-                          data-banner-remove="${index}"
-                          aria-label="Delete ${escapeEditorAttribute(item.message || `announcement ${index + 1}`)}"
-                          title="Delete rolling banner"
-                        >
-                          <svg viewBox="0 0 24 24" aria-hidden="true">
-                            <path d="M4 7h16M9 7V4h6v3m-9 0 1 13h10l1-13M10 11v5m4-5v5" />
-                          </svg>
-                        </button>
-                      </div>
-
-                      <div class="editor-banner-card-body">
-                        <label class="editor-banner-enabled">
-                          <input type="checkbox" data-banner-field="enabled" ${item.enabled !== false ? "checked" : ""}>
-                          <span>Enabled</span>
-                        </label>
-
-                        <label class="editor-banner-wide">
-                          <span>Message</span>
-                          <input type="text" maxlength="150" data-banner-field="message" value="${escapeEditorAttribute(item.message)}">
-                        </label>
-
-                        <div class="editor-banner-row">
-                          <label>
-                            <span>Link label</span>
-                            <input type="text" maxlength="80" data-banner-field="cta" value="${escapeEditorAttribute(item.cta)}">
-                          </label>
-                          <label>
-                            <span>Link</span>
-                            <input type="text" maxlength="400" data-banner-field="href" value="${escapeEditorAttribute(item.href)}" placeholder="event.html">
-                          </label>
-                        </div>
-
-                        <div class="editor-banner-row">
-                          <label>
-                            <span>Background</span>
-                            <div class="editor-banner-colour-input">
-                              <input type="color" data-banner-field="background" value="${/^#[0-9a-f]{6}$/i.test(item.background || "") ? item.background : "#304660"}">
-                              <code>${escapeEditorAttribute((item.background || "#304660").toUpperCase())}</code>
-                            </div>
-                          </label>
-                          <label>
-                            <span>Text colour</span>
-                            <div class="editor-banner-colour-input">
-                              <input type="color" data-banner-field="foreground" value="${/^#[0-9a-f]{6}$/i.test(item.foreground || "") ? item.foreground : "#FFFEFA"}">
-                              <code>${escapeEditorAttribute((item.foreground || "#FFFEFA").toUpperCase())}</code>
-                            </div>
-                          </label>
-                        </div>
-
-                        <div class="editor-banner-row">
-                          <label>
-                            <span>Show from</span>
-                            <input type="datetime-local" data-banner-field="startsAt" value="${editorDateTimeLocal(item.startsAt)}">
-                          </label>
-                          <label>
-                            <span>Hide after</span>
-                            <input type="datetime-local" data-banner-field="endsAt" value="${editorDateTimeLocal(item.endsAt)}">
-                          </label>
-                        </div>
-                      </div>
-                    </article>
-                  `;
-                }).join("")}
-              </div>
-
-              <div class="editor-banner-actions">
-                <button id="editor-banner-add" type="button" ${editable ? "" : "disabled"}>+ Add rolling banner</button>
-                <button id="editor-banner-save" class="is-primary" type="button" disabled>
-                  ${state.editorBannerDirty ? "Staged · publish top right" : "No unpublished banner changes"}
-                </button>
-              </div>
-              <small class="editor-banner-note">
-                Changes update this live editor immediately. GitHub and Cloudflare are untouched until <b>Publish beta preview</b>.
-              </small>
-            </section>
-
-            <section class="editor-inspector-section editor-selection-section editor-legacy-edit-controls">
-              <div class="editor-inspector-heading">
-                <span>Selected item</span>
-                <small>Click text, an image or a link</small>
-              </div>
-              <div id="editor-selected-item" class="editor-selected-item">
-                <div class="editor-selection-empty">
-                  <strong>Nothing selected</strong>
-                  <span>${editable
-                    ? "Move over the website preview and click the item you want to change."
-                    : "Choose Edit preview above to make changes."}</span>
-                </div>
-              </div>
-            </section>
-
-            <section class="editor-inspector-section editor-legacy-edit-controls">
-              <div class="editor-inspector-heading">
-                <span>Page colours</span>
-                <small id="editor-colour-count">${state.editorColours.length ? `${state.editorColours.length} found` : "Finding colours…"}</small>
-              </div>
-              <div id="editor-colour-swatches" class="editor-colour-swatches"></div>
-            </section>
-
-            <section class="editor-inspector-section editor-legacy-edit-controls">
-              <div class="editor-inspector-heading">
-                <span>Pick a colour</span>
-                <small>Sample any colour on screen</small>
-              </div>
-              <button id="editor-eyedropper" class="editor-eyedropper-button" type="button">
-                <span class="editor-eyedropper-icon">⌾</span>
-                <span>
-                  <strong>Choose from the screen</strong>
-                  <small>Click anywhere on screen to copy that exact colour.</small>
-                </span>
-              </button>
-
-              <div class="editor-picked-colour">
-                <span id="editor-picked-colour-swatch" style="--picked-colour:${state.editorPickedColour || currentAccent}"></span>
-                <div>
-                  <small>Selected hex</small>
-                  <strong id="editor-picked-colour-value">${state.editorPickedColour || currentAccent}</strong>
-                </div>
-                <button id="editor-copy-colour" type="button">Copy</button>
-              </div>
-
-              <button
-                id="editor-apply-picked-accent"
-                class="editor-apply-colour"
-                type="button"
-                ${editable && state.editorPickedColour ? "" : "disabled"}
-              >Use as page accent</button>
-            </section>
-
-            <section class="editor-inspector-section editor-assets-section">
-              <button id="editor-assets-toggle" class="editor-assets-toggle" type="button" aria-expanded="${state.editorAssetsOpen ? "true" : "false"}">
-                <span>
-                  <strong>Assets</strong>
-                  <small>${state.editorAssetDrafts.length ? `${state.editorAssetDrafts.length} staged · ` : ""}${state.editorAssets.length} existing</small>
-                </span>
-                <b aria-hidden="true">${state.editorAssetsOpen ? "−" : "+"}</b>
-              </button>
-
-              ${state.editorAssetsOpen ? `
-                <div class="editor-assets-panel">
-                  <input id="editor-assets-input" type="file" accept="image/jpeg,image/png,image/webp" multiple hidden>
-                  <button id="editor-assets-upload" class="editor-assets-upload" type="button" ${editable && !state.editorAssetUploadBusy ? "" : "disabled"}>
-                    + Upload assets
-                  </button>
-                  <small class="editor-assets-note">Uploads remain a local draft. They are written to <code>assets/uploads/</code> only when you publish the beta preview.</small>
-                  <div id="editor-assets-grid" class="editor-assets-grid">
-                    ${[
-                      ...state.editorAssetDrafts.map((asset) => ({ ...asset, draft: true, url: asset.publicUrl })),
-                      ...state.editorAssets.map((asset) => ({ ...asset, draft: false }))
-                    ].map((asset) => {
-                      const isImage = asset.kind === "image";
-                      const preview = asset.draft ? asset.previewUrl : asset.url;
-                      return `
-                        <article class="editor-asset-card${asset.draft ? " is-draft" : ""}" data-editor-asset-path="${escapeEditorAttribute(asset.path)}">
-                          <div class="editor-asset-preview">
-                            ${isImage
-                              ? `<img src="${escapeEditorAttribute(preview)}" alt="" loading="lazy">`
-                              : `<span>${escapeEditorAttribute(String(asset.kind || "file").toUpperCase())}</span>`}
-                          </div>
-                          <div class="editor-asset-copy">
-                            <strong title="${escapeEditorAttribute(asset.path)}">${escapeEditorAttribute(asset.name || asset.path.split("/").pop())}</strong>
-                            <small>${asset.draft ? "Draft · publishes with beta" : escapeEditorAttribute(asset.path)}</small>
-                          </div>
-                          <div class="editor-asset-actions">
-                            <button type="button" data-editor-asset-copy="${escapeEditorAttribute(asset.url || asset.publicUrl)}">Copy link</button>
-                            ${state.editorSelectedObject?.tag === "img"
-                              ? `<button type="button" data-editor-asset-use="/${escapeEditorAttribute(asset.path)}">Use</button>`
-                              : ""}
-                          </div>
-                        </article>
-                      `;
-                    }).join("")}
-                  </div>
-                </div>
-              ` : ""}
-            </section>
-
-            ${!connected ? `
-              <section class="editor-inspector-section">
-                <div class="editor-secret-callout">
-                  <strong>Publishing is temporarily unavailable</strong>
-                  <span>The website publishing connection needs administrator attention.</span>
-                </div>
-              </section>
-            ` : ""}
-          </div>
-
-          <div class="editor-simple-help">
-            <strong>How to edit</strong>
-            <span>Edit directly in the preview. Text, links, images, navigation, banners and layout changes stay local and reflow live. Only <b>Publish beta preview</b> creates a GitHub commit and Cloudflare build.</span>
-          </div>
-        </aside>
-
         <main class="editor-live-workspace">
           <div class="editor-live-toolbar">
             <div class="editor-live-location">
