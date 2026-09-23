@@ -31,7 +31,9 @@ const collab = {
   presenceTimer: null,
   notesTimer: null,
   heartbeatTimer: null,
-  unavailable: false
+  unavailable: false,
+  presenceSignature: "",
+  notesSignature: ""
 };
 
 async function collabRequest(query = "", { method = "GET", body, keepalive = false } = {}) {
@@ -481,13 +483,28 @@ async function loadPresence() {
       `?kind=presence&page=${encodeURIComponent(collab.page)}`
     );
     collab.unavailable = result.available === false;
-    collab.presence = Array.isArray(result.presence) ? result.presence : [];
+    const nextPresence = Array.isArray(result.presence) ? result.presence : [];
     if (result.self) {
       collab.self = result.self;
       collab.selfColour = result.self.colour || collab.selfColour;
     }
-    renderPresence();
-    sendRemoteCursors();
+    const signature = JSON.stringify(
+      nextPresence.map((person) => [
+        person.session_id,
+        person.updated_at,
+        person.display_name,
+        person.colour,
+        person.cursor?.pageX,
+        person.cursor?.pageY,
+        person.cursor?.visible
+      ])
+    );
+    if (signature !== collab.presenceSignature) {
+      collab.presenceSignature = signature;
+      collab.presence = nextPresence;
+      renderPresence();
+      sendRemoteCursors();
+    }
   } catch (error) {
     if (error?.status === 503) collab.unavailable = true;
   }
@@ -502,14 +519,30 @@ async function loadNotes() {
       `?kind=notes&page=${encodeURIComponent(collab.page)}`
     );
     collab.unavailable = result.available === false;
-    collab.notes = Array.isArray(result.notes) ? result.notes : [];
+    const nextNotes = Array.isArray(result.notes) ? result.notes : [];
     if (result.self) {
       collab.self = result.self;
       collab.selfColour = result.self.colour || collab.selfColour;
     }
-    ensurePresenceControl();
-    if (document.activeElement?.id !== "editor-note-draft") renderNotesPanel();
-    sendNotesToPreview();
+    const signature = JSON.stringify(
+      nextNotes.map((note) => [
+        note.id,
+        note.updated_at,
+        note.resolved,
+        note.body,
+        note.colour,
+        note.anchor?.selector,
+        note.anchor?.pageX,
+        note.anchor?.pageY
+      ])
+    );
+    if (signature !== collab.notesSignature) {
+      collab.notesSignature = signature;
+      collab.notes = nextNotes;
+      ensurePresenceControl();
+      if (document.activeElement?.id !== "editor-note-draft") renderNotesPanel();
+      sendNotesToPreview();
+    }
   } catch (error) {
     if (error?.status === 503) collab.unavailable = true;
   }
@@ -576,6 +609,8 @@ function stopCollaboration() {
   collab.frame = null;
   collab.presence = [];
   collab.notes = [];
+  collab.presenceSignature = "";
+  collab.notesSignature = "";
 }
 
 function startCollaboration() {
@@ -588,7 +623,6 @@ function startCollaboration() {
   if (collab.active && collab.frame === frame) {
     ensurePresenceControl();
     ensureNoteTool();
-    if (collab.notesOpen) renderNotesPanel();
     return;
   }
 
@@ -685,6 +719,8 @@ document.addEventListener("change", (event) => {
   collab.page = currentPage();
   collab.lastCursor = { visible: false };
   collab.notes = [];
+  collab.notesSignature = "";
+  collab.presenceSignature = "";
   collab.noteAnchor = null;
   collab.noteDraftBody = "";
   collab.noteDraftId = "";
@@ -756,8 +792,12 @@ document.addEventListener("visibilitychange", () => {
 
 window.addEventListener("pagehide", leavePresence);
 
+let observedFrame = currentFrame();
 const observer = new MutationObserver(() => {
-  if (currentFrame()) startCollaboration();
+  const frame = currentFrame();
+  if (frame === observedFrame) return;
+  observedFrame = frame;
+  if (frame) startCollaboration();
   else stopCollaboration();
 });
 observer.observe(document.documentElement, { childList: true, subtree: true });
