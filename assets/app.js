@@ -1522,6 +1522,7 @@ async function publishWebEditorDraft(payload) {
     state.editorAssetsLoaded = false;
     state.editorDirty = false;
     state.editorDraftKey = "";
+    await clearSharedEditorDraft();
     showToast("Beta preview published. One GitHub commit/build was created from the staged draft.");
     await loadWebEditorStatus({ quiet: true });
     state.editorNavigationTarget = "";
