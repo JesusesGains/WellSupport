@@ -3262,6 +3262,14 @@ function renderWebEditor() {
 
   if (
     connected &&
+    state.editorMode === "beta" &&
+    state.editorSharedDraftLoadedSha !== (state.editorStatus?.beta?.sha || "")
+  ) {
+    window.setTimeout(() => loadSharedEditorDraft({ quiet: true }), 0);
+  }
+
+  if (
+    connected &&
     state.editorPreviewMode === "code" &&
     !state.editorCodeLoading
   ) {
