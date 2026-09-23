@@ -129,7 +129,6 @@ export async function onRequestGet({ request, env }) {
     if (kind === "notes") {
       const query = new URLSearchParams({
         select: "id,page_path,anchor,body,resolved,created_by,created_by_name,created_at,updated_at,resolved_by,resolved_at",
-        page_path: `eq.${page}`,
         order: "resolved.asc,created_at.desc",
         limit: String(MAX_NOTES)
       });
@@ -137,8 +136,10 @@ export async function onRequestGet({ request, env }) {
         `/rest/v1/support_editor_notes?${query.toString()}`,
         session
       );
+      const allNotes = Array.isArray(notes) ? notes.map(decorateNote) : [];
       return sessionResponse({
-        notes: Array.isArray(notes) ? notes.map(decorateNote) : [],
+        notes: allNotes.filter((note) => note?.page_path === page),
+        allNotes,
         self: {
           user_id: session.user.id,
           display_name: String(session.agent?.display_name || "Staff").slice(0, 120),
