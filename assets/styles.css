@@ -9068,3 +9068,180 @@ body.is-resizing-editor-dock iframe {
 .editor-note-section .editor-note-card {
   margin-bottom: 0;
 }
+
+
+/* Full-width editor canvas + threaded note replies */
+.editor-preview-placeholder.is-fullscreen {
+  padding: 2px !important;
+}
+
+/* Desktop preview fills every pixel of the available editor canvas. */
+.editor-preview-placeholder.is-fullscreen:not(.has-code-dock):not(.has-notes-dock)
+  > .editor-preview-browser.is-fullscreen[data-device="desktop"] {
+  position: relative !important;
+  top: auto !important;
+  right: auto !important;
+  bottom: auto !important;
+  left: auto !important;
+  width: 100% !important;
+  height: 100% !important;
+  max-width: none !important;
+  max-height: none !important;
+  margin: 0 !important;
+  transform: none !important;
+}
+
+/* Side docks consume layout width instead of covering the preview. */
+.editor-preview-placeholder.is-fullscreen.has-code-dock,
+.editor-preview-placeholder.is-fullscreen.has-notes-dock {
+  overflow: hidden !important;
+}
+
+.editor-preview-placeholder.is-fullscreen.has-code-dock
+  > .editor-preview-browser.is-fullscreen,
+.editor-preview-placeholder.is-fullscreen.has-notes-dock
+  > .editor-preview-browser.is-fullscreen {
+  position: relative !important;
+  top: auto !important;
+  right: auto !important;
+  bottom: auto !important;
+  left: auto !important;
+  height: 100% !important;
+  min-width: 0 !important;
+  max-width: none !important;
+  margin: 0 !important;
+  transform: none !important;
+}
+
+.editor-preview-placeholder.is-fullscreen.has-code-dock
+  > .editor-preview-browser.is-fullscreen[data-device="desktop"],
+.editor-preview-placeholder.is-fullscreen.has-notes-dock
+  > .editor-preview-browser.is-fullscreen[data-device="desktop"] {
+  width: 100% !important;
+}
+
+.editor-note-thread {
+  display: grid;
+  gap: 7px;
+  padding: 0 10px 10px 14px;
+}
+
+.editor-note-reply {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) 22px;
+  align-items: start;
+  gap: 7px;
+  padding: 7px 7px 7px 0;
+  border-top: 1px solid rgba(48,70,96,.07);
+}
+
+.editor-note-reply-avatar {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--reply-colour, #2F65A0);
+  background: color-mix(in srgb, var(--reply-colour, #2F65A0) 11%, #fff);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--reply-colour, #2F65A0) 24%, transparent);
+  font: 800 8px/1 "DM Sans",system-ui,sans-serif;
+}
+
+.editor-note-reply-content {
+  min-width: 0;
+}
+
+.editor-note-reply-meta {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.editor-note-reply-meta strong {
+  overflow: hidden;
+  color: #41566d;
+  font-size: 9px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editor-note-reply-meta span {
+  margin-left: auto;
+  color: #99a29e;
+  font-size: 8px;
+  white-space: nowrap;
+}
+
+.editor-note-reply-content p {
+  margin: 3px 0 0;
+  color: #66736d;
+  font-size: 10px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.editor-note-reply-delete {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  color: #a0a8a4;
+  background: transparent;
+  cursor: pointer;
+}
+
+.editor-note-reply-delete:hover {
+  color: #8e4039;
+  background: rgba(154,81,73,.06);
+}
+
+.editor-note-reply-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 6px;
+  padding-top: 2px;
+}
+
+.editor-note-reply-input {
+  width: 100%;
+  min-height: 34px;
+  max-height: 92px;
+  resize: vertical;
+  box-sizing: border-box;
+  padding: 8px 9px;
+  border: 1px solid rgba(48,70,96,.11);
+  border-radius: 8px;
+  outline: 0;
+  color: #425266;
+  background: #fff;
+  font: 600 10px/1.35 "DM Sans",system-ui,sans-serif;
+}
+
+.editor-note-reply-input:focus {
+  border-color: rgba(47,101,160,.38);
+  box-shadow: 0 0 0 3px rgba(47,101,160,.06);
+}
+
+.editor-note-reply-form button {
+  min-height: 34px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  color: #fff;
+  background: #304660;
+  font: 800 9px/1 "DM Sans",system-ui,sans-serif;
+  cursor: pointer;
+}
+
+.editor-note-reply-form button:disabled,
+.editor-note-reply-input:disabled {
+  opacity: .55;
+  cursor: default;
+}
