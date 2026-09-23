@@ -296,15 +296,9 @@ export async function commitFiles(env, branch, files, message) {
 }
 
 export async function requiredPreviewCheck(env, sha) {
-  const requiredName = String(env?.WELLWEBSITE_REQUIRED_CHECK || "").trim();
-  if (!requiredName) {
-    return {
-      required: false,
-      passed: true,
-      name: "",
-      state: "not_configured"
-    };
-  }
+  const requiredName = String(
+    env?.WELLWEBSITE_REQUIRED_CHECK || "Cloudflare Pages"
+  ).trim();
 
   const normalised = requiredName.toLowerCase();
   const [checks, status] = await Promise.all([
