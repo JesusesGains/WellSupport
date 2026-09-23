@@ -184,24 +184,79 @@ async function refreshSession(env, refreshToken) {
   return readJson(response);
 }
 
+const STAFF_ROLE_PERMISSIONS = Object.freeze({
+  support: ["support"],
+  editor: ["support", "editor", "dev_ai"],
+  publisher: ["support", "editor", "dev_ai", "publish"],
+  admin: ["support", "editor", "dev_ai", "publish", "admin"]
+});
+
+function normaliseStaffRole(value, fallback = "support") {
+  const role = String(value || "").trim().toLowerCase();
+  return Object.prototype.hasOwnProperty.call(STAFF_ROLE_PERMISSIONS, role)
+    ? role
+    : fallback;
+}
+
+function decorateStaffAgent(agent, fallbackRole = "support") {
+  if (!agent) return null;
+  const role = normaliseStaffRole(agent.role, fallbackRole);
+  return {
+    ...agent,
+    role,
+    permissions: [...STAFF_ROLE_PERMISSIONS[role]]
+  };
+}
+
 async function staffAgent(env, accessToken, userId) {
-  const query = new URLSearchParams({
-    select: "user_id,display_name,avatar_url,active",
+  const makeQuery = (select) => new URLSearchParams({
+    select,
     user_id: `eq.${userId}`,
     active: "eq.true",
     limit: "1"
   });
 
-  const response = await supabaseFetch(
+  // Prefer the role-aware schema. During the migration window only, fall back
+  // to the legacy schema and preserve the old capability set so beta remains
+  // operable until support_agents.role has been applied in Supabase.
+  let response = await supabaseFetch(
     env,
-    `/rest/v1/support_agents?${query.toString()}`,
+    `/rest/v1/support_agents?${makeQuery("user_id,display_name,avatar_url,active,role").toString()}`,
     { accessToken }
   );
+
+  let legacyRoleFallback = false;
+  if (!response.ok && [400, 404].includes(response.status)) {
+    legacyRoleFallback = true;
+    response = await supabaseFetch(
+      env,
+      `/rest/v1/support_agents?${makeQuery("user_id,display_name,avatar_url,active").toString()}`,
+      { accessToken }
+    );
+  }
 
   if (!response.ok) return null;
 
   const rows = await readJson(response);
-  return Array.isArray(rows) ? rows[0] || null : null;
+  const agent = Array.isArray(rows) ? rows[0] || null : null;
+  return decorateStaffAgent(agent, legacyRoleFallback ? "admin" : "support");
+}
+
+export function hasStaffPermission(session, permission) {
+  return Boolean(
+    session?.agent?.active &&
+    Array.isArray(session.agent.permissions) &&
+    session.agent.permissions.includes(String(permission || ""))
+  );
+}
+
+export function requireStaffPermission(session, permission) {
+  if (hasStaffPermission(session, permission)) return null;
+  return sessionResponse(
+    { error: "Your Well Support role does not allow this action." },
+    session,
+    403
+  );
 }
 
 async function supportSessionIsActive(env, accessToken) {
@@ -403,6 +458,31 @@ export async function loginStaff(env, email, password) {
     cookies: authCookies(payload),
     config
   };
+}
+
+export async function recordEditorAudit(session, action, details = {}) {
+  if (!session?.user?.id || !action) return false;
+
+  try {
+    await restJson("/rest/v1/support_editor_audit", session, {
+      method: "POST",
+      headers: { Prefer: "return=minimal" },
+      body: {
+        actor_user_id: session.user.id,
+        actor_display_name: String(session.agent?.display_name || "").slice(0, 120),
+        action: String(action).slice(0, 80),
+        details:
+          details && typeof details === "object" && !Array.isArray(details)
+            ? details
+            : {}
+      }
+    });
+    return true;
+  } catch {
+    // Audit storage is additive and must never turn a successful GitHub action
+    // into a failed user action while the database migration is rolling out.
+    return false;
+  }
 }
 
 export async function restJson(path, session, options = {}) {
