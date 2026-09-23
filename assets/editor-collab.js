@@ -84,10 +84,12 @@ function noteCount() {
 }
 
 function ensurePresenceControl() {
-  const topbar = document.querySelector(".editor-fullscreen-topbar");
-  if (!topbar) return;
+  const target =
+    document.querySelector(".editor-fullscreen-topbar-right") ||
+    document.querySelector(".editor-fullscreen-topbar");
+  if (!target) return;
 
-  let host = topbar.querySelector("#editor-collab-presence");
+  let host = target.querySelector("#editor-collab-presence");
   if (!host) {
     host = document.createElement("div");
     host.id = "editor-collab-presence";
@@ -97,42 +99,46 @@ function ensurePresenceControl() {
     people.className = "editor-collab-people";
     people.setAttribute("aria-label", "Other staff in this page");
 
-    const notes = document.createElement("button");
-    notes.id = "editor-collab-notes-toggle";
-    notes.type = "button";
-    notes.className = "editor-collab-notes-toggle";
-    notes.addEventListener("click", () => {
-      collab.notesOpen = !collab.notesOpen;
-      renderNotesPanel();
-    });
-
-    host.append(people, notes);
-    topbar.appendChild(host);
-  }
-
-  const notesButton = host.querySelector("#editor-collab-notes-toggle");
-  if (notesButton) {
-    const label = `Notes ${noteCount() ? `(${noteCount()})` : ""}`;
-    if (notesButton.textContent !== label) notesButton.textContent = label;
-    notesButton.classList.toggle("has-notes", noteCount() > 0);
+    host.appendChild(people);
+    target.appendChild(host);
   }
 }
 
 function ensureNoteTool() {
-  const toolbar = document.querySelector(".editor-tool-toolbar");
-  if (!toolbar) return;
+  const slot =
+    document.querySelector(".editor-notes-mode-slot") ||
+    document.querySelector(".editor-tool-toolbar");
+  if (!slot) return;
 
-  let button = toolbar.querySelector("#editor-collab-note-tool");
-  if (!button) {
+  let button = document.querySelector("#editor-collab-note-tool");
+  if (!button || !button.isConnected) {
     button = document.createElement("button");
     button.id = "editor-collab-note-tool";
     button.type = "button";
+    button.className = "editor-notes-mode-button";
     button.title = "Draw a highlighted note region";
-    button.setAttribute("aria-label", "Draw a highlighted note region");
-    button.innerHTML = "▧ <span>Note</span>";
+    button.setAttribute("aria-label", "Notes: draw a highlighted note region");
+    button.innerHTML = "▧ <span>Notes</span>";
+    slot.appendChild(button);
+
     button.addEventListener("click", () => {
       collab.noteMode = !collab.noteMode;
-      if (collab.noteMode) collab.notesOpen = true;
+      collab.notesOpen = collab.noteMode || collab.notesOpen;
+
+      document.querySelectorAll("[data-editor-interaction]").forEach((item) => {
+        item.classList.remove("is-active");
+      });
+
+      const editTools = document.querySelector(".editor-tool-toolbar");
+      editTools?.classList.toggle("is-collapsed", collab.noteMode);
+      editTools?.classList.toggle("is-expanded", !collab.noteMode);
+
+      if (!collab.noteMode) {
+        document
+          .querySelector('[data-editor-interaction="edit"]')
+          ?.classList.add("is-active");
+      }
+
       button.classList.toggle("is-active", collab.noteMode);
       renderNotesPanel();
       postToPreview("WCG_EDITOR_TOOL", {
@@ -140,9 +146,10 @@ function ensureNoteTool() {
         colour: collab.selfColour
       });
     });
-    toolbar.appendChild(button);
   }
+
   button.classList.toggle("is-active", collab.noteMode);
+  button.classList.toggle("has-notes", noteCount() > 0);
 }
 
 function avatarNode(person) {
@@ -694,7 +701,7 @@ document.addEventListener("click", async (event) => {
   const existingTool = event.target?.closest?.("[data-editor-tool]");
 
   if (
-    (interaction && interaction.dataset.editorInteraction === "view") ||
+    interaction ||
     (existingTool && !existingTool.closest("#editor-collab-note-tool"))
   ) {
     if (collab.noteAnchor && !collab.noteDraftBody.trim() && !collab.noteDraftId) {
@@ -704,7 +711,9 @@ document.addEventListener("click", async (event) => {
       collab.noteDraftId = "";
     }
     collab.noteMode = false;
+    collab.notesOpen = false;
     document.querySelector("#editor-collab-note-tool")?.classList.remove("is-active");
+    renderNotesPanel();
   }
 
   const goto = event.target?.closest?.("[data-note-goto]");
@@ -762,6 +771,7 @@ document.addEventListener("click", async (event) => {
         collab.selectedNoteId === note.id ? "" : collab.selectedNoteId;
       collab.notesSignature = "";
       ensurePresenceControl();
+      ensureNoteTool();
       sendNotesToPreview();
       renderNotesPanel();
     } catch (error) {
