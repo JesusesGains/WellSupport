@@ -7134,6 +7134,12 @@ async function signOut() {
   state.editorMode = "beta";
   state.editorPage = "/";
   state.editorDirty = false;
+  if (state.editorSharedDraftTimer) window.clearTimeout(state.editorSharedDraftTimer);
+  state.editorSharedDraftTimer = null;
+  state.editorSharedDraftLoadedSha = "";
+  state.editorSharedDraftRevision = 0;
+  state.editorSharedDraftAvailable = null;
+  state.editorSharedDraftConflict = false;
   state.devAiStatus = null;
   state.devAiMessages = [];
   state.devAiLoading = false;
