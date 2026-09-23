@@ -7719,3 +7719,38 @@ body.has-support-confirm-modal {
   font-size: .48rem;
   letter-spacing: .06em;
 }
+
+
+.editor-audit-list {
+  display: grid;
+  gap: 6px;
+  margin-top: 12px;
+  padding-top: 11px;
+  border-top: 1px solid var(--wcg-line);
+}
+
+.editor-audit-list > strong {
+  color: #8e9692;
+  font-size: .54rem;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+}
+
+.editor-audit-list > div {
+  display: grid;
+  gap: 2px;
+  padding: 7px 8px;
+  border-radius: 8px;
+  background: #f7f9f8;
+}
+
+.editor-audit-list span {
+  color: var(--wcg-navy);
+  font-size: .56rem;
+  text-transform: capitalize;
+}
+
+.editor-audit-list small {
+  color: #969d99;
+  font-size: .51rem;
+}
