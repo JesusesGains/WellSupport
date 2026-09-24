@@ -4690,60 +4690,306 @@ function renderWebEditor() {
     window.setTimeout(() => loadWebEditorStatus({ quiet: true }), 0);
   }
 }
+const ALERT_SOUND_STORAGE_KEY = "well-support:alert-sound";
+const ALERT_ICON = "/well-college-icon.png";
+const BASE_DOCUMENT_TITLE = document.title;
+const chatAlertAudio = { context: null, lastPlayedAt: 0 };
+
+function alertSoundEnabled() {
+  try {
+    return window.localStorage.getItem(ALERT_SOUND_STORAGE_KEY) !== "off";
+  } catch {
+    return true;
+  }
+}
+
+function setAlertSoundEnabled(enabled) {
+  try {
+    window.localStorage.setItem(ALERT_SOUND_STORAGE_KEY, enabled ? "on" : "off");
+  } catch {
+    // Sound stays on for this page when storage is unavailable.
+  }
+}
+
+// Browsers only allow audio after a user gesture, so any click or key press in
+// the dashboard arms the chime; after that it can also play in a background tab.
+function unlockChatAlertAudio() {
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) return null;
+
+  if (!chatAlertAudio.context) {
+    try {
+      chatAlertAudio.context = new AudioContextClass();
+    } catch {
+      return null;
+    }
+  }
+
+  if (chatAlertAudio.context.state === "suspended") {
+    chatAlertAudio.context.resume().catch(() => {});
+  }
+  return chatAlertAudio.context;
+}
+
+document.addEventListener("pointerdown", unlockChatAlertAudio, { passive: true });
+document.addEventListener("keydown", unlockChatAlertAudio, { passive: true });
+
+// A short two-note chime generated with Web Audio (the dashboard's CSP blocks
+// media files). Returns true when the chime actually played.
+function playChatAlertSound({ force = false } = {}) {
+  if (!force && !alertSoundEnabled()) return false;
+
+  const context = chatAlertAudio.context;
+  if (!context || context.state !== "running") return false;
+
+  // Several chats arriving in one poll produce a single chime.
+  if (!force && performance.now() - chatAlertAudio.lastPlayedAt < 1500) return true;
+  chatAlertAudio.lastPlayedAt = performance.now();
+
+  const start = context.currentTime + 0.01;
+  const output = context.createGain();
+  output.gain.value = 0.24;
+  output.connect(context.destination);
+
+  [[880, 0], [1318.5, 0.17]].forEach(([frequency, offset]) => {
+    const oscillator = context.createOscillator();
+    const envelope = context.createGain();
+    oscillator.type = "sine";
+    oscillator.frequency.value = frequency;
+    envelope.gain.setValueAtTime(0.0001, start + offset);
+    envelope.gain.exponentialRampToValueAtTime(1, start + offset + 0.015);
+    envelope.gain.exponentialRampToValueAtTime(0.0001, start + offset + 0.5);
+    oscillator.connect(envelope).connect(output);
+    oscillator.start(start + offset);
+    oscillator.stop(start + offset + 0.55);
+  });
+
+  return true;
+}
+
 function notificationStatusLabel() {
-  if (!("Notification" in window)) return "Desktop alerts unavailable";
-  if (Notification.permission === "granted") return "Desktop alerts on";
+  if (!("Notification" in window)) return "Sound alerts only";
+  if (Notification.permission === "granted") return "Chat alerts on";
   if (Notification.permission === "denied") return "Desktop alerts blocked";
-  return "Enable desktop alerts";
+  return "Enable chat alerts";
 }
 
 function renderNotificationControl() {
   const button = document.querySelector("#notification-permission-button");
-  if (!button) return;
+  if (button) {
+    const granted = "Notification" in window && Notification.permission === "granted";
+    const label = notificationStatusLabel();
+    button.querySelector("span").textContent = label;
+    button.classList.toggle("is-enabled", granted);
+    button.classList.toggle(
+      "is-blocked",
+      "Notification" in window && Notification.permission === "denied"
+    );
+    button.title = granted
+      ? "Send a test alert"
+      : "Notification" in window && Notification.permission === "denied"
+        ? "Desktop notifications are blocked in this browser's site settings"
+        : "Turn on desktop notifications and sound for new chats";
+  }
 
-  button.querySelector("span").textContent = notificationStatusLabel();
-  button.disabled = !("Notification" in window) || Notification.permission === "denied";
-  button.classList.toggle(
-    "is-enabled",
-    "Notification" in window && Notification.permission === "granted"
-  );
+  const sound = document.querySelector("#alert-sound-toggle");
+  if (sound) {
+    const enabled = alertSoundEnabled();
+    sound.setAttribute("aria-pressed", String(enabled));
+    sound.setAttribute("aria-label", enabled ? "Mute chat alert sound" : "Unmute chat alert sound");
+    sound.title = enabled ? "Alert sound on" : "Alert sound muted";
+    sound.classList.toggle("is-muted", !enabled);
+    sound.innerHTML = alertSoundIcon(enabled);
+  }
+}
+
+function alertSoundIcon(enabled) {
+  return enabled
+    ? `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"></path><path d="M15.5 9a4 4 0 0 1 0 6"></path><path d="M18 6.5a7.5 7.5 0 0 1 0 11"></path></svg>`
+    : `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"></path><path d="m16 9.5 5 5M21 9.5l-5 5"></path></svg>`;
+}
+
+function toggleAlertSound() {
+  const enabled = !alertSoundEnabled();
+  setAlertSoundEnabled(enabled);
+  renderNotificationControl();
+  if (enabled) {
+    unlockChatAlertAudio();
+    window.setTimeout(() => playChatAlertSound({ force: true }), 40);
+  }
+  showToast(enabled ? "Chat alert sound on." : "Chat alert sound muted.");
 }
 
 async function requestDesktopNotifications() {
-  if (!("Notification" in window)) {
-    showToast("Desktop notifications are not available in this browser.", "error");
-    return;
-  }
+  unlockChatAlertAudio();
 
-  if (Notification.permission === "default") {
-    await Notification.requestPermission();
+  if ("Notification" in window && Notification.permission === "default") {
+    try {
+      await Notification.requestPermission();
+    } catch {
+      // Older Safari only supports the callback form; the state is re-read below.
+    }
   }
 
   renderNotificationControl();
+  const played = playChatAlertSound({ force: alertSoundEnabled() });
 
-  if (Notification.permission === "granted") {
-    showToast("Desktop chat notifications enabled.");
+  if (!("Notification" in window)) {
+    showToast("This browser can't show desktop notifications, but new chats will still play a sound.");
+  } else if (Notification.permission === "granted") {
+    showDesktopChatNotification(
+      "Chat alerts are on",
+      "You'll get a notification and a sound when a new chat or message arrives.",
+      null,
+      { silent: played }
+    );
+    showToast("Chat alerts are on.");
   } else if (Notification.permission === "denied") {
-    showToast("Desktop notifications are blocked in browser settings.", "error");
+    showToast(
+      "Desktop notifications are blocked. Allow them for this site in your browser's settings; sound alerts still work.",
+      "error"
+    );
   }
 }
 
-function showDesktopChatNotification(title, body, conversationId) {
-  if (!("Notification" in window) || Notification.permission !== "granted") return;
-
-  const notification = new Notification(title, {
-    body: String(body || "New website message").slice(0, 180),
-    tag: `well-support-${conversationId}`,
-    renotify: true,
-    icon: "/favicon.ico"
-  });
-
-  notification.onclick = () => {
-    window.focus();
-    notification.close();
-    if (conversationId) selectConversation(conversationId);
-  };
+function openConversationFromAlert(conversationId) {
+  if (!conversationId || !state.conversations.some((item) => item.id === conversationId)) {
+    setDashboardView("messages");
+    return;
+  }
+  setDashboardView("messages");
+  selectConversation(conversationId);
 }
+
+function showDesktopChatNotification(title, body, conversationId, { silent = false } = {}) {
+  if (!("Notification" in window) || Notification.permission !== "granted") return false;
+
+  try {
+    const notification = new Notification(title, {
+      body: String(body || "New website message").slice(0, 180),
+      tag: conversationId ? `well-support-${conversationId}` : "well-support-test",
+      renotify: true,
+      icon: ALERT_ICON,
+      badge: ALERT_ICON,
+      // Our chime already played; avoid a second system sound on top of it.
+      silent
+    });
+
+    notification.onclick = () => {
+      window.focus();
+      notification.close();
+      if (conversationId) openConversationFromAlert(conversationId);
+    };
+    return true;
+  } catch {
+    // Some platforms (e.g. Android Chrome) only allow service-worker notifications.
+    return false;
+  }
+}
+
+function updateAlertDocumentTitle() {
+  const pending = Number(state.pendingAlertCount || 0);
+  document.title =
+    pending > 0 && document.visibilityState === "hidden"
+      ? `(${pending > 99 ? "99+" : pending}) New chat · ${BASE_DOCUMENT_TITLE}`
+      : BASE_DOCUMENT_TITLE;
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") state.pendingAlertCount = 0;
+  updateAlertDocumentTitle();
+});
+
+function alertForNewVisitorMessages(grouped, previousIds) {
+  const alerts = [];
+
+  for (const [conversationId, messages] of grouped) {
+    const conversation = state.conversations.find((item) => item.id === conversationId);
+    if (
+      conversation?.joined_agent_id &&
+      conversation.joined_agent_id !== state.user?.id
+    ) {
+      continue;
+    }
+
+    const newest = messages[0];
+    const isNewChat = !previousIds.has(conversationId);
+    const who = conversation ? visitorName(conversation) : "A website visitor";
+    const place = conversation ? visitorLocation(conversation) : "";
+    alerts.push({
+      conversationId,
+      title: isNewChat
+        ? `New chat${place ? ` from ${place}` : ""}`
+        : `New message from ${who}`,
+      body: newest ? visibleMessageBody(newest) : "A visitor sent a message."
+    });
+  }
+
+  if (!alerts.length) return;
+
+  // Our chime replaces the system sound; if it could not play (audio not yet
+  // unlocked by a click), let the operating system's notification sound play.
+  const played = playChatAlertSound();
+  for (const alert of alerts) {
+    showDesktopChatNotification(alert.title, alert.body, alert.conversationId, {
+      silent: played || !alertSoundEnabled()
+    });
+  }
+
+  if (document.visibilityState === "hidden") {
+    state.pendingAlertCount = Number(state.pendingAlertCount || 0) + alerts.length;
+    updateAlertDocumentTitle();
+  }
+}
+
+// Poll timers run in a dedicated worker so background tabs are not throttled
+// to one wake-up per minute. Falls back to window timers if the worker fails.
+const pollScheduler = (() => {
+  let worker = null;
+  let nextId = 1;
+  const pending = new Map();
+
+  const fallBack = () => {
+    worker = null;
+    for (const [id, callback] of pending) {
+      pending.delete(id);
+      window.setTimeout(callback, 0);
+    }
+  };
+
+  try {
+    worker = new Worker("/assets/alert-ticker.js");
+    worker.addEventListener("message", (event) => {
+      const id = event.data?.id;
+      const callback = pending.get(id);
+      if (!callback) return;
+      pending.delete(id);
+      callback();
+    });
+    worker.addEventListener("error", fallBack);
+  } catch {
+    worker = null;
+  }
+
+  return {
+    set(callback, delay) {
+      if (!worker) return { timeout: window.setTimeout(callback, delay) };
+      const id = nextId++;
+      pending.set(id, callback);
+      worker.postMessage({ type: "set", id, delay });
+      return { id };
+    },
+    clear(handle) {
+      if (!handle) return;
+      if (handle.timeout !== undefined) {
+        window.clearTimeout(handle.timeout);
+        return;
+      }
+      pending.delete(handle.id);
+      worker?.postMessage({ type: "clear", id: handle.id });
+    }
+  };
+})();
 
 function formatNumber(value) {
   return new Intl.NumberFormat().format(Number(value || 0));
@@ -5999,10 +6245,13 @@ function renderDashboard() {
           ` : ""}
         </nav>
 
-        <button id="notification-permission-button" class="sidebar-notification-button" type="button">
-          ${notificationsIcon()}
-          <span>Enable desktop alerts</span>
-        </button>
+        <div class="sidebar-alert-controls">
+          <button id="notification-permission-button" class="sidebar-notification-button" type="button">
+            ${notificationsIcon()}
+            <span>Enable chat alerts</span>
+          </button>
+          <button id="alert-sound-toggle" class="sidebar-sound-toggle" type="button" aria-pressed="true"></button>
+        </div>
 
         <div class="sidebar-live">
           <i id="sidebar-live-dot" class="live-dot is-connecting" aria-hidden="true"></i>
@@ -6076,6 +6325,7 @@ function renderDashboard() {
     "click",
     requestDesktopNotifications
   );
+  document.querySelector("#alert-sound-toggle")?.addEventListener("click", toggleAlertSound);
   updatePrimaryNavigation();
   renderNotificationControl();
 
@@ -6254,26 +6504,7 @@ async function loadInbox({ silent = false } = {}) {
         grouped.get(id).push(message);
       }
 
-      for (const [conversationId, messages] of grouped) {
-        const conversation = state.conversations.find(
-          (item) => item.id === conversationId
-        );
-
-        if (
-          conversation?.joined_agent_id &&
-          conversation.joined_agent_id !== state.user?.id
-        ) {
-          continue;
-        }
-
-        const newest = messages[0];
-        const isNewChat = !previousIds.has(conversationId);
-        showDesktopChatNotification(
-          isNewChat ? "New website chat" : "New support message",
-          newest ? visibleMessageBody(newest) : "A visitor sent a message.",
-          conversationId
-        );
-      }
+      alertForNewVisitorMessages(grouped, previousIds);
     }
 
     renderMessageBadge();
@@ -7733,21 +7964,21 @@ function subscribeRealtime() {
     );
     const delay =
       document.visibilityState === "hidden"
-        ? Math.max(Math.round(backoff), 5000)
+        ? Math.max(Math.round(backoff), 3000)
         : Math.round(backoff);
 
-    state.pollTimer = window.setTimeout(pollInbox, delay);
+    state.pollTimer = pollScheduler.set(pollInbox, delay);
   };
 
   const handleVisibility = () => {
     if (!state.user || document.visibilityState !== "visible") return;
-    if (state.pollTimer) window.clearTimeout(state.pollTimer);
-    state.pollTimer = window.setTimeout(pollInbox, 120);
+    pollScheduler.clear(state.pollTimer);
+    state.pollTimer = pollScheduler.set(pollInbox, 120);
   };
 
   document.addEventListener("visibilitychange", handleVisibility);
   state.dashboardVisibilityHandler = handleVisibility;
-  state.pollTimer = window.setTimeout(pollInbox, 500);
+  state.pollTimer = pollScheduler.set(pollInbox, 500);
 
   state.analyticsTimer = window.setInterval(() => {
     if (
@@ -7794,7 +8025,7 @@ function renderRealtimeStatus() {
 }
 
 function cleanupRealtime() {
-  if (state.pollTimer) window.clearTimeout(state.pollTimer);
+  pollScheduler.clear(state.pollTimer);
   if (state.messagePollTimer) window.clearTimeout(state.messagePollTimer);
   if (state.analyticsTimer) window.clearInterval(state.analyticsTimer);
   if (state.dashboardVisibilityHandler) {

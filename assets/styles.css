@@ -9396,3 +9396,116 @@ body.is-resizing-editor-dock iframe {
   will-change: transform;
 }
 
+
+/* Chat alert controls: notification permission + alert sound toggle */
+.sidebar-alert-controls {
+  display: flex;
+  gap: 6px;
+  margin: 10px 8px 0;
+}
+
+.sidebar-alert-controls .sidebar-notification-button {
+  width: auto;
+  min-width: 0;
+  flex: 1 1 auto;
+  margin: 0;
+}
+
+.sidebar-notification-button.is-blocked {
+  color: #9b4a3c;
+}
+
+.sidebar-sound-toggle {
+  display: inline-grid;
+  width: 40px;
+  min-height: 40px;
+  flex: 0 0 auto;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--wcg-line);
+  border-radius: 12px;
+  color: var(--wcg-forest);
+  background: #fff;
+  cursor: pointer;
+}
+
+.sidebar-sound-toggle svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.sidebar-sound-toggle:hover {
+  color: var(--wcg-navy);
+  border-color: var(--wcg-line-strong);
+  background: var(--wcg-bg);
+}
+
+.sidebar-sound-toggle.is-muted {
+  color: #9aa19e;
+}
+
+@media (max-width: 960px) {
+  .sidebar-alert-controls {
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .sidebar-alert-controls .sidebar-notification-button {
+    width: 42px;
+    flex: 0 0 auto;
+  }
+
+  .sidebar-sound-toggle {
+    width: 42px;
+  }
+}
+
+/* Selected conversation uses the brand navy (overrides unread/waiting tints). */
+.conversation-list .conversation-item.is-selected,
+.conversation-list .conversation-item.is-selected:hover {
+  border-color: var(--wcg-navy);
+  color: #fff;
+  background: var(--wcg-navy);
+  box-shadow: 0 8px 22px rgba(48, 70, 96, .22);
+}
+
+.conversation-list .conversation-item.is-selected .conversation-name {
+  color: #fff;
+}
+
+.conversation-list .conversation-item.is-selected .conversation-time,
+.conversation-list .conversation-item.is-selected .conversation-owner {
+  color: rgba(255, 255, 255, .78);
+}
+
+.conversation-list .conversation-item.is-selected .conversation-preview {
+  color: rgba(255, 255, 255, .88);
+}
+
+.conversation-list .conversation-item.is-selected .conversation-path {
+  color: rgba(255, 255, 255, .7);
+}
+
+.conversation-list .conversation-item.is-selected .conversation-owner-avatar {
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, .35);
+}
+
+.conversation-list .conversation-item.is-selected .unread-dot.is-inline {
+  background: #9cc3f5;
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, .16);
+}
+
+.conversation-list .conversation-item.is-selected .status-chip.is-waiting {
+  color: #b83d36;
+  background: #fff;
+}
+
+.conversation-list .conversation-item.is-selected:focus-visible {
+  outline: 3px solid rgba(48, 70, 96, .28);
+  outline-offset: 2px;
+}
