@@ -506,13 +506,13 @@ async function staffAgentFromD1(env, identity) {
   try {
     row = await db
       .prepare(
-        "SELECT * FROM staff_users WHERE lower(email) = lower(?) LIMIT 1"
+        "SELECT * FROM staff_agents WHERE lower(email) = lower(?) LIMIT 1"
       )
       .bind(identity.email)
       .first();
   } catch (cause) {
     const error = new Error(
-      "Well Support staff database is not ready. Apply the staff_users D1 schema."
+      "Well Support staff database is not ready. Apply the staff_agents D1 schema."
     );
     error.status = 503;
     error.cause = cause;
@@ -549,7 +549,7 @@ async function staffAgentFromD1(env, identity) {
   ) {
     await db
       .prepare(
-        "UPDATE staff_users SET access_subject = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
+        "UPDATE staff_agents SET access_subject = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
       )
       .bind(identity.sub, row.id)
       .run()
