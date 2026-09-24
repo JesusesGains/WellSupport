@@ -16,6 +16,7 @@ Private staff dashboard for the Well College Global website support chat.
 - Closing a chat permanently deletes that conversation and its cascade-deleted messages.
 - Shows temporary visitor city/region/country, IP, timezone and browser language above the thread while that metadata is available.
 - Marks the first staff open with “<staff display name> has joined your chat”.
+- Alerts staff to new chats and visitor messages with a chime and a desktop notification, including when the dashboard tab is in the background. Click **Enable chat alerts** once to allow notifications; the speaker button mutes the chime. Chat polling runs on a same-origin worker timer so background tabs are not throttled to one check a minute.
 - Visitor chats use ephemeral tokens rather than visitor Supabase Auth users.
 - Uses the same Well College Global visual tokens as the website support widget.
 - Contains no service-role/secret key.
@@ -169,7 +170,7 @@ The development server builds the static site and serves it at `http://localhost
 - Every staff API endpoint checks same-origin mutation headers and validates active staff authorization server-side.
 - No service-role/secret key is used.
 - Dynamic message and visitor content is rendered with `textContent`, not injected as HTML.
-- CSP allows scripts only from the dashboard origin, denies framing of the dashboard, denies objects/media/workers, and limits browser network calls to same-origin.
+- CSP allows scripts only from the dashboard origin, denies framing of the dashboard, denies objects/media, allows only same-origin workers (the chat-alert timer), and limits browser network calls to same-origin.
 - Supabase RLS remains enabled as defense in depth even though the browser no longer talks directly to the Data API.
 
 
