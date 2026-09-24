@@ -46,6 +46,12 @@ const state = {
   analyticsDays: 30,
   analyticsLoading: false,
   analyticsTimer: null,
+  analyticsCache: new Map(),
+  analyticsRequestId: 0,
+  analyticsError: "",
+  analyticsTabs: {},
+  analyticsExpanded: new Set(),
+  analyticsTrendObserver: null,
   visitors: [],
   visitorsLoading: false,
   visitorsTimer: null,
@@ -116,6 +122,8 @@ const state = {
   editorCodeDirty: false,
   editorCodeSaving: false,
   editorCodePreviewTimer: null,
+  editorSourcePreviewPosted: false,
+  editorFrameReloadRequested: false,
   editorHistoryOpen: false,
   editorVersionHistory: [],
   editorAuditHistory: [],
@@ -967,7 +975,12 @@ function setDashboardView(view, { historyMode = "push" } = {}) {
   if (state.currentView === "dashboard") {
     dashboard?.classList.remove("has-selection");
     renderAnalyticsDashboard();
-    if (!state.analytics && !state.analyticsLoading) loadAnalytics();
+    const cached = state.analyticsCache.get(state.analyticsDays);
+    if (!state.analytics) {
+      if (!state.analyticsLoading) loadAnalytics();
+    } else if (!cached || Date.now() - cached.fetchedAt > ANALYTICS_REFRESH_MS) {
+      loadAnalytics({ silent: true });
+    }
     return;
   }
 
@@ -1531,6 +1544,7 @@ async function publishWebEditorDraft(payload) {
       loadEditorLayout({ quiet: true }),
       loadEditorAssets({ quiet: true })
     ]);
+    if (state.currentView === "editor") renderWebEditor();
   } catch (error) {
     showToast(error?.message || "Unable to publish these changes to the preview site.", "error");
     if (button) {
@@ -2039,6 +2053,15 @@ async function loadSharedEditorDraft({ quiet = false } = {}) {
   }
 }
 
+function sharedEditorPages() {
+  return Object.fromEntries(
+    Object.entries(state.editorPendingPages || {}).map(([path, draft]) => [
+      path,
+      editorDraftFromConfig(draft)
+    ])
+  );
+}
+
 function scheduleSharedEditorDraft() {
   if (state.editorSharedDraftTimer) window.clearTimeout(state.editorSharedDraftTimer);
   state.editorSharedDraftTimer = window.setTimeout(saveSharedEditorDraft, 900);
@@ -2257,6 +2280,96 @@ function highlightHtmlSource(source) {
   result += escapeEditorAttribute(text.slice(cursor));
   return result;
 }
+const CODE_HIGHLIGHT_BUFFER_LINES = 40;
+const codeHighlightCache = new WeakMap();
+
+function codeLineStarts(text) {
+  const starts = [0];
+  let index = text.indexOf("\n");
+  while (index !== -1) {
+    starts.push(index + 1);
+    index = text.indexOf("\n", index + 1);
+  }
+  return starts;
+}
+
+function lineForOffset(starts, offset) {
+  let low = 0;
+  let high = starts.length - 1;
+  while (low < high) {
+    const middle = (low + high + 1) >> 1;
+    if (starts[middle] <= offset) low = middle;
+    else high = middle - 1;
+  }
+  return low;
+}
+
+// Moves a highlight window's first line back out of any tag or comment that
+// spans into it, so the tokenizer never starts halfway through one.
+function safeHighlightStartLine(text, starts, line) {
+  let offset = starts[line];
+  const commentOpen = text.lastIndexOf("<!--", offset);
+  if (commentOpen !== -1) {
+    const commentClose = text.indexOf("-->", commentOpen);
+    if (commentClose === -1 || commentClose + 3 > offset) offset = commentOpen;
+  }
+  const tagOpen = text.lastIndexOf("<", offset);
+  if (tagOpen > text.lastIndexOf(">", offset)) offset = Math.min(offset, tagOpen);
+  return Math.max(lineForOffset(starts, offset), line - 400, 0);
+}
+
+// Highlights only the lines around the textarea's viewport. Re-highlighting a
+// whole page source on every keystroke forced a full layout of thousands of
+// spans; the visible window keeps typing and scrolling cost constant.
+function paintCodeHighlight(input, highlight, { force = false } = {}) {
+  const code = highlight?.querySelector("code");
+  if (!(input instanceof HTMLTextAreaElement) || !code) return;
+
+  let cache = codeHighlightCache.get(highlight);
+  if (!cache) {
+    cache = {
+      text: null,
+      starts: [0],
+      from: 0,
+      to: 0,
+      lineHeight: Number.parseFloat(getComputedStyle(input).lineHeight) || 19.44
+    };
+    codeHighlightCache.set(highlight, cache);
+  }
+
+  const text = input.value;
+  const textChanged = cache.text !== text;
+  if (textChanged) {
+    cache.text = text;
+    cache.starts = codeLineStarts(text);
+  }
+
+  const { starts, lineHeight } = cache;
+  const firstVisible = Math.max(0, Math.floor(input.scrollTop / lineHeight) - 1);
+  const lastVisible = Math.min(
+    starts.length,
+    firstVisible + Math.ceil(input.clientHeight / lineHeight) + 2
+  );
+
+  if (force || textChanged || firstVisible < cache.from || lastVisible > cache.to) {
+    const from = safeHighlightStartLine(
+      text,
+      starts,
+      Math.max(0, firstVisible - CODE_HIGHLIGHT_BUFFER_LINES)
+    );
+    const to = Math.min(starts.length, lastVisible + CODE_HIGHLIGHT_BUFFER_LINES);
+    const end = to < starts.length ? starts[to] : text.length;
+    code.innerHTML = highlightHtmlSource(text.slice(starts[from], end));
+    cache.from = from;
+    cache.to = to;
+  }
+
+  highlight.scrollTop = 0;
+  highlight.scrollLeft = 0;
+  code.style.transform =
+    `translate(${-input.scrollLeft}px, ${cache.from * lineHeight - input.scrollTop}px)`;
+}
+
 function escapeSourceRegExp(value) {
   const specials = new Set(["\\", "^", "$", ".", "*", "+", "?", "(", ")", "[", "]", "{", "}", "|"]);
   return [...String(value || "")].map((character) =>
@@ -2393,10 +2506,10 @@ function revealCodeSelection(hint) {
   input.focus({ preventScroll: true });
   input.setSelectionRange(range.start, range.end);
   const before = input.value.slice(0, range.start);
-  const lineIndex = before.split("\\n").length - 1;
+  const lineIndex = before.split("\n").length - 1;
   const lineHeight = Number.parseFloat(getComputedStyle(input).lineHeight) || 19.4;
   input.scrollTop = Math.max(0, lineIndex * lineHeight - input.clientHeight * 0.28);
-  const firstLineStart = before.lastIndexOf("\\n") + 1;
+  const firstLineStart = before.lastIndexOf("\n") + 1;
   input.scrollLeft = Math.max(0, (range.start - firstLineStart) * 7.2 - input.clientWidth * 0.18);
   input.dispatchEvent(new Event("scroll"));
 
@@ -2558,46 +2671,6 @@ function renderEditorDevtoolsDock() {
   const content = document.querySelector("#editor-devtools-content");
   if (content) content.innerHTML = editorDevtoolsContentMarkup();
 
-  const codeInput = document.querySelector("#editor-code-input");
-  const codeHighlight = document.querySelector("#editor-code-highlight");
-
-  const syncCodeHighlight = () => {
-    if (!codeInput || !codeHighlight) return;
-    codeHighlight.innerHTML = `<code>${highlightHtmlSource(codeInput.value)}</code>`;
-    codeHighlight.scrollTop = codeInput.scrollTop;
-    codeHighlight.scrollLeft = codeInput.scrollLeft;
-  };
-
-  codeInput?.addEventListener("input", () => {
-    state.editorCodeDraft = codeInput.value;
-    state.editorCodeDirty = state.editorCodeDraft !== state.editorCodeOriginal;
-    syncCodeHighlight();
-
-    const save = document.querySelector("#editor-code-save");
-    if (save) {
-      save.disabled = !(editable && state.editorCodeDirty && !state.editorCodeSaving);
-    }
-
-    const meta = document.querySelector(".editor-code-meta small");
-    if (meta && state.editorMode === "beta") {
-      meta.textContent = state.editorCodeDirty
-        ? "Unsaved source changes · live previewing locally · save to build beta"
-        : "beta-main source · editable";
-    }
-  });
-
-  codeInput?.addEventListener("scroll", syncCodeHighlight);
-  codeInput?.addEventListener("keydown", (event) => {
-    if (event.key !== "Tab" || !editable) return;
-    event.preventDefault();
-    const start = codeInput.selectionStart;
-    const end = codeInput.selectionEnd;
-    codeInput.setRangeText("  ", start, end, "end");
-    codeInput.dispatchEvent(new Event("input", { bubbles: true }));
-  });
-
-  document.querySelector("#editor-code-save")?.addEventListener("click", saveEditorCodeSource);
-
   document.querySelectorAll("[data-editor-devtools-tab]").forEach((button) => {
     button.classList.toggle(
       "is-active",
@@ -2606,10 +2679,113 @@ function renderEditorDevtoolsDock() {
   });
 }
 
+function editorDeviceIcon(device) {
+  if (device === "mobile") {
+    return `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="2.5" width="10" height="19" rx="2"></rect><path d="M11 18.5h2"></path></svg>`;
+  }
+  if (device === "tablet") {
+    return `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4.5" y="2.5" width="15" height="19" rx="2"></rect><path d="M11 18.5h2"></path></svg>`;
+  }
+  return `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="4" width="19" height="12.5" rx="1.5"></rect><path d="M8.5 20h7M12 16.5V20"></path></svg>`;
+}
+
+function syncElementAttributes(target, source, keep = []) {
+  for (const { name } of [...target.attributes]) {
+    if (!keep.includes(name) && !source.hasAttribute(name)) target.removeAttribute(name);
+  }
+  for (const { name, value } of [...source.attributes]) {
+    if (!keep.includes(name) && target.getAttribute(name) !== value) {
+      target.setAttribute(name, value);
+    }
+  }
+}
+
+// Replaces the editor chrome with freshly rendered markup while keeping the
+// live preview <iframe> attached to the document. Detaching or recreating an
+// iframe always reloads the whole website, so instead of swapping the kept
+// node into the new tree, every new node is moved around the kept one.
+function patchEditorPanel(panel, markup, reuseFrame) {
+  const template = document.createElement("template");
+  template.innerHTML = markup;
+  const fresh = template.content;
+
+  const oldBrowser = reuseFrame ? panel.querySelector("#web-editor-browser") : null;
+  const oldFrame = oldBrowser?.querySelector(":scope > #web-editor-frame");
+  const newBrowser = fresh.querySelector("#web-editor-browser");
+  const newFrame = newBrowser?.querySelector(":scope > #web-editor-frame");
+
+  const chain = (node, root) => {
+    const nodes = [];
+    for (let current = node; current && current !== root; current = current.parentNode) {
+      nodes.push(current);
+    }
+    return nodes;
+  };
+  const oldChain = oldFrame ? chain(oldFrame, panel) : [];
+  const newChain = newFrame ? chain(newFrame, fresh) : [];
+  const sameShape =
+    oldChain.length > 0 &&
+    oldChain.length === newChain.length &&
+    oldChain.every((node, index) => node.tagName === newChain[index].tagName) &&
+    oldChain[oldChain.length - 1].parentNode === panel;
+
+  if (!sameShape) {
+    panel.replaceChildren(fresh);
+    return false;
+  }
+
+  const newFrameNode = newChain[0];
+  syncElementAttributes(oldFrame, newFrameNode, ["src", "data-frame-key"]);
+
+  for (let level = 1; level <= oldChain.length; level += 1) {
+    const oldParent = level < oldChain.length ? oldChain[level] : panel;
+    const newParent = level < newChain.length ? newChain[level] : fresh;
+    const keptOld = oldChain[level - 1];
+    const keptNew = newChain[level - 1];
+
+    if (oldParent !== panel) {
+      // Inline sizes (viewport scale, dock split) are recomputed after render.
+      syncElementAttributes(oldParent, newParent, ["style"]);
+    }
+
+    // The collaboration notes dock is owned by editor-collab.js; keep it.
+    const notesDock = [...oldParent.children].find((child) => child.id === "editor-notes-panel") || null;
+    for (const child of [...oldParent.childNodes]) {
+      if (child !== keptOld && child !== notesDock) child.remove();
+    }
+
+    let before = true;
+    for (const child of [...newParent.childNodes]) {
+      if (child === keptNew) {
+        before = false;
+        continue;
+      }
+      oldParent.insertBefore(child, before ? keptOld : notesDock);
+    }
+  }
+
+  return true;
+}
+
 function renderWebEditor() {
   if (state.editorPreviewMode === "devtools") state.editorPreviewMode = "visual";
   const panel = document.querySelector("#chat-panel");
   if (!panel) return;
+
+  // Re-renders keep the loaded website unless the page or environment changed,
+  // a reload was explicitly requested, or a code-view source preview replaced
+  // the rendered page and the user has returned to the visual editor.
+  const frameKey = `${state.editorMode}:${state.editorPage}`;
+  const existingFrame = panel.querySelector("#web-editor-frame");
+  const leavingSourcePreview =
+    state.editorSourcePreviewPosted && state.editorPreviewMode !== "code";
+  const reuseFrame =
+    Boolean(existingFrame) &&
+    existingFrame.dataset.frameKey === frameKey &&
+    !state.editorFrameReloadRequested &&
+    !leavingSourcePreview;
+  state.editorFrameReloadRequested = false;
+  if (leavingSourcePreview) state.editorSourcePreviewPosted = false;
 
   if (state.editorCodePreviewTimer) {
     window.clearTimeout(state.editorCodePreviewTimer);
@@ -2691,7 +2867,7 @@ function renderWebEditor() {
   const canRedo = editable && editorCanRedo();
 
   panel.className = "chat-panel web-editor-panel is-fullscreen";
-  panel.innerHTML = `
+  const markup = `
     <div class="web-editor-fullscreen">
       <input
         id="editor-assets-input"
@@ -2764,10 +2940,17 @@ function renderWebEditor() {
             <div class="editor-notes-mode-slot" aria-label="Page notes"></div>
           ` : ""}
 
-          <div class="editor-device-toolbar" role="group" aria-label="Preview device size">
-            <button class="${state.editorDevice === "desktop" ? "is-active" : ""}" type="button" data-editor-device="desktop">Desktop</button>
-            <button class="${state.editorDevice === "tablet" ? "is-active" : ""}" type="button" data-editor-device="tablet">Tablet</button>
-            <button class="${state.editorDevice === "mobile" ? "is-active" : ""}" type="button" data-editor-device="mobile">Phone</button>
+          <div class="editor-device-toolbar is-icons" role="group" aria-label="Preview device size">
+            ${[["desktop", "Desktop"], ["tablet", "Tablet"], ["mobile", "Phone"]].map(([device, label]) => `
+              <button
+                class="${state.editorDevice === device ? "is-active" : ""}"
+                type="button"
+                data-editor-device="${device}"
+                aria-label="${label} preview"
+                aria-pressed="${state.editorDevice === device}"
+                title="${label}"
+              >${editorDeviceIcon(device)}</button>
+            `).join("")}
           </div>
         </div>
 
@@ -2775,6 +2958,14 @@ function renderWebEditor() {
           <div class="editor-history-actions" role="group" aria-label="Undo and redo">
             <button id="web-editor-undo" class="editor-topbar-icon-button" type="button" aria-label="Undo last change" title="Undo" ${canUndo ? "" : "disabled"}>↶</button>
             <button id="web-editor-redo" class="editor-topbar-icon-button" type="button" aria-label="Redo change" title="Redo" ${canRedo ? "" : "disabled"}>↷</button>
+            <button
+              id="web-editor-discard"
+              class="editor-topbar-icon-button"
+              type="button"
+              aria-label="Discard this page's unpublished changes"
+              title="Discard this page's changes"
+              ${editable ? "" : "disabled"}
+            ><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"></path></svg></button>
           </div>
 
           ${connected && betaBehind ? `
@@ -2785,8 +2976,14 @@ function renderWebEditor() {
             <button id="web-editor-promote" class="editor-topbar-button is-promote" type="button">Publish preview live</button>
           ` : ""}
 
-          <button id="web-editor-refresh" class="editor-topbar-button" type="button">${state.editorPreviewMode === "code" ? "Reload code" : "Refresh"}</button>
-          <a id="web-editor-open-page" class="editor-topbar-button" target="_blank" rel="noopener noreferrer">Open page ↗</a>
+          <button
+            id="web-editor-refresh"
+            class="editor-topbar-icon-button"
+            type="button"
+            aria-label="${state.editorPreviewMode === "code" ? "Reload page source" : "Reload website preview"}"
+            title="${state.editorPreviewMode === "code" ? "Reload code" : "Reload preview"}"
+          ><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.34 5.66"></path><path d="M20 4v7h-7"></path></svg></button>
+          <a id="web-editor-open-page" class="editor-topbar-icon-button" target="_blank" rel="noopener noreferrer"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"></path></svg></a>
 
           ${state.editorPreviewMode === "code" ? `
             <button
@@ -2808,65 +3005,6 @@ function renderWebEditor() {
 
       <div class="editor-fullscreen-body">
         <main class="editor-live-workspace">
-          <div class="editor-live-toolbar">
-            <div class="editor-live-location">
-              <span class="editor-status-dot"></span>
-              <div>
-                <strong id="web-editor-preview-title">${state.editorMode === "beta" ? "Preview website" : "Live website"}</strong>
-                <small id="web-editor-preview-path"></small>
-              </div>
-            </div>
-
-            <div class="editor-view-toolbar" role="group" aria-label="Preview type">
-              <button class="${state.editorPreviewMode === "visual" ? "is-active" : ""}" type="button" data-editor-preview-mode="visual">Visual</button>
-              <button class="${state.editorPreviewMode === "code" ? "is-active" : ""}" type="button" data-editor-preview-mode="code">&lt;/&gt; Code</button>
-            </div>
-
-            ${state.editorPreviewMode === "code" ? `
-              <div class="editor-code-tabs" role="group" aria-label="Source type">
-                <button class="${state.editorCodeTab === "html" ? "is-active" : ""}" type="button" data-editor-code-tab="html">HTML</button>
-                <button class="${state.editorCodeTab === "css" ? "is-active" : ""}" type="button" data-editor-code-tab="css">CSS</button>
-              </div>
-            ` : state.editorPreviewMode === "devtools" ? `
-              <div class="editor-code-tabs" role="group" aria-label="DevTools panel">
-                <button class="${state.editorDevtoolsTab === "elements" ? "is-active" : ""}" type="button" data-editor-devtools-tab="elements">Elements</button>
-                <button class="${state.editorDevtoolsTab === "styles" ? "is-active" : ""}" type="button" data-editor-devtools-tab="styles">Styles</button>
-                <button class="${state.editorDevtoolsTab === "console" ? "is-active" : ""}" type="button" data-editor-devtools-tab="console">Console</button>
-              </div>
-              <div class="editor-device-toolbar" role="group" aria-label="Preview device size">
-                <button class="${state.editorDevice === "desktop" ? "is-active" : ""}" type="button" data-editor-device="desktop">Desktop</button>
-                <button class="${state.editorDevice === "tablet" ? "is-active" : ""}" type="button" data-editor-device="tablet">Tablet</button>
-                <button class="${state.editorDevice === "mobile" ? "is-active" : ""}" type="button" data-editor-device="mobile">Mobile</button>
-              </div>
-            ` : `
-              <div class="editor-device-toolbar" role="group" aria-label="Preview device size">
-                <button class="${state.editorDevice === "desktop" ? "is-active" : ""}" type="button" data-editor-device="desktop">Desktop</button>
-                <button class="${state.editorDevice === "tablet" ? "is-active" : ""}" type="button" data-editor-device="tablet">Tablet</button>
-                <button class="${state.editorDevice === "mobile" ? "is-active" : ""}" type="button" data-editor-device="mobile">Mobile</button>
-              </div>
-
-              <div class="editor-interaction-toolbar" role="group" aria-label="Website interaction mode">
-                <button class="${state.editorTool !== "view" ? "is-active" : ""}" type="button" data-editor-interaction="edit" title="Edit website" aria-label="Edit website">✦ <span>Edit</span></button>
-                <button class="${state.editorTool === "view" ? "is-active" : ""}" type="button" data-editor-interaction="view" title="View and navigate website" aria-label="View and navigate website">↖ <span>View</span></button>
-              </div>
-
-              <div class="editor-tool-toolbar ${state.editorTool === "view" ? "is-collapsed" : "is-expanded"}" role="group" aria-label="Editing tools">
-                <button class="${state.editorTool === "select" ? "is-active" : ""}" type="button" data-editor-tool="select" title="Select an item to edit" aria-label="Select an item to edit">⌖ <span>Select</span></button>
-                <button class="${state.editorTool === "text-box" ? "is-active" : ""}" type="button" data-editor-tool="text-box" title="Draw a text area" aria-label="Draw a text area">✎ <span>Text</span></button>
-              </div>
-            `}
-
-            <div class="editor-live-help">
-              ${state.editorPreviewMode === "code"
-                ? "Edit source and preview changes after you pause typing"
-                : state.editorTool === "view"
-                  ? "View mode · links, buttons and navigation behave like the real website"
-                  : editable
-                    ? "Edit mode · hover and click any item · use ↑ ↓ to move sections"
-                    : "Live website preview · view only"}
-            </div>
-          </div>
-
           <div class="editor-preview-placeholder is-fullscreen ${state.editorPreviewMode === "code" ? "has-code-dock" : ""}">
             <div id="web-editor-browser" class="editor-preview-browser is-fullscreen" data-device="${state.editorDevice}">
               <div class="editor-preview-browser-bar">
@@ -2909,7 +3047,7 @@ function renderWebEditor() {
                     ? "Loading source…"
                     : state.editorCodeSource?.error
                       ? escapeEditorAttribute(state.editorCodeSource.error)
-                      : highlightHtmlSource(editorCodeContent() || "")}</code></pre>
+                      : ""}</code></pre>
                   <textarea
                     id="editor-code-input"
                     class="editor-code-input"
@@ -2950,15 +3088,6 @@ function renderWebEditor() {
               </section>
             ` : ""}
           </div>
-          <footer class="editor-fullscreen-footer">
-            <div>
-              <strong>${state.editorMode === "beta" ? "Preview changes" : "Live website"}</strong>
-              <span>${state.editorMode === "beta"
-                ? `${pendingCount || 0} page${pendingCount === 1 ? "" : "s"} with changes · nothing reaches the live site until you approve the preview`
-                : "Choose Edit preview to make website changes."}</span>
-            </div>
-            <button id="web-editor-discard" class="editor-topbar-button" type="button" ${state.editorMode === "beta" ? "" : "disabled"}>Discard page changes</button>
-          </footer>
         </main>
       </div>
     </div>
@@ -3006,6 +3135,7 @@ function renderWebEditor() {
       </section>
     </div>
   `;
+  const reusedFrame = patchEditorPanel(panel, markup, reuseFrame);
 
   const pageSelect = document.querySelector("#web-editor-page");
   const frame = document.querySelector("#web-editor-frame");
@@ -3083,17 +3213,26 @@ function renderWebEditor() {
   const codeInput = document.querySelector("#editor-code-input");
   const codeHighlight = document.querySelector("#editor-code-highlight");
 
+  const codeReady =
+    Boolean(codeInput && codeHighlight) &&
+    !state.editorCodeLoading &&
+    !state.editorCodeSource?.error;
+
+  // Scrolling repositions the overlay in the same frame; edits are coalesced
+  // into one paint per frame so key repeat and pastes never queue up work.
   const syncCodeEditorScroll = () => {
-    if (!codeInput || !codeHighlight) return;
-    codeHighlight.scrollTop = codeInput.scrollTop;
-    codeHighlight.scrollLeft = codeInput.scrollLeft;
+    if (codeReady) paintCodeHighlight(codeInput, codeHighlight);
   };
 
+  let codePaintFrame = 0;
   const refreshCodeHighlight = () => {
-    if (!codeInput || !codeHighlight) return;
-    codeHighlight.innerHTML = `<code>${highlightHtmlSource(codeInput.value)}</code>`;
-    syncCodeEditorScroll();
+    if (!codeReady || codePaintFrame) return;
+    codePaintFrame = window.requestAnimationFrame(() => {
+      codePaintFrame = 0;
+      if (codeInput.isConnected) paintCodeHighlight(codeInput, codeHighlight);
+    });
   };
+  if (codeReady) paintCodeHighlight(codeInput, codeHighlight, { force: true });
 
   const postCodeSourcePreview = () => {
     if (
@@ -3113,6 +3252,7 @@ function renderWebEditor() {
       },
       frameOrigin()
     );
+    state.editorSourcePreviewPosted = true;
   };
 
   const scheduleCodeSourcePreview = () => {
@@ -3131,16 +3271,18 @@ function renderWebEditor() {
     refreshCodeHighlight();
     scheduleCodeSourcePreview();
 
+    // Only touch surrounding chrome when its state actually changes; a write
+    // per keystroke invalidates layout around the (large) textarea.
     const save = document.querySelector("#editor-code-save");
-    if (save) {
-      save.disabled = !(editable && state.editorCodeDirty && !state.editorCodeSaving);
-    }
+    const canSave = editable && state.editorCodeDirty && !state.editorCodeSaving;
+    if (save && save.disabled === canSave) save.disabled = !canSave;
 
     const meta = document.querySelector(".editor-code-meta small");
     if (meta && state.editorMode === "beta") {
-      meta.textContent = state.editorCodeDirty
+      const status = state.editorCodeDirty
         ? "Unsaved source changes · live preview updates after you pause typing"
         : "beta-main source · editable";
+      if (meta.textContent !== status) meta.textContent = status;
     }
   });
 
@@ -3508,14 +3650,22 @@ function renderWebEditor() {
         : parsed.hostname + parsed.pathname;
 
     if (openPage) {
+      const label =
+        state.editorMode === "beta"
+          ? "Open the beta review site in a new tab"
+          : "Open the live page in a new tab";
       openPage.hidden = false;
       openPage.href = reviewUrl;
-      openPage.textContent =
-        state.editorMode === "beta" ? "Open beta review ↗" : "Open page ↗";
+      openPage.title = label;
+      openPage.setAttribute("aria-label", label);
     }
     if (previewPath) previewPath.textContent = display;
     if (browserUrl) browserUrl.textContent = display;
-    if (reload && frame) frame.src = iframeUrl(cacheBust);
+    if (reload && frame) {
+      frame.dataset.frameKey = frameKey;
+      state.editorSourcePreviewPosted = false;
+      frame.src = iframeUrl(cacheBust);
+    }
   };
 
   syncPreviewViewport();
@@ -4025,7 +4175,7 @@ function renderWebEditor() {
 
   bannerSave?.addEventListener("click", publishEditorBanner);
 
-  frame?.addEventListener("load", () => {
+  if (frame) frame.onload = () => {
     window.setTimeout(() => {
       postDraft();
       frame?.contentWindow?.postMessage(
@@ -4037,7 +4187,7 @@ function renderWebEditor() {
       }
       requestColours();
     }, 80);
-  });
+  };
 
   document.querySelector("#editor-history-toggle")?.addEventListener("click", () => {
     state.editorHistoryOpen = !state.editorHistoryOpen;
@@ -4076,6 +4226,7 @@ function renderWebEditor() {
           src: srcValue
         }
       };
+      storeCurrentEditorDraft();
 
       if (state.editorSelectedObject?.selector === targetSelector) {
         state.editorSelectedObject = {
@@ -4189,11 +4340,11 @@ function renderWebEditor() {
       if (browser) browser.dataset.device = state.editorDevice;
 
       document.querySelectorAll("[data-editor-device]").forEach((item) => {
-        item.classList.toggle(
-          "is-active",
-          item.dataset.editorDevice === state.editorDevice
-        );
+        const active = item.dataset.editorDevice === state.editorDevice;
+        item.classList.toggle("is-active", active);
+        item.setAttribute("aria-pressed", String(active));
       });
+      syncPreviewViewport();
     });
   });
 
@@ -4280,11 +4431,16 @@ function renderWebEditor() {
       state.editorCodeDraft = "";
       state.editorCodeOriginal = "";
       state.editorCodeDirty = false;
+      // The preview is showing the discarded source; load the real page again.
+      if (state.editorSourcePreviewPosted) state.editorFrameReloadRequested = true;
       loadEditorCodeSource({ force: true });
       return;
     }
 
-    if (frame) frame.src = iframeUrl(true);
+    if (frame) {
+      state.editorSourcePreviewPosted = false;
+      frame.src = iframeUrl(true);
+    }
   });
 
   document.querySelector("#editor-eyedropper")?.addEventListener("click", async () => {
@@ -4337,6 +4493,13 @@ function renderWebEditor() {
 
   document.querySelector("#web-editor-discard")?.addEventListener("click", () => {
     if (state.editorMode !== "beta") return;
+    if (!state.editorPendingPages?.[state.editorPage]) {
+      showToast("This page has no unpublished changes.");
+      return;
+    }
+    if (!window.confirm("Discard all unpublished changes on this page? This cannot be undone.")) {
+      return;
+    }
 
     const deployed = editorPageConfig("beta", state.editorPage);
     applyEditorDraftSnapshot(editorDraftFromConfig(deployed));
@@ -4503,7 +4666,25 @@ function renderWebEditor() {
 
   renderSelectedItem();
   renderColours();
-  updatePreviewLocation({ reload: true });
+  updatePreviewLocation({ reload: !reusedFrame });
+
+  if (reusedFrame) {
+    // Bring the already-loaded website in line with any state that changed.
+    postDraft();
+    frame?.contentWindow?.postMessage(
+      { type: "WCG_EDITOR_TOOL", tool: state.editorTool },
+      frameOrigin()
+    );
+    // A render cancels the pending debounced source preview; re-queue it so
+    // unsaved HTML keeps showing in the kept preview.
+    if (state.editorPreviewMode === "code" && state.editorCodeDirty) {
+      scheduleCodeSourcePreview();
+    }
+  }
+
+  document.dispatchEvent(
+    new CustomEvent("wcg:editor-rendered", { detail: { reusedFrame } })
+  );
 
   if (!state.editorStatus && !state.editorLoading) {
     window.setTimeout(() => loadWebEditorStatus({ quiet: true }), 0);
@@ -4568,6 +4749,15 @@ function formatNumber(value) {
   return new Intl.NumberFormat().format(Number(value || 0));
 }
 
+function formatCompactNumber(value) {
+  const number = Number(value || 0);
+  if (Math.abs(number) < 10000) return formatNumber(Math.round(number));
+  return new Intl.NumberFormat(undefined, {
+    notation: "compact",
+    maximumFractionDigits: 1
+  }).format(number);
+}
+
 function formatDecimal(value, digits = 2) {
   const number = Number(value || 0);
   return Number.isFinite(number) ? number.toFixed(digits) : "0.00";
@@ -4581,55 +4771,97 @@ function formatDuration(value) {
   return `${minutes}m ${seconds}s`;
 }
 
-function analyticsRow(container, primary, secondary, value) {
-  const row = document.createElement("div");
-  row.className = "analytics-list-row";
-
-  const copy = document.createElement("div");
-  copy.className = "analytics-list-copy";
-
-  const strong = document.createElement("strong");
-  strong.textContent = primary || "Unknown";
-  copy.appendChild(strong);
-
-  if (secondary) {
-    const small = document.createElement("span");
-    small.textContent = secondary;
-    copy.appendChild(small);
-  }
-
-  const metric = document.createElement("b");
-  metric.textContent = String(value ?? "0");
-
-  row.append(copy, metric);
-  container.appendChild(row);
+function formatShare(value, total) {
+  const share = total > 0 ? (Number(value || 0) / total) * 100 : 0;
+  if (share <= 0) return "0%";
+  if (share < 1) return "<1%";
+  return `${Math.round(share)}%`;
 }
 
-function renderAnalyticsList(id, rows, mapper) {
-  const container = document.querySelector(id);
-  if (!container) return;
-  container.replaceChildren();
+const ANALYTICS_RANGES = [7, 30, 90];
+const ANALYTICS_REFRESH_MS = 60000;
+const ANALYTICS_LIST_LIMIT = 8;
+let analyticsPageNameCache = null;
+let analyticsRegionNames;
 
-  if (!rows?.length) {
-    const empty = document.createElement("div");
-    empty.className = "analytics-empty";
-    empty.textContent = "No data yet.";
-    container.appendChild(empty);
-    return;
+function analyticsPageNames() {
+  if (analyticsPageNameCache) return analyticsPageNameCache;
+
+  const names = new Map([["/", "Home"], ["/index.html", "Home"]]);
+  const add = (path, label) => {
+    if (!path || !label || names.has(path)) return;
+    names.set(path, label);
+    // Cloudflare can report either the .html file or its pretty URL.
+    if (path.endsWith(".html")) names.set(path.slice(0, -5), label);
+  };
+
+  for (const [href, label] of EDITOR_LINK_DESTINATIONS) {
+    if (!href.includes("#")) add(`/${href}`, label);
+  }
+  for (const section of Object.values(SUPPORT_PAGE_CATALOG)) {
+    for (const [label, path] of section.items || []) add(path, label);
   }
 
-  rows.forEach((row) => {
-    const item = mapper(row);
-    analyticsRow(container, item.primary, item.secondary, item.value);
-  });
+  analyticsPageNameCache = names;
+  return names;
 }
 
-function analyticsDateLabel(value) {
+function analyticsPageName(path) {
+  const raw = String(path || "/").split(/[?#]/)[0] || "/";
+  const clean = raw.length > 1 ? raw.replace(/\/+$/, "") : raw;
+  const names = analyticsPageNames();
+  if (names.has(clean)) return names.get(clean);
+
+  const slug = clean.split("/").filter(Boolean).pop() || "";
+  const words = slug.replace(/\.html?$/i, "").replace(/[-_]+/g, " ").trim();
+  return words ? words.replace(/\b\w/g, (letter) => letter.toUpperCase()) : "Home";
+}
+
+function analyticsCountry(value) {
+  const raw = String(value || "").trim();
+  if (!/^[A-Za-z]{2}$/.test(raw)) return { name: raw || "Unknown", flag: "" };
+
+  const code = raw.toUpperCase();
+  if (analyticsRegionNames === undefined) {
+    try {
+      analyticsRegionNames = new Intl.DisplayNames(undefined, { type: "region" });
+    } catch {
+      analyticsRegionNames = null;
+    }
+  }
+
+  let name = code;
+  try {
+    name = analyticsRegionNames?.of(code) || code;
+  } catch {
+    // Unknown region codes fall back to the raw code.
+  }
+  return { name, flag: countryFlagEmoji(code) };
+}
+
+function capitalise(value) {
+  return String(value || "").replace(/^./, (letter) => letter.toUpperCase());
+}
+
+function analyticsDateLabel(value, { weekday = false } = {}) {
   const date = new Date(`${value}T00:00:00Z`);
   if (Number.isNaN(date.getTime())) return String(value || "");
   return new Intl.DateTimeFormat(undefined, {
+    ...(weekday ? { weekday: "short" } : { month: "short" }),
+    day: "numeric",
+    timeZone: "UTC"
+  }).format(date);
+}
+
+function analyticsLongDateLabel(value) {
+  const date = new Date(`${value}T00:00:00Z`);
+  if (Number.isNaN(date.getTime())) return String(value || "");
+  return new Intl.DateTimeFormat(undefined, {
+    weekday: "short",
+    day: "numeric",
     month: "short",
-    day: "numeric"
+    year: "numeric",
+    timeZone: "UTC"
   }).format(date);
 }
 
@@ -4668,364 +4900,707 @@ function createSvgElement(name, attributes = {}) {
   return node;
 }
 
-function smoothChartPath(points) {
-  if (!points.length) return "";
-  if (points.length === 1) return `M ${points[0][0]} ${points[0][1]}`;
-
-  let path = `M ${points[0][0]} ${points[0][1]}`;
-  for (let index = 1; index < points.length; index += 1) {
-    const previous = points[index - 1];
-    const current = points[index];
-    const midpoint = (previous[0] + current[0]) / 2;
-    path += ` C ${midpoint} ${previous[1]}, ${midpoint} ${current[1]}, ${current[0]} ${current[1]}`;
-  }
-  return path;
+function analyticsNiceTicks(max, count = 4) {
+  const safeMax = Math.max(1, Number(max || 0));
+  const rough = safeMax / count;
+  const magnitude = 10 ** Math.floor(Math.log10(rough));
+  const residual = rough / magnitude;
+  const step = (residual > 5 ? 10 : residual > 2 ? 5 : residual > 1 ? 2 : 1) * magnitude;
+  const top = Math.ceil(safeMax / step) * step;
+  const ticks = [];
+  for (let value = 0; value <= top + step / 2; value += step) ticks.push(value);
+  return ticks;
 }
 
-function renderCloudflareTrendChart(id, rows, {
-  value,
-  formatValue = formatNumber
-}) {
-  const container = document.querySelector(id);
-  if (!container) return;
-  container.replaceChildren();
+function linePath(points) {
+  return points
+    .map(([x, y], index) => `${index ? "L" : "M"}${x.toFixed(1)} ${y.toFixed(1)}`)
+    .join(" ");
+}
 
-  if (!rows?.length) {
-    const empty = document.createElement("div");
-    empty.className = "cloudflare-chart-empty";
-    empty.textContent = "No Cloudflare data yet.";
-    container.appendChild(empty);
-    return;
-  }
+function renderAnalyticsSparkline(svg, values) {
+  if (!svg) return;
+  svg.replaceChildren();
+  const data = values.map((value) => Math.max(0, Number(value || 0)));
+  if (data.length < 2 || !data.some(Boolean)) return;
 
-  const width = 640;
-  const height = 220;
-  const padding = { top: 18, right: 12, bottom: 30, left: 12 };
-  const plotWidth = width - padding.left - padding.right;
-  const plotHeight = height - padding.top - padding.bottom;
-  const values = rows.map((row) => Math.max(0, Number(value(row) || 0)));
-  const max = Math.max(...values, 1);
+  const width = 100;
+  const height = 28;
+  const max = Math.max(...data, 1);
+  const points = data.map((value, index) => [
+    (index / (data.length - 1)) * width,
+    height - 2 - (value / max) * (height - 4)
+  ]);
 
-  const points = rows.map((row, index) => {
-    const x = rows.length === 1
-      ? padding.left + plotWidth / 2
-      : padding.left + (index / (rows.length - 1)) * plotWidth;
-    const y = padding.top + plotHeight - (values[index] / max) * plotHeight;
-    return [x, y, row];
-  });
-
-  const svg = createSvgElement("svg", {
-    viewBox: `0 0 ${width} ${height}`,
-    preserveAspectRatio: "none",
-    role: "img",
-    "aria-label": "Cloudflare traffic trend"
-  });
-  svg.classList.add("cloudflare-line-svg");
-
-  [0, 0.5, 1].forEach((ratio) => {
-    const y = padding.top + plotHeight * ratio;
-    svg.appendChild(createSvgElement("line", {
-      x1: padding.left,
-      x2: width - padding.right,
-      y1: y,
-      y2: y,
-      class: "cloudflare-chart-gridline"
-    }));
-  });
-
-  const path = smoothChartPath(points);
-  const area = `${path} L ${points[points.length - 1][0]} ${padding.top + plotHeight} L ${points[0][0]} ${padding.top + plotHeight} Z`;
-
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  svg.setAttribute("preserveAspectRatio", "none");
   svg.appendChild(createSvgElement("path", {
-    d: area,
-    class: "cloudflare-chart-area"
+    d: linePath(points),
+    class: "analytics-spark-line",
+    "vector-effect": "non-scaling-stroke"
   }));
-  svg.appendChild(createSvgElement("path", {
-    d: path,
-    class: "cloudflare-chart-line"
-  }));
-
-  const markerIndexes = new Set([0, Math.floor((points.length - 1) / 2), points.length - 1]);
-  points.forEach(([x, y, row], index) => {
-    if (!markerIndexes.has(index)) return;
-    const dot = createSvgElement("circle", {
-      cx: x,
-      cy: y,
-      r: 3.4,
-      class: "cloudflare-chart-dot"
-    });
-    const title = createSvgElement("title");
-    title.textContent = `${analyticsDateLabel(row.date)}: ${formatValue(value(row))}`;
-    dot.appendChild(title);
-    svg.appendChild(dot);
-  });
-
-  const axis = document.createElement("div");
-  axis.className = "cloudflare-chart-axis";
-  [rows[0], rows[Math.floor((rows.length - 1) / 2)], rows[rows.length - 1]].forEach((row) => {
-    const label = document.createElement("span");
-    label.textContent = analyticsDateLabel(row.date);
-    axis.appendChild(label);
-  });
-
-  container.append(svg, axis);
 }
 
-function renderCloudflareBars(id, rows, {
-  label,
-  value,
-  limit = 6
-}) {
-  const container = document.querySelector(id);
+function renderAnalyticsTrend(container, rows) {
   if (!container) return;
   container.replaceChildren();
 
-  const data = (rows || [])
-    .map((row) => ({
-      row,
-      label: String(label(row) || "Unknown"),
-      value: Math.max(0, Number(value(row) || 0))
-    }))
-    .sort((a, b) => b.value - a.value)
-    .slice(0, limit);
-
-  if (!data.length) {
-    const empty = document.createElement("div");
-    empty.className = "cloudflare-chart-empty";
-    empty.textContent = "No Cloudflare data yet.";
-    container.appendChild(empty);
-    return;
-  }
-
-  const max = Math.max(...data.map((item) => item.value), 1);
-
-  data.forEach((item) => {
-    const row = document.createElement("div");
-    row.className = "cloudflare-bar-row";
-
-    const head = document.createElement("div");
-    head.className = "cloudflare-bar-head";
-
-    const copy = document.createElement("strong");
-    copy.textContent = item.label;
-
-    const metric = document.createElement("b");
-    metric.textContent = formatNumber(item.value);
-
-    const track = document.createElement("div");
-    track.className = "cloudflare-bar-track";
-
-    const fill = document.createElement("span");
-    fill.style.width = `${Math.max(4, Math.round((item.value / max) * 100))}%`;
-    track.appendChild(fill);
-
-    head.append(copy, metric);
-    row.append(head, track);
-    container.appendChild(row);
-  });
-}
-
-function renderRankBars(id, rows, {
-  labelKey,
-  valueKey,
-  secondary
-}) {
-  const container = document.querySelector(id);
-  if (!container) return;
-  container.replaceChildren();
-
-  if (!rows?.length) {
+  const hasData = rows.some((row) => row.visits > 0 || row.views > 0);
+  if (!rows.length || !hasData) {
     const empty = document.createElement("div");
     empty.className = "analytics-empty";
-    empty.textContent = "No data yet.";
+    empty.textContent = state.analyticsLoading
+      ? "Loading traffic…"
+      : "No traffic recorded for this period yet.";
     container.appendChild(empty);
     return;
   }
 
-  const max = Math.max(
-    ...rows.map((row) => Number(row?.[valueKey] || 0)),
-    1
+  const width = Math.max(280, Math.round(container.clientWidth || 640));
+  const narrow = width < 560;
+  const height = narrow ? 220 : 280;
+  const max = Math.max(...rows.map((row) => Math.max(row.visits, row.views)), 1);
+  const ticks = analyticsNiceTicks(max, narrow ? 3 : 4);
+  const top = ticks[ticks.length - 1];
+  const tickLabels = ticks.map((tick) => formatCompactNumber(tick));
+  const margin = {
+    top: 14,
+    right: narrow ? 12 : 86,
+    bottom: 30,
+    left: Math.max(...tickLabels.map((label) => label.length)) * 7 + 14
+  };
+  const plotWidth = width - margin.left - margin.right;
+  const plotHeight = height - margin.top - margin.bottom;
+  const baseline = margin.top + plotHeight;
+  const xAt = (index) => margin.left + (rows.length === 1
+    ? plotWidth / 2
+    : (index / (rows.length - 1)) * plotWidth);
+  const yAt = (value) => margin.top + plotHeight - (value / top) * plotHeight;
+
+  const totals = rows.reduce(
+    (sum, row) => ({ visits: sum.visits + row.visits, views: sum.views + row.views }),
+    { visits: 0, views: 0 }
   );
 
-  rows.forEach((row, index) => {
-    const value = Number(row?.[valueKey] || 0);
-    const item = document.createElement("div");
-    item.className = "rank-bar-item";
+  const svg = createSvgElement("svg", {
+    width,
+    height,
+    viewBox: `0 0 ${width} ${height}`,
+    role: "img",
+    tabindex: "0",
+    "aria-label": `Daily traffic from ${analyticsLongDateLabel(rows[0].date)} to ${analyticsLongDateLabel(rows[rows.length - 1].date)}: ${formatNumber(totals.visits)} visits and ${formatNumber(totals.views)} page views. Use the left and right arrow keys to read each day, or open the table below.`
+  });
+  svg.classList.add("analytics-trend-svg");
 
-    const head = document.createElement("div");
-    head.className = "rank-bar-head";
+  ticks.forEach((tick, index) => {
+    const y = yAt(tick);
+    svg.appendChild(createSvgElement("line", {
+      x1: margin.left,
+      x2: width - margin.right,
+      y1: y,
+      y2: y,
+      class: index === 0 ? "analytics-axis-line" : "analytics-grid-line"
+    }));
+    const label = createSvgElement("text", {
+      x: margin.left - 10,
+      y: y + 4,
+      "text-anchor": "end",
+      class: "analytics-axis-label"
+    });
+    label.textContent = tickLabels[index];
+    svg.appendChild(label);
+  });
 
-    const label = document.createElement("div");
-    label.className = "rank-bar-label";
+  const labelEvery = Math.max(1, Math.ceil(rows.length / Math.max(2, Math.floor(plotWidth / 86))));
+  const weekday = rows.length <= 7;
+  for (let index = rows.length - 1; index >= 0; index -= labelEvery) {
+    const x = xAt(index);
+    const anchor = x - margin.left < 24 ? "start" : width - margin.right - x < 24 ? "end" : "middle";
+    const label = createSvgElement("text", {
+      x,
+      y: height - 9,
+      "text-anchor": anchor,
+      class: "analytics-axis-label"
+    });
+    label.textContent = analyticsDateLabel(rows[index].date, { weekday });
+    svg.appendChild(label);
+  }
 
-    const number = document.createElement("span");
-    number.textContent = String(index + 1).padStart(2, "0");
+  const visitPoints = rows.map((row, index) => [xAt(index), yAt(row.visits)]);
+  const viewPoints = rows.map((row, index) => [xAt(index), yAt(row.views)]);
 
-    const copy = document.createElement("div");
-    const strong = document.createElement("strong");
-    strong.textContent = row?.[labelKey] || "Unknown";
-    copy.appendChild(strong);
+  svg.appendChild(createSvgElement("path", {
+    d: `${linePath(visitPoints)} L${visitPoints[visitPoints.length - 1][0].toFixed(1)} ${baseline} L${visitPoints[0][0].toFixed(1)} ${baseline} Z`,
+    class: "analytics-area is-visits"
+  }));
+  svg.appendChild(createSvgElement("path", { d: linePath(viewPoints), class: "analytics-line is-views" }));
+  svg.appendChild(createSvgElement("path", { d: linePath(visitPoints), class: "analytics-line is-visits" }));
 
-    const secondaryValue = secondary?.(row);
-    if (secondaryValue) {
-      const small = document.createElement("small");
-      small.textContent = secondaryValue;
-      copy.appendChild(small);
+  const last = rows.length - 1;
+  for (const [points, series] of [[viewPoints, "views"], [visitPoints, "visits"]]) {
+    svg.appendChild(createSvgElement("circle", {
+      cx: points[last][0],
+      cy: points[last][1],
+      r: 4,
+      class: `analytics-dot is-${series}`
+    }));
+  }
+
+  // Direct end labels only when the two series finish far enough apart.
+  if (!narrow && Math.abs(viewPoints[last][1] - visitPoints[last][1]) >= 16) {
+    for (const [points, text] of [[viewPoints, "Page views"], [visitPoints, "Visits"]]) {
+      const label = createSvgElement("text", {
+        x: points[last][0] + 10,
+        y: points[last][1] + 4,
+        class: "analytics-end-label"
+      });
+      label.textContent = text;
+      svg.appendChild(label);
     }
+  }
 
-    label.append(number, copy);
+  const crosshair = createSvgElement("line", {
+    y1: margin.top,
+    y2: baseline,
+    class: "analytics-crosshair"
+  });
+  const focusViews = createSvgElement("circle", { r: 4.5, class: "analytics-dot is-views is-focus" });
+  const focusVisits = createSvgElement("circle", { r: 4.5, class: "analytics-dot is-visits is-focus" });
+  const hover = createSvgElement("g", { class: "analytics-hover", visibility: "hidden" });
+  hover.append(crosshair, focusViews, focusVisits);
+  svg.appendChild(hover);
 
-    const metric = document.createElement("b");
-    metric.textContent = formatNumber(value);
+  const hitArea = createSvgElement("rect", {
+    x: margin.left - 6,
+    y: margin.top,
+    width: plotWidth + 12,
+    height: plotHeight,
+    class: "analytics-hit-area"
+  });
+  svg.appendChild(hitArea);
 
-    head.append(label, metric);
+  const tooltip = document.createElement("div");
+  tooltip.className = "analytics-tooltip";
+  tooltip.hidden = true;
 
-    const track = document.createElement("div");
-    track.className = "rank-bar-track";
+  const tooltipDate = document.createElement("strong");
+  tooltipDate.className = "analytics-tooltip-date";
+  tooltip.appendChild(tooltipDate);
+
+  const tooltipRows = [
+    ["visits", "Visits"],
+    ["views", "Page views"],
+    ["ratio", "Pages / visit"]
+  ].map(([key, text]) => {
+    const row = document.createElement("div");
+    row.className = `analytics-tooltip-row is-${key}`;
+    const keyMark = document.createElement("i");
+    keyMark.setAttribute("aria-hidden", "true");
+    const value = document.createElement("b");
+    const label = document.createElement("span");
+    label.textContent = text;
+    row.append(keyMark, value, label);
+    tooltip.appendChild(row);
+    return value;
+  });
+
+  let activeIndex = -1;
+
+  const showIndex = (index) => {
+    activeIndex = Math.min(rows.length - 1, Math.max(0, index));
+    const row = rows[activeIndex];
+    const x = xAt(activeIndex);
+    crosshair.setAttribute("x1", x);
+    crosshair.setAttribute("x2", x);
+    focusViews.setAttribute("cx", x);
+    focusViews.setAttribute("cy", viewPoints[activeIndex][1]);
+    focusVisits.setAttribute("cx", x);
+    focusVisits.setAttribute("cy", visitPoints[activeIndex][1]);
+    hover.setAttribute("visibility", "visible");
+
+    tooltipDate.textContent = analyticsLongDateLabel(row.date);
+    tooltipRows[0].textContent = formatNumber(row.visits);
+    tooltipRows[1].textContent = formatNumber(row.views);
+    tooltipRows[2].textContent = row.visits > 0 ? formatDecimal(row.pagesPerVisit) : "—";
+    tooltip.hidden = false;
+
+    const tipWidth = tooltip.offsetWidth || 170;
+    const left = x + 14 + tipWidth > width ? x - 14 - tipWidth : x + 14;
+    tooltip.style.transform = `translate(${Math.max(0, left)}px, ${margin.top}px)`;
+  };
+
+  const hide = () => {
+    activeIndex = -1;
+    hover.setAttribute("visibility", "hidden");
+    tooltip.hidden = true;
+  };
+
+  const indexFromPointer = (event) => {
+    const rect = svg.getBoundingClientRect();
+    const x = (event.clientX - rect.left) * (width / Math.max(1, rect.width));
+    if (rows.length === 1) return 0;
+    return Math.round(((x - margin.left) / plotWidth) * (rows.length - 1));
+  };
+
+  hitArea.addEventListener("pointermove", (event) => showIndex(indexFromPointer(event)));
+  hitArea.addEventListener("pointerdown", (event) => showIndex(indexFromPointer(event)));
+  hitArea.addEventListener("pointerleave", hide);
+  svg.addEventListener("focus", () => showIndex(activeIndex < 0 ? rows.length - 1 : activeIndex));
+  svg.addEventListener("blur", hide);
+  svg.addEventListener("keydown", (event) => {
+    const moves = { ArrowLeft: -1, ArrowRight: 1, Home: -Infinity, End: Infinity };
+    if (event.key === "Escape") {
+      hide();
+      return;
+    }
+    if (!(event.key in moves)) return;
+    event.preventDefault();
+    const step = moves[event.key];
+    const base = activeIndex < 0 ? rows.length - 1 : activeIndex;
+    showIndex(Number.isFinite(step) ? base + step : step < 0 ? 0 : rows.length - 1);
+  });
+
+  container.append(svg, tooltip);
+}
+
+function renderAnalyticsTrendTable(container, rows) {
+  if (!container) return;
+  container.replaceChildren();
+
+  const table = document.createElement("table");
+  table.className = "analytics-table";
+  const head = document.createElement("thead");
+  const headRow = document.createElement("tr");
+  for (const text of ["Date", "Visits", "Page views", "Pages / visit"]) {
+    const cell = document.createElement("th");
+    cell.scope = "col";
+    cell.textContent = text;
+    headRow.appendChild(cell);
+  }
+  head.appendChild(headRow);
+
+  const body = document.createElement("tbody");
+  for (const row of [...rows].reverse()) {
+    const tr = document.createElement("tr");
+    for (const text of [
+      analyticsLongDateLabel(row.date),
+      formatNumber(row.visits),
+      formatNumber(row.views),
+      row.visits > 0 ? formatDecimal(row.pagesPerVisit) : "—"
+    ]) {
+      const cell = document.createElement("td");
+      cell.textContent = text;
+      tr.appendChild(cell);
+    }
+    body.appendChild(tr);
+  }
+
+  table.append(head, body);
+  container.appendChild(table);
+}
+
+function analyticsBreakdowns(summary) {
+  const metrics = summary.metrics || {};
+  const visits = Number(metrics.visits || 0);
+  const views = Number(metrics.pageViews || 0);
+  const clicks = Number(metrics.clicks || 0);
+  const exitRows = summary.exitPages || [];
+  const exits = Number(metrics.exits || 0) ||
+    exitRows.reduce((sum, row) => sum + Number(row?.exits || 0), 0);
+
+  return {
+    pages: {
+      top: {
+        tab: "Most viewed",
+        column: "Views",
+        total: views,
+        empty: "No page views recorded yet.",
+        rows: (summary.topPages || []).map((row) => ({
+          label: analyticsPageName(row.path),
+          detail: row.path && row.path !== "/" ? String(row.path) : "",
+          value: Number(row.views || 0)
+        }))
+      },
+      exit: {
+        tab: "Exit pages",
+        column: "Exits",
+        total: exits,
+        empty: "No page exits recorded yet.",
+        rows: exitRows.map((row) => ({
+          label: analyticsPageName(row.path),
+          detail: `${row.path || "/"} · avg. ${formatDuration(row.avgDurationMs)} on page`,
+          value: Number(row.exits || 0)
+        }))
+      }
+    },
+    sources: {
+      referrers: {
+        tab: "Referrers",
+        column: "Visits",
+        total: visits,
+        empty: "No referring websites yet. Direct visits are not listed.",
+        rows: (summary.referrers || []).map((row) => ({
+          label: String(row.host || "Unknown").replace(/^www\./i, ""),
+          value: Number(row.visitors || 0)
+        }))
+      },
+      campaigns: {
+        tab: "Campaigns",
+        column: "Visits",
+        total: visits,
+        empty: "No UTM-tagged campaign traffic yet.",
+        rows: (summary.campaigns || []).map((row) => ({
+          label: row.campaign || row.source || "Untitled campaign",
+          detail: [row.source, row.medium].filter(Boolean).join(" · "),
+          value: Number(row.visitors || 0)
+        }))
+      }
+    },
+    locations: {
+      countries: {
+        tab: "Countries",
+        column: "Visits",
+        total: visits,
+        empty: "No location data yet.",
+        rows: (summary.locations || []).map((row) => {
+          const country = analyticsCountry(row.country);
+          const place = [row.city, row.region].filter(Boolean).join(", ");
+          return {
+            label: country.name,
+            prefix: country.flag,
+            detail: place,
+            value: Number(row.visitors || 0)
+          };
+        })
+      }
+    },
+    technology: {
+      device: {
+        tab: "Device",
+        column: "Visits",
+        total: visits,
+        empty: "No device data yet.",
+        rows: (summary.devices || []).map((row) => ({
+          label: capitalise(row.device || "Unknown"),
+          value: Number(row.visitors || 0)
+        }))
+      },
+      browser: {
+        tab: "Browser",
+        column: "Visits",
+        total: visits,
+        empty: "Browser data is available from Cloudflare only.",
+        rows: (summary.browsers || []).map((row) => ({
+          label: row.browser || "Unknown",
+          value: Number(row.visitors || 0)
+        }))
+      },
+      os: {
+        tab: "OS",
+        column: "Visits",
+        total: visits,
+        empty: "Operating system data is available from Cloudflare only.",
+        rows: (summary.operatingSystems || []).map((row) => ({
+          label: row.os || "Unknown",
+          value: Number(row.visitors || 0)
+        }))
+      }
+    },
+    clicks: {
+      links: {
+        tab: "Top clicks",
+        column: "Clicks",
+        total: clicks,
+        empty: "No link or button clicks recorded yet.",
+        rows: (summary.topClicks || []).map((row) => ({
+          label: row.label || row.href || "Unlabelled control",
+          detail: row.href || row.kind || "",
+          value: Number(row.clicks || 0)
+        }))
+      }
+    }
+  };
+}
+
+const ANALYTICS_CARDS = [
+  { id: "pages", title: "Pages", description: "What visitors read, and where they leave" },
+  { id: "sources", title: "Sources", description: "Websites and campaigns sending visits" },
+  { id: "locations", title: "Locations", description: "Where visits come from" },
+  { id: "technology", title: "Devices", description: "What visitors browse with" },
+  { id: "clicks", title: "Engagement", description: "Most-clicked links and buttons" }
+];
+
+function renderAnalyticsBreakdown(cardId, breakdown) {
+  const card = document.querySelector(`[data-analytics-card="${cardId}"]`);
+  if (!card || !breakdown) return;
+
+  const tabs = Object.keys(breakdown);
+  const activeTab = tabs.includes(state.analyticsTabs[cardId])
+    ? state.analyticsTabs[cardId]
+    : tabs[0];
+  const list = breakdown[activeTab];
+
+  const tabHost = card.querySelector(".analytics-tabs");
+  if (tabHost) {
+    tabHost.hidden = tabs.length < 2;
+    tabHost.replaceChildren();
+    for (const tab of tabs) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = breakdown[tab].tab;
+      button.setAttribute("aria-pressed", String(tab === activeTab));
+      button.addEventListener("click", () => {
+        state.analyticsTabs[cardId] = tab;
+        renderAnalyticsBreakdown(cardId, breakdown);
+      });
+      tabHost.appendChild(button);
+    }
+  }
+
+  const column = card.querySelector(".analytics-list-column");
+  if (column) column.textContent = list.column;
+
+  const body = card.querySelector(".analytics-list-body");
+  if (!body) return;
+  body.replaceChildren();
+
+  const rows = list.rows
+    .filter((row) => row.value > 0)
+    .sort((a, b) => b.value - a.value);
+
+  if (!rows.length) {
+    const empty = document.createElement("p");
+    empty.className = "analytics-empty";
+    empty.textContent = state.analyticsLoading && !state.analytics ? "Loading…" : list.empty;
+    body.appendChild(empty);
+    return;
+  }
+
+  const expandKey = `${cardId}:${activeTab}`;
+  const expanded = state.analyticsExpanded.has(expandKey);
+  const visible = expanded ? rows : rows.slice(0, ANALYTICS_LIST_LIMIT);
+  const max = Math.max(...rows.map((row) => row.value), 1);
+
+  const ol = document.createElement("ol");
+  ol.className = "analytics-bar-list";
+
+  for (const row of visible) {
+    const item = document.createElement("li");
+    item.className = "analytics-bar-row";
+    const share = formatShare(row.value, list.total);
+    item.title = `${row.label}${row.detail ? ` (${row.detail})` : ""}: ${formatNumber(row.value)} ${list.column.toLowerCase()} · ${share}`;
 
     const fill = document.createElement("span");
-    fill.style.width = `${Math.max(3, Math.round((value / max) * 100))}%`;
-    track.appendChild(fill);
+    fill.className = "analytics-bar-fill";
+    fill.style.width = `${Math.max(1.5, (row.value / max) * 100)}%`;
+    fill.setAttribute("aria-hidden", "true");
 
-    item.append(head, track);
-    container.appendChild(item);
-  });
+    const copy = document.createElement("span");
+    copy.className = "analytics-bar-copy";
+    const label = document.createElement("strong");
+    label.textContent = row.prefix ? `${row.prefix} ${row.label}` : row.label;
+    copy.appendChild(label);
+    if (row.detail) {
+      const detail = document.createElement("small");
+      detail.textContent = row.detail;
+      copy.appendChild(detail);
+    }
+
+    const value = document.createElement("b");
+    value.className = "analytics-bar-value";
+    value.textContent = formatNumber(row.value);
+
+    const shareNode = document.createElement("span");
+    shareNode.className = "analytics-bar-share";
+    shareNode.textContent = share;
+
+    item.append(fill, copy, value, shareNode);
+    ol.appendChild(item);
+  }
+
+  body.appendChild(ol);
+
+  if (rows.length > ANALYTICS_LIST_LIMIT) {
+    const more = document.createElement("button");
+    more.type = "button";
+    more.className = "analytics-more";
+    more.textContent = expanded ? "Show fewer" : `Show all ${rows.length}`;
+    more.addEventListener("click", () => {
+      if (expanded) state.analyticsExpanded.delete(expandKey);
+      else state.analyticsExpanded.add(expandKey);
+      renderAnalyticsBreakdown(cardId, breakdown);
+    });
+    body.appendChild(more);
+  }
 }
 
 function renderAnalyticsDashboard() {
   const panel = document.querySelector("#chat-panel");
   if (!panel) return;
 
+  state.analyticsTrendObserver?.disconnect();
+  state.analyticsTrendObserver = null;
+
   panel.className = "chat-panel analytics-panel";
   panel.innerHTML = `
     <div class="analytics-view">
       <header class="analytics-header">
-        <div>
-          <div class="eyebrow"><i aria-hidden="true"></i> Website analytics</div>
-          <h1>Dashboard</h1>
-          <p>Cloudflare Web Analytics traffic with first-party engagement and conversion events from Well College Global.</p>
-        </div>
-        <div class="analytics-range" role="group" aria-label="Analytics date range">
-          <button type="button" data-analytics-days="7">7d</button>
-          <button type="button" data-analytics-days="30">30d</button>
-          <button type="button" data-analytics-days="90">90d</button>
-        </div>
+        <div class="eyebrow"><i aria-hidden="true"></i> Website analytics</div>
+        <h1>Dashboard</h1>
+        <p id="analytics-summary-line" class="analytics-summary-line">Well College Global website traffic and engagement.</p>
       </header>
 
-      <div id="analytics-loading" class="analytics-loading" hidden>Refreshing analytics…</div>
-      <div id="analytics-source" class="analytics-source" aria-live="polite"></div>
+      <div class="analytics-toolbar">
+        <div class="analytics-range" role="group" aria-label="Date range">
+          ${ANALYTICS_RANGES.map((days) => `
+            <button type="button" data-analytics-days="${days}" aria-pressed="${days === state.analyticsDays}">Last ${days} days</button>
+          `).join("")}
+        </div>
+        <button id="analytics-refresh" class="analytics-refresh" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.34 5.66"></path><path d="M20 4v7h-7"></path></svg>
+          <span>Refresh</span>
+        </button>
+        <span id="analytics-status" class="analytics-status" aria-live="polite"></span>
+      </div>
 
-      <section class="analytics-metrics" aria-label="Website metrics">
-        <article><span>Visits</span><strong id="metric-visits">0</strong><small>Cloudflare human visits</small></article>
-        <article><span>Page views</span><strong id="metric-pageviews">0</strong><small>Cloudflare RUM page loads</small></article>
-        <article><span>Pages / visit</span><strong id="metric-pages-per-visit">0.00</strong><small>page views divided by visits</small></article>
-        <article class="is-page-metric"><span>Most viewed page</span><strong id="metric-most-viewed">—</strong><small id="metric-most-viewed-count">No views yet</small></article>
-        <article><span>Total clicks</span><strong id="metric-clicks">0</strong><small>first-party links and controls</small></article>
-        <article><span>Avg. engagement</span><strong id="metric-duration">0s</strong><small>first-party time until page exit</small></article>
-      </section>
+      <p id="analytics-source" class="analytics-source" hidden></p>
 
-      <section class="cloudflare-chart-grid" aria-label="Cloudflare website graphs">
-        <article class="analytics-card cloudflare-chart-card">
-          <div class="analytics-card-head">
-            <div><span>Cloudflare</span><h2>Visits</h2></div>
-            <strong id="chart-total-visits" class="cloudflare-chart-total">0</strong>
-          </div>
-          <div id="analytics-visits-chart" class="cloudflare-chart"></div>
+      <div class="analytics-content">
+        <section class="analytics-kpis" aria-label="Key metrics">
+          <article class="analytics-kpi">
+            <span class="analytics-kpi-label"><i class="analytics-line-key is-visits" aria-hidden="true"></i>Visits</span>
+            <strong id="kpi-visits">—</strong>
+            <small id="kpi-visits-note">&nbsp;</small>
+            <svg id="kpi-visits-spark" class="analytics-kpi-spark is-visits" aria-hidden="true"></svg>
+          </article>
+          <article class="analytics-kpi">
+            <span class="analytics-kpi-label"><i class="analytics-line-key is-views" aria-hidden="true"></i>Page views</span>
+            <strong id="kpi-views">—</strong>
+            <small id="kpi-views-note">&nbsp;</small>
+            <svg id="kpi-views-spark" class="analytics-kpi-spark is-views" aria-hidden="true"></svg>
+          </article>
+          <article class="analytics-kpi">
+            <span class="analytics-kpi-label">Pages per visit</span>
+            <strong id="kpi-ratio">—</strong>
+            <small>page views ÷ visits</small>
+            <svg id="kpi-ratio-spark" class="analytics-kpi-spark" aria-hidden="true"></svg>
+          </article>
+          <article class="analytics-kpi">
+            <span class="analytics-kpi-label">Avg. time on page</span>
+            <strong id="kpi-duration">—</strong>
+            <small>before a visitor leaves</small>
+          </article>
+          <article class="analytics-kpi">
+            <span class="analytics-kpi-label">Link &amp; button clicks</span>
+            <strong id="kpi-clicks">—</strong>
+            <small id="kpi-clicks-note">&nbsp;</small>
+          </article>
+        </section>
+
+        <article class="analytics-card analytics-trend-card">
+          <header class="analytics-card-head">
+            <div>
+              <h2>Traffic over time</h2>
+              <p>Daily visits and page views</p>
+            </div>
+            <div class="analytics-legend" aria-hidden="true">
+              <span><i class="analytics-line-key is-visits"></i>Visits</span>
+              <span><i class="analytics-line-key is-views"></i>Page views</span>
+            </div>
+          </header>
+          <div id="analytics-trend" class="analytics-trend"></div>
+          <details class="analytics-table-view">
+            <summary>Show daily figures as a table</summary>
+            <div id="analytics-trend-table" class="analytics-table-wrap"></div>
+          </details>
         </article>
 
-        <article class="analytics-card cloudflare-chart-card">
-          <div class="analytics-card-head">
-            <div><span>Cloudflare</span><h2>Page views</h2></div>
-            <strong id="chart-total-pageviews" class="cloudflare-chart-total">0</strong>
-          </div>
-          <div id="analytics-pageviews-chart" class="cloudflare-chart"></div>
-        </article>
+        <section class="analytics-grid" aria-label="Traffic breakdowns">
+          ${ANALYTICS_CARDS.map((card) => `
+            <article class="analytics-card" data-analytics-card="${card.id}">
+              <header class="analytics-card-head">
+                <div>
+                  <h2>${card.title}</h2>
+                  <p>${card.description}</p>
+                </div>
+                <div class="analytics-tabs" role="group" aria-label="${card.title} view" hidden></div>
+              </header>
+              <div class="analytics-list-head" aria-hidden="true">
+                <span></span>
+                <span class="analytics-list-column"></span>
+                <span>Share</span>
+              </div>
+              <div class="analytics-list-body"></div>
+            </article>
+          `).join("")}
 
-        <article class="analytics-card cloudflare-chart-card">
-          <div class="analytics-card-head">
-            <div><span>Cloudflare</span><h2>Top countries</h2></div>
-          </div>
-          <div id="analytics-countries-chart" class="cloudflare-bars"></div>
-        </article>
-
-        <article class="analytics-card cloudflare-chart-card">
-          <div class="analytics-card-head">
-            <div><span>Cloudflare</span><h2>Devices</h2></div>
-          </div>
-          <div id="analytics-devices-chart" class="cloudflare-bars"></div>
-        </article>
-      </section>
-
-      <section class="analytics-grid analytics-detail-grid">
-        <article class="analytics-card">
-          <div class="analytics-card-head">
-            <div><span>Content</span><h2>Most viewed pages</h2></div>
-          </div>
-          <div id="analytics-top-pages" class="rank-bars"></div>
-        </article>
-
-        <article class="analytics-card">
-          <div class="analytics-card-head">
-            <div><span>Click off</span><h2>Where visitors leave</h2></div>
-          </div>
-          <div id="analytics-exit-pages" class="rank-bars"></div>
-        </article>
-
-        <article class="analytics-card">
-          <div class="analytics-card-head"><div><span>Engagement</span><h2>Top clicks</h2></div></div>
-          <div id="analytics-top-clicks" class="analytics-list"></div>
-        </article>
-
-        <article class="analytics-card">
-          <div class="analytics-card-head"><div><span>Acquisition</span><h2>Referrers</h2></div></div>
-          <div id="analytics-referrers" class="analytics-list"></div>
-        </article>
-
-        <article class="analytics-card">
-          <div class="analytics-card-head"><div><span>Browsers</span><h2>Top browsers</h2></div></div>
-          <div id="analytics-browsers" class="analytics-list"></div>
-        </article>
-
-        <article class="analytics-card">
-          <div class="analytics-card-head"><div><span>Systems</span><h2>Operating systems</h2></div></div>
-          <div id="analytics-operating-systems" class="analytics-list"></div>
-        </article>
-
-        <article class="analytics-card">
-          <div class="analytics-card-head"><div><span>Campaigns</span><h2>UTM traffic</h2></div></div>
-          <div id="analytics-campaigns" class="analytics-list"></div>
-        </article>
-
-        <article class="analytics-card privacy-card">
-          <div class="analytics-card-head"><div><span>Privacy</span><h2>Tracking & storage inventory</h2></div></div>
-          <div class="privacy-grid">
-            <div><strong>Traffic source</strong><span>Cloudflare Web Analytics aggregated RUM data</span></div>
-            <div><strong>Engagement events</strong><span>First-party click, exit and UTM events only</span></div>
-            <div><strong>Analytics cookies</strong><span>None</span></div>
-            <div><strong>Raw IP in analytics</strong><span>Not stored by the historical Well analytics event table</span></div>
-            <div><strong>Live visitor presence</strong><span>Current IP and page are held only in the private short-lived Visitors view</span></div>
-            <div><strong>Privacy signals</strong><span>Global Privacy Control and Do Not Track are respected by first-party events</span></div>
-            <div><strong>First-party retention</strong><span>Engagement events are deleted after 90 days</span></div>
-            <div><strong>Support chat</strong><span>Tab-scoped sessionStorage until the tab closes or staff closes the chat</span></div>
-            <div><strong>Staff dashboard</strong><span>Secure HttpOnly SameSite=Strict authentication cookies</span></div>
-          </div>
-        </article>
-      </section>
+          <article class="analytics-card analytics-privacy-card">
+            <header class="analytics-card-head">
+              <div>
+                <h2>Privacy &amp; data</h2>
+                <p>What is collected and how long it is kept</p>
+              </div>
+            </header>
+            <dl class="analytics-privacy-list">
+              <div><dt>Traffic</dt><dd>Cloudflare Web Analytics aggregated RUM data</dd></div>
+              <div><dt>Engagement</dt><dd>First-party click, exit and UTM events only</dd></div>
+              <div><dt>Analytics cookies</dt><dd>None</dd></div>
+              <div><dt>Raw IP in analytics</dt><dd>Not stored in the historical event table</dd></div>
+              <div><dt>Live presence</dt><dd>IP and page held only in the short-lived Visitors view</dd></div>
+              <div><dt>Privacy signals</dt><dd>Global Privacy Control and Do Not Track respected</dd></div>
+              <div><dt>Retention</dt><dd>Engagement events deleted after 90 days</dd></div>
+              <div><dt>Support chat</dt><dd>Tab-scoped until the tab or chat closes</dd></div>
+            </dl>
+          </article>
+        </section>
+      </div>
     </div>
   `;
 
-  document.querySelectorAll("[data-analytics-days]").forEach((button) => {
-    const days = Number(button.dataset.analyticsDays);
-    button.classList.toggle("is-active", days === state.analyticsDays);
+  panel.querySelectorAll("[data-analytics-days]").forEach((button) => {
     button.addEventListener("click", () => {
+      const days = Number(button.dataset.analyticsDays);
       if (days === state.analyticsDays) return;
       state.analyticsDays = days;
-      document.querySelectorAll("[data-analytics-days]").forEach((item) => {
-        item.classList.toggle("is-active", Number(item.dataset.analyticsDays) === days);
+      panel.querySelectorAll("[data-analytics-days]").forEach((item) => {
+        item.setAttribute("aria-pressed", String(Number(item.dataset.analyticsDays) === days));
       });
-      loadAnalytics();
+
+      const cached = state.analyticsCache.get(days);
+      if (cached) {
+        state.analytics = cached.summary;
+        paintAnalytics();
+      }
+      if (!cached || Date.now() - cached.fetchedAt > ANALYTICS_REFRESH_MS) {
+        loadAnalytics({ silent: Boolean(cached) });
+      }
     });
   });
+
+  panel.querySelector("#analytics-refresh")?.addEventListener("click", () => {
+    loadAnalytics({ fresh: true });
+  });
+
+  const trend = panel.querySelector("#analytics-trend");
+  if (trend && typeof ResizeObserver !== "undefined") {
+    let lastWidth = 0;
+    let frame = 0;
+    state.analyticsTrendObserver = new ResizeObserver(() => {
+      if (!trend.isConnected) {
+        state.analyticsTrendObserver?.disconnect();
+        return;
+      }
+      const width = Math.round(trend.clientWidth);
+      if (!width || width === lastWidth) return;
+      lastWidth = width;
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => {
+        const summary = state.analytics;
+        if (summary) renderAnalyticsTrend(trend, normaliseAnalyticsDaily(summary.daily || [], summary.days || state.analyticsDays));
+      });
+    });
+    state.analyticsTrendObserver.observe(trend);
+  }
 
   paintAnalytics();
 }
@@ -5033,121 +5608,129 @@ function renderAnalyticsDashboard() {
 function paintAnalytics() {
   if (state.currentView !== "dashboard") return;
 
-  const loading = document.querySelector("#analytics-loading");
-  if (loading) loading.hidden = !state.analyticsLoading;
+  const view = document.querySelector(".analytics-view");
+  if (!view) return;
 
   const summary = state.analytics;
-  if (!summary) return;
+  const stale = Boolean(summary) && Number(summary.days) !== Number(state.analyticsDays);
+  view.classList.toggle("is-refreshing", state.analyticsLoading && Boolean(summary));
+  view.classList.toggle("is-stale", stale);
 
+  const status = document.querySelector("#analytics-status");
+  if (status) {
+    status.textContent = state.analyticsLoading
+      ? "Refreshing…"
+      : state.analyticsError && !summary
+        ? state.analyticsError
+        : summary?.generatedAt
+          ? `Updated ${formatTime(summary.generatedAt)}`
+          : "";
+    status.classList.toggle("is-error", Boolean(state.analyticsError) && !state.analyticsLoading);
+  }
+
+  const refresh = document.querySelector("#analytics-refresh");
+  if (refresh) refresh.disabled = state.analyticsLoading;
+
+  if (!summary) {
+    renderAnalyticsTrend(document.querySelector("#analytics-trend"), []);
+    for (const card of ANALYTICS_CARDS) {
+      const body = document.querySelector(`[data-analytics-card="${card.id}"] .analytics-list-body`);
+      if (body) {
+        body.replaceChildren();
+        const empty = document.createElement("p");
+        empty.className = "analytics-empty";
+        empty.textContent = state.analyticsLoading ? "Loading…" : "No data yet.";
+        body.appendChild(empty);
+      }
+    }
+    return;
+  }
+
+  const days = Number(summary.days || state.analyticsDays);
   const metrics = summary.metrics || {};
-  const topPage = summary.topPages?.[0] || null;
-  const metricValues = {
-    "#metric-visits": formatNumber(metrics.visits),
-    "#metric-pageviews": formatNumber(metrics.pageViews),
-    "#metric-pages-per-visit": formatDecimal(metrics.pagesPerVisit),
-    "#metric-most-viewed": topPage?.path || "—",
-    "#metric-most-viewed-count": topPage
-      ? `${formatNumber(topPage.views)} views`
-      : "No views yet",
-    "#metric-clicks": formatNumber(metrics.clicks),
-    "#metric-duration": formatDuration(metrics.avgDurationMs)
-  };
+  const visits = Number(metrics.visits || 0);
+  const views = Number(metrics.pageViews || 0);
+  const clicks = Number(metrics.clicks || 0);
 
-  Object.entries(metricValues).forEach(([selector, value]) => {
-    const element = document.querySelector(selector);
-    if (element) element.textContent = value;
-  });
+  const summaryLine = document.querySelector("#analytics-summary-line");
+  if (summaryLine) {
+    const topPage = summary.topPages?.[0];
+    summaryLine.textContent = topPage && visits
+      ? `${formatNumber(visits)} visits in the last ${days} days. Most viewed: ${analyticsPageName(topPage.path)}.`
+      : `Well College Global website traffic for the last ${days} days.`;
+  }
 
   const source = document.querySelector("#analytics-source");
   if (source) {
-    if (summary.trafficSource === "cloudflare") {
-      source.textContent = "Traffic: Cloudflare Web Analytics · Engagement: first-party events";
-      source.classList.remove("is-warning");
-    } else {
-      source.textContent = summary.cloudflareConfigured
-        ? "Cloudflare traffic is temporarily unavailable · showing first-party fallback data"
-        : "Cloudflare analytics is not configured · showing first-party fallback data";
-      source.classList.add("is-warning");
-    }
+    const fallback = summary.trafficSource !== "cloudflare";
+    source.hidden = !fallback;
+    source.textContent = fallback
+      ? summary.cloudflareConfigured
+        ? "Cloudflare traffic is temporarily unavailable, so visits and page views below come from first-party events and may be lower than actual traffic."
+        : "Cloudflare Web Analytics is not configured, so visits and page views below come from first-party events and may be lower than actual traffic."
+      : "";
   }
 
-  const daily = normaliseAnalyticsDaily(summary.daily || [], state.analyticsDays);
-  const chartTotals = {
-    "#chart-total-visits": formatNumber(metrics.visits),
-    "#chart-total-pageviews": formatNumber(metrics.pageViews)
+  const text = {
+    "#kpi-visits": formatNumber(visits),
+    "#kpi-visits-note": `${formatNumber(Math.round(visits / Math.max(1, days)))} per day on average`,
+    "#kpi-views": formatNumber(views),
+    "#kpi-views-note": `${formatNumber(Math.round(views / Math.max(1, days)))} per day on average`,
+    "#kpi-ratio": formatDecimal(metrics.pagesPerVisit),
+    "#kpi-duration": formatDuration(metrics.avgDurationMs),
+    "#kpi-clicks": formatNumber(clicks),
+    "#kpi-clicks-note": visits > 0 ? `${formatDecimal(clicks / visits)} per visit` : "first-party events"
   };
-  Object.entries(chartTotals).forEach(([selector, value]) => {
+  Object.entries(text).forEach(([selector, value]) => {
     const element = document.querySelector(selector);
     if (element) element.textContent = value;
   });
 
-  renderCloudflareTrendChart("#analytics-visits-chart", daily, {
-    value: (row) => row.visits
-  });
-  renderCloudflareTrendChart("#analytics-pageviews-chart", daily, {
-    value: (row) => row.views
-  });
-  renderCloudflareBars("#analytics-countries-chart", summary.locations || [], {
-    label: (row) => row.country || "Unknown",
-    value: (row) => row.visitors
-  });
-  renderCloudflareBars("#analytics-devices-chart", summary.devices || [], {
-    label: (row) => String(row.device || "unknown").replace(/^./, (letter) => letter.toUpperCase()),
-    value: (row) => row.visitors
-  });
+  const daily = normaliseAnalyticsDaily(summary.daily || [], days);
+  renderAnalyticsSparkline(document.querySelector("#kpi-visits-spark"), daily.map((row) => row.visits));
+  renderAnalyticsSparkline(document.querySelector("#kpi-views-spark"), daily.map((row) => row.views));
+  renderAnalyticsSparkline(document.querySelector("#kpi-ratio-spark"), daily.map((row) => row.pagesPerVisit));
+  renderAnalyticsTrend(document.querySelector("#analytics-trend"), daily);
+  renderAnalyticsTrendTable(document.querySelector("#analytics-trend-table"), daily);
 
-  renderRankBars("#analytics-top-pages", summary.topPages || [], {
-    labelKey: "path",
-    valueKey: "views",
-    secondary: () => "Page views"
-  });
-  renderRankBars("#analytics-exit-pages", summary.exitPages || [], {
-    labelKey: "path",
-    valueKey: "exits",
-    secondary: (row) => `Avg. ${formatDuration(row.avgDurationMs)} before exit`
-  });
-  renderAnalyticsList("#analytics-top-clicks", summary.topClicks, (row) => ({
-    primary: row.label,
-    secondary: row.href || row.kind || "",
-    value: formatNumber(row.clicks)
-  }));
-  renderAnalyticsList("#analytics-referrers", summary.referrers, (row) => ({
-    primary: row.host,
-    secondary: "Cloudflare visits",
-    value: formatNumber(row.visitors)
-  }));
-  renderAnalyticsList("#analytics-browsers", summary.browsers, (row) => ({
-    primary: row.browser || "Unknown",
-    secondary: "Cloudflare visits",
-    value: formatNumber(row.visitors)
-  }));
-  renderAnalyticsList("#analytics-operating-systems", summary.operatingSystems, (row) => ({
-    primary: row.os || "Unknown",
-    secondary: "Cloudflare visits",
-    value: formatNumber(row.visitors)
-  }));
-  renderAnalyticsList("#analytics-campaigns", summary.campaigns, (row) => ({
-    primary: row.campaign || row.source || "Campaign",
-    secondary: [row.source, row.medium].filter(Boolean).join(" · "),
-    value: formatNumber(row.visitors)
-  }));
+  const breakdowns = analyticsBreakdowns(summary);
+  for (const card of ANALYTICS_CARDS) {
+    renderAnalyticsBreakdown(card.id, breakdowns[card.id]);
+  }
 }
 
-async function loadAnalytics({ silent = false } = {}) {
-  if (state.analyticsLoading) return;
+async function loadAnalytics({ silent = false, fresh = false } = {}) {
+  // Background refreshes never pile up behind an in-flight request, but an
+  // explicit range change supersedes it so the newest selection always wins.
+  if (silent && state.analyticsLoading) return;
+
+  const days = state.analyticsDays;
+  const requestId = (state.analyticsRequestId || 0) + 1;
+  state.analyticsRequestId = requestId;
   state.analyticsLoading = true;
   if (!silent) paintAnalytics();
 
   try {
-    const result = await apiRequest(`/analytics?days=${state.analyticsDays}`);
-    state.analytics = result.summary || null;
+    const result = await apiRequest(`/analytics?days=${days}${fresh ? "&fresh=1" : ""}`);
+    if (requestId !== state.analyticsRequestId) return;
+    const summary = result.summary || null;
+    if (summary) {
+      summary.days = Number(summary.days || days);
+      state.analyticsCache.set(summary.days, { summary, fetchedAt: Date.now() });
+    }
+    if (days === state.analyticsDays) state.analytics = summary;
+    state.analyticsError = "";
   } catch (error) {
-    if (error.status !== 401 && error.status !== 403 && !silent) {
-      showToast(error?.message || "Unable to load website analytics.", "error");
+    if (requestId !== state.analyticsRequestId) return;
+    if (error.status !== 401 && error.status !== 403) {
+      state.analyticsError = error?.message || "Unable to load website analytics.";
+      if (!silent) showToast(state.analyticsError, "error");
     }
   } finally {
-    state.analyticsLoading = false;
-    paintAnalytics();
+    if (requestId === state.analyticsRequestId) {
+      state.analyticsLoading = false;
+      paintAnalytics();
+    }
   }
 }
 
@@ -5495,7 +6078,6 @@ function renderDashboard() {
   );
   updatePrimaryNavigation();
   renderNotificationControl();
-  renderAnalyticsDashboard();
 
   document.querySelector("#profile-menu-button")?.addEventListener("click", toggleProfileMenu);
   document.querySelector("#account-details-button")?.addEventListener("click", openAccountDetails);
@@ -5529,10 +6111,14 @@ function renderDashboard() {
     if (removeButton) removeButton.hidden = true;
   });
 
-  document.addEventListener("click", (event) => {
-    const shell = document.querySelector(".staff-profile-shell");
-    if (shell && !shell.contains(event.target)) closeProfileMenu();
-  }, { once: false });
+  if (!state.profileOutsideClickBound) {
+    // renderDashboard runs on every sign-in; bind the outside-click closer once.
+    state.profileOutsideClickBound = true;
+    document.addEventListener("click", (event) => {
+      const shell = document.querySelector(".staff-profile-shell");
+      if (shell && !shell.contains(event.target)) closeProfileMenu();
+    });
+  }
   document.querySelector("#conversation-search")?.addEventListener("input", (event) => {
     state.search = event.target.value.trim().toLowerCase();
     renderConversationList();
@@ -5556,7 +6142,9 @@ function renderDashboard() {
 }
 
 async function initialiseDashboard() {
-  await Promise.all([loadInbox(), loadAnalytics()]);
+  // setDashboardView() already started the analytics load when the dashboard
+  // is the landing view; other views fetch analytics only when opened.
+  await loadInbox();
   subscribeRealtime();
 }
 
@@ -5698,11 +6286,9 @@ async function loadInbox({ silent = false } = {}) {
       state.messages = [];
       document.querySelector("#dashboard")?.classList.remove("has-selection");
 
-      if (state.currentView === "messages") {
-        renderDashboardChatEmpty();
-      } else {
-        renderAnalyticsDashboard();
-      }
+      // Only the Messages view shows the chat panel; other views own
+      // #chat-panel and must not be replaced when a chat closes remotely.
+      if (state.currentView === "messages") renderDashboardChatEmpty();
     }
 
     state.pollFailures = 0;
@@ -7164,10 +7750,14 @@ function subscribeRealtime() {
   state.pollTimer = window.setTimeout(pollInbox, 500);
 
   state.analyticsTimer = window.setInterval(() => {
-    if (state.user && state.currentView === "dashboard") {
+    if (
+      state.user &&
+      state.currentView === "dashboard" &&
+      document.visibilityState === "visible"
+    ) {
       loadAnalytics({ silent: true });
     }
-  }, 30000);
+  }, ANALYTICS_REFRESH_MS);
 }
 
 function renderDashboardChatEmpty() {
@@ -7244,6 +7834,8 @@ async function signOut() {
   state.knownVisitorMessageIds = new Set();
   state.notificationsReady = false;
   state.analytics = null;
+  state.analyticsCache = new Map();
+  state.analyticsError = "";
   state.editorStatus = null;
   state.editorMode = "beta";
   state.editorPage = "/";
