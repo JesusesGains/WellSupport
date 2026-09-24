@@ -3,6 +3,10 @@ import {
   requireStaff,
   sessionResponse
 } from "./_utils.js";
+import {
+  findSupportMessageByClientId,
+  insertSupportMessage
+} from "./_d1_messages.js";
 
 function validUuid(value) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
@@ -21,16 +25,6 @@ async function notifySupportRoom(env, conversationId, event) {
   } catch {
     // Polling is the reliable fallback.
   }
-}
-
-async function findExisting(db, conversationId, clientMessageId) {
-  if (!clientMessageId) return null;
-  return db
-    .prepare(
-      "SELECT * FROM support_messages WHERE conversation_id = ? AND client_message_id = ? LIMIT 1"
-    )
-    .bind(conversationId, clientMessageId)
-    .first();
 }
 
 export async function onRequestPost({ request, env }) {
@@ -62,7 +56,7 @@ export async function onRequestPost({ request, env }) {
   }
 
   try {
-    const existing = await findExisting(
+    const existing = await findSupportMessageByClientId(
       session.db,
       conversationId,
       clientMessageId
@@ -90,37 +84,24 @@ export async function onRequestPost({ request, env }) {
       );
     }
 
-    const id = crypto.randomUUID();
     const now = new Date().toISOString();
 
-    await session.db
-      .prepare(
-        `INSERT INTO support_messages (
-          id, conversation_id, sender_type, sender_user_id,
-          sender_display_name, sender_avatar_url, client_message_id, body, created_at
-        ) VALUES (?, ?, 'agent', ?, ?, ?, ?, ?, ?)`
-      )
-      .bind(
-        id,
-        conversationId,
-        session.user.id,
-        session.agent.display_name,
-        session.agent.avatar_url || null,
-        clientMessageId || null,
-        body,
-        now
-      )
-      .run();
+    const message = await insertSupportMessage(session.db, {
+      id: crypto.randomUUID(),
+      conversation_id: conversationId,
+      sender_type: "agent",
+      sender_user_id: session.user.id,
+      sender_display_name: session.agent.display_name,
+      sender_avatar_url: session.agent.avatar_url || null,
+      client_message_id: clientMessageId || null,
+      body,
+      created_at: now
+    });
 
     await session.db
       .prepare("UPDATE support_conversations SET updated_at = ? WHERE id = ?")
       .bind(now, conversationId)
       .run();
-
-    const message = await session.db
-      .prepare("SELECT * FROM support_messages WHERE id = ? LIMIT 1")
-      .bind(id)
-      .first();
 
     await notifySupportRoom(env, conversationId, { type: "message", message });
 
@@ -128,7 +109,7 @@ export async function onRequestPost({ request, env }) {
   } catch (error) {
     if (clientMessageId) {
       try {
-        const existing = await findExisting(
+        const existing = await findSupportMessageByClientId(
           session.db,
           conversationId,
           clientMessageId

@@ -2,6 +2,7 @@ import {
   requireStaff,
   sessionResponse
 } from "./_utils.js";
+import { ensureSupportMessageSchema } from "./_d1_messages.js";
 
 function rows(result) {
   return Array.isArray(result?.results) ? result.results : [];
@@ -17,6 +18,8 @@ export async function onRequestGet({ request, env }) {
   }
 
   try {
+    await ensureSupportMessageSchema(db);
+
     const [conversationsResult, messagesResult, agentsResult, readsResult] =
       await Promise.all([
         db.prepare(
