@@ -1,7 +1,6 @@
 import {
   assertSameOrigin,
   requireStaff,
-  restJson,
   sessionResponse
 } from "./_utils.js";
 
@@ -20,30 +19,31 @@ export async function onRequestPost({ request, env }) {
   }
 
   try {
-    const rows = await restJson(
-      "/rest/v1/support_conversation_reads?on_conflict=conversation_id,user_id&select=conversation_id,last_read_at",
-      session,
-      {
-        method: "POST",
-        body: {
-          conversation_id: conversationId,
-          user_id: session.user.id,
-          last_read_at: new Date().toISOString()
-        },
-        headers: {
-          Prefer: "resolution=merge-duplicates,return=representation"
-        }
-      }
-    );
+    const lastReadAt = new Date().toISOString();
+
+    await session.db
+      .prepare(
+        `INSERT INTO support_conversation_reads (
+          conversation_id, user_id, last_read_at
+        ) VALUES (?, ?, ?)
+        ON CONFLICT(conversation_id, user_id)
+        DO UPDATE SET last_read_at = excluded.last_read_at`
+      )
+      .bind(conversationId, session.user.id, lastReadAt)
+      .run();
 
     return sessionResponse({
-      read: Array.isArray(rows) ? rows[0] || null : null
+      read: {
+        conversation_id: conversationId,
+        user_id: session.user.id,
+        last_read_at: lastReadAt
+      }
     }, session);
   } catch (error) {
     return sessionResponse(
-      { error: error.message || "Unable to update read state." },
+      { error: error?.message || "Unable to update read state." },
       session,
-      error.status || 500
+      500
     );
   }
 }

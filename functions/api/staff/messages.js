@@ -1,6 +1,5 @@
 import {
   requireStaff,
-  restJson,
   sessionResponse
 } from "./_utils.js";
 
@@ -16,19 +15,21 @@ export async function onRequestGet({ request, env }) {
   }
 
   try {
-    const messages = await restJson(
-      `/rest/v1/support_messages?select=id,conversation_id,sender_type,sender_user_id,sender_display_name,sender_avatar_url,client_message_id,body,created_at&conversation_id=eq.${encodeURIComponent(conversationId)}&order=created_at.asc&limit=500`,
-      session
-    );
+    const result = await session.db
+      .prepare(
+        "SELECT * FROM support_messages WHERE conversation_id = ? ORDER BY created_at ASC LIMIT 500"
+      )
+      .bind(conversationId)
+      .all();
 
     return sessionResponse({
-      messages: Array.isArray(messages) ? messages : []
+      messages: Array.isArray(result?.results) ? result.results : []
     }, session);
   } catch (error) {
     return sessionResponse(
-      { error: error.message || "Unable to load messages." },
+      { error: error?.message || "Unable to load messages." },
       session,
-      error.status || 500
+      500
     );
   }
 }

@@ -1,9 +1,23 @@
 import {
   assertSameOrigin,
   requireStaff,
-  restJson,
   sessionResponse
 } from "./_utils.js";
+
+async function notifySupportRoom(env, conversationId, event) {
+  const namespace = env?.SUPPORT_CHAT;
+  if (!namespace?.idFromName || !namespace?.get || !conversationId) return;
+  try {
+    const id = namespace.idFromName(String(conversationId));
+    await namespace.get(id).fetch("https://support-chat.internal/event", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(event)
+    });
+  } catch {
+    // D1 deletion is authoritative.
+  }
+}
 
 export async function onRequestPost({ request, env }) {
   const blocked = assertSameOrigin(request);
@@ -20,16 +34,14 @@ export async function onRequestPost({ request, env }) {
   }
 
   try {
-    const rows = await restJson(
-      `/rest/v1/support_conversations?id=eq.${encodeURIComponent(conversationId)}&joined_agent_id=eq.${encodeURIComponent(session.user.id)}&select=id`,
-      session,
-      {
-        method: "DELETE",
-        headers: { Prefer: "return=representation" }
-      }
-    );
+    const conversation = await session.db
+      .prepare(
+        "SELECT * FROM support_conversations WHERE id = ? AND joined_agent_id = ? LIMIT 1"
+      )
+      .bind(conversationId, session.user.id)
+      .first();
 
-    if (!Array.isArray(rows) || !rows.length) {
+    if (!conversation) {
       return sessionResponse(
         { error: "Only the staff member handling this chat can close it." },
         session,
@@ -37,12 +49,37 @@ export async function onRequestPost({ request, env }) {
       );
     }
 
+    await session.db
+      .prepare("DELETE FROM support_conversation_reads WHERE conversation_id = ?")
+      .bind(conversationId)
+      .run();
+    await session.db
+      .prepare("DELETE FROM support_messages WHERE conversation_id = ?")
+      .bind(conversationId)
+      .run();
+    await session.db
+      .prepare(
+        "DELETE FROM support_conversations WHERE id = ? AND joined_agent_id = ?"
+      )
+      .bind(conversationId, session.user.id)
+      .run();
+
+    await notifySupportRoom(env, conversationId, {
+      type: "conversation",
+      conversation: {
+        id: conversationId,
+        status: "closed",
+        deleted: true,
+        updated_at: new Date().toISOString()
+      }
+    });
+
     return sessionResponse({ ok: true }, session);
   } catch (error) {
     return sessionResponse(
-      { error: error.message || "Unable to close chat." },
+      { error: error?.message || "Unable to close chat." },
       session,
-      error.status || 500
+      500
     );
   }
 }

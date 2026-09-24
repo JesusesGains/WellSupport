@@ -549,14 +549,14 @@ async function staffAgentFromD1(env, identity) {
   ) {
     await db
       .prepare(
-        "UPDATE staff_agents SET access_subject = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
+        "UPDATE staff_agents SET access_subject = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?"
       )
-      .bind(identity.sub, row.id)
+      .bind(identity.sub, row.user_id ?? row.id)
       .run()
       .catch(() => {});
   }
 
-  const userId = String(row.id ?? identity.sub ?? identity.email);
+  const userId = String(row.user_id ?? row.id ?? identity.sub ?? identity.email);
   const displayName = String(
     row.display_name ||
     identity.name ||
