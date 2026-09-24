@@ -19,9 +19,14 @@ const ALLOWED_STYLES = new Set([
   "backgroundColor",
   "color",
   "minHeight",
+  "width",
+  "height",
   "paddingTop",
+  "paddingRight",
   "paddingBottom",
-  "borderRadius"
+  "paddingLeft",
+  "borderRadius",
+  "objectFit"
 ]);
 const HEADER_KEYS = ["qualifications", "short-courses", "about", "testimonials", "more"];
 const SHORT_COURSE_GROUPS = [
@@ -134,11 +139,34 @@ function cleanStyleValue(name, value) {
     return /^#[0-9a-f]{6}$/i.test(raw) ? raw.toUpperCase() : "";
   }
 
-  if (["minHeight", "paddingTop", "paddingBottom", "borderRadius"].includes(name)) {
+  if (
+    [
+      "minHeight",
+      "width",
+      "height",
+      "paddingTop",
+      "paddingRight",
+      "paddingBottom",
+      "paddingLeft",
+      "borderRadius"
+    ].includes(name)
+  ) {
     const match = raw.match(/^(\d{1,4})px$/i);
     if (!match) return "";
-    const number = Math.max(0, Math.min(1600, Number(match[1])));
+    const maximum =
+      name === "width" || name === "height"
+        ? 5000
+        : name.startsWith("padding")
+          ? 800
+          : 1600;
+    const number = Math.max(0, Math.min(maximum, Number(match[1])));
     return `${number}px`;
+  }
+
+  if (name === "objectFit") {
+    return ["cover", "contain", "fill", "scale-down", "none"].includes(raw)
+      ? raw
+      : "";
   }
 
   return "";
