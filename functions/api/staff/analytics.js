@@ -1,6 +1,5 @@
 import {
   requireStaff,
-  restJson,
   sessionResponse
 } from "./_utils.js";
 
@@ -33,6 +32,190 @@ function emptyCustomSummary(days) {
     referrers: [],
     campaigns: [],
     daily: []
+  };
+}
+
+function resultRows(result) {
+  return Array.isArray(result?.results) ? result.results : [];
+}
+
+async function loadD1Summary(db, days) {
+  if (!db?.prepare) {
+    const error = new Error("Well Support D1 is unavailable.");
+    error.status = 503;
+    throw error;
+  }
+
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+
+  const [
+    metrics,
+    topPagesResult,
+    topClicksResult,
+    exitPagesResult,
+    locationsResult,
+    devicesResult,
+    referrersResult,
+    campaignsResult,
+    dailyResult
+  ] = await Promise.all([
+    db.prepare(
+      `SELECT
+        SUM(CASE WHEN event_type = 'page_view' THEN 1 ELSE 0 END) AS page_views,
+        COUNT(DISTINCT CASE WHEN event_type = 'page_view' THEN session_id END) AS visitors,
+        SUM(CASE WHEN event_type = 'click' THEN 1 ELSE 0 END) AS clicks,
+        SUM(CASE WHEN event_type = 'exit' THEN 1 ELSE 0 END) AS exits,
+        COALESCE(ROUND(AVG(CASE WHEN event_type = 'exit' AND duration_ms IS NOT NULL THEN duration_ms END)), 0) AS avg_duration_ms
+      FROM site_analytics_events
+      WHERE occurred_at >= ?`
+    ).bind(since).first(),
+
+    db.prepare(
+      `SELECT page_path AS path, COUNT(*) AS views
+       FROM site_analytics_events
+       WHERE occurred_at >= ? AND event_type = 'page_view'
+       GROUP BY page_path
+       ORDER BY views DESC, page_path ASC
+       LIMIT 12`
+    ).bind(since).all(),
+
+    db.prepare(
+      `SELECT
+         COALESCE(NULLIF(target_text, ''), NULLIF(target_href, ''), 'Unlabelled control') AS label,
+         target_href AS href,
+         target_kind AS kind,
+         is_external AS external,
+         COUNT(*) AS clicks
+       FROM site_analytics_events
+       WHERE occurred_at >= ? AND event_type = 'click'
+       GROUP BY label, target_href, target_kind, is_external
+       ORDER BY clicks DESC, label ASC
+       LIMIT 15`
+    ).bind(since).all(),
+
+    db.prepare(
+      `SELECT
+         page_path AS path,
+         COUNT(*) AS exits,
+         COALESCE(ROUND(AVG(CASE WHEN duration_ms IS NOT NULL THEN duration_ms END)), 0) AS avg_duration_ms
+       FROM site_analytics_events
+       WHERE occurred_at >= ? AND event_type = 'exit'
+       GROUP BY page_path
+       ORDER BY exits DESC, page_path ASC
+       LIMIT 12`
+    ).bind(since).all(),
+
+    db.prepare(
+      `SELECT
+         COALESCE(city, 'Unknown') AS city,
+         COALESCE(region, '') AS region,
+         COALESCE(country, country_code, 'Unknown') AS country,
+         COUNT(DISTINCT session_id) AS visitors
+       FROM site_analytics_events
+       WHERE occurred_at >= ? AND event_type = 'page_view'
+       GROUP BY city, region, country
+       ORDER BY visitors DESC, country ASC, city ASC
+       LIMIT 12`
+    ).bind(since).all(),
+
+    db.prepare(
+      `SELECT device_type AS device, COUNT(DISTINCT session_id) AS visitors
+       FROM site_analytics_events
+       WHERE occurred_at >= ? AND event_type = 'page_view'
+       GROUP BY device_type
+       ORDER BY visitors DESC`
+    ).bind(since).all(),
+
+    db.prepare(
+      `SELECT referrer_host AS host, COUNT(DISTINCT session_id) AS visitors
+       FROM site_analytics_events
+       WHERE occurred_at >= ?
+         AND event_type = 'page_view'
+         AND referrer_host IS NOT NULL
+         AND referrer_host <> ''
+       GROUP BY referrer_host
+       ORDER BY visitors DESC, host ASC
+       LIMIT 12`
+    ).bind(since).all(),
+
+    db.prepare(
+      `SELECT
+         COALESCE(utm_source, 'direct') AS source,
+         COALESCE(utm_medium, '') AS medium,
+         COALESCE(utm_campaign, '') AS campaign,
+         COUNT(DISTINCT session_id) AS visitors
+       FROM site_analytics_events
+       WHERE occurred_at >= ?
+         AND event_type = 'page_view'
+         AND (utm_source IS NOT NULL OR utm_medium IS NOT NULL OR utm_campaign IS NOT NULL)
+       GROUP BY source, medium, campaign
+       ORDER BY visitors DESC, campaign ASC
+       LIMIT 12`
+    ).bind(since).all(),
+
+    db.prepare(
+      `SELECT
+         substr(occurred_at, 1, 10) AS date,
+         COUNT(DISTINCT CASE WHEN event_type = 'page_view' THEN session_id END) AS visitors,
+         SUM(CASE WHEN event_type = 'page_view' THEN 1 ELSE 0 END) AS views
+       FROM site_analytics_events
+       WHERE occurred_at >= ?
+       GROUP BY substr(occurred_at, 1, 10)
+       ORDER BY date ASC`
+    ).bind(since).all()
+  ]);
+
+  return {
+    days,
+    generatedAt: new Date().toISOString(),
+    metrics: {
+      visitors: Number(metrics?.visitors || 0),
+      pageViews: Number(metrics?.page_views || 0),
+      clicks: Number(metrics?.clicks || 0),
+      exits: Number(metrics?.exits || 0),
+      avgDurationMs: Number(metrics?.avg_duration_ms || 0)
+    },
+    topPages: resultRows(topPagesResult).map((row) => ({
+      path: row.path,
+      views: Number(row.views || 0)
+    })),
+    topClicks: resultRows(topClicksResult).map((row) => ({
+      label: row.label,
+      href: row.href || "",
+      kind: row.kind || "",
+      external: Number(row.external || 0) === 1,
+      clicks: Number(row.clicks || 0)
+    })),
+    exitPages: resultRows(exitPagesResult).map((row) => ({
+      path: row.path,
+      exits: Number(row.exits || 0),
+      avgDurationMs: Number(row.avg_duration_ms || 0)
+    })),
+    locations: resultRows(locationsResult).map((row) => ({
+      city: row.city || "Unknown",
+      region: row.region || "",
+      country: row.country || "Unknown",
+      visitors: Number(row.visitors || 0)
+    })),
+    devices: resultRows(devicesResult).map((row) => ({
+      device: row.device || "unknown",
+      visitors: Number(row.visitors || 0)
+    })),
+    referrers: resultRows(referrersResult).map((row) => ({
+      host: row.host || "",
+      visitors: Number(row.visitors || 0)
+    })),
+    campaigns: resultRows(campaignsResult).map((row) => ({
+      source: row.source || "direct",
+      medium: row.medium || "",
+      campaign: row.campaign || "",
+      visitors: Number(row.visitors || 0)
+    })),
+    daily: resultRows(dailyResult).map((row) => ({
+      date: row.date,
+      visitors: Number(row.visitors || 0),
+      views: Number(row.views || 0)
+    }))
   };
 }
 
@@ -499,14 +682,7 @@ export async function onRequestGet({ request, env }) {
   const fresh = url.searchParams.get("fresh") === "1";
 
   const [customResult, cloudflareResult] = await Promise.allSettled([
-    restJson(
-      "/rest/v1/rpc/site_analytics_summary",
-      session,
-      {
-        method: "POST",
-        body: { p_days: days }
-      }
-    ),
+    loadD1Summary(session.db, days),
     loadCloudflareSummary(env, days, { fresh })
   ]);
 
