@@ -41,6 +41,7 @@ const state = {
   pollBusy: false,
   messagePollBusy: false,
   pollFailures: 0,
+  joinPromises: new Map(),
   currentView: dashboardViewFromPath(),
   analytics: null,
   analyticsDays: 30,
@@ -6557,6 +6558,57 @@ async function markConversationJoined(id) {
   return result.conversation || null;
 }
 
+async function ensureConversationJoinedFromTyping(id) {
+  let conversation = state.conversations.find((item) => item.id === id);
+  if (!conversation || conversation.status !== "open") return null;
+  if (conversationIsMine(conversation)) return conversation;
+  if (conversation.joined_agent_id) return null;
+
+  if (state.joinPromises.has(id)) return state.joinPromises.get(id);
+
+  const promise = (async () => {
+    try {
+      const claimed = await markConversationJoined(id);
+      if (claimed && claimed.joined_agent_id === state.user?.id) {
+        state.messageSection = "current";
+        const ownerChip = document.querySelector("#chat-owner-chip");
+        if (ownerChip) {
+          ownerChip.textContent = "Your chat";
+          ownerChip.classList.remove("is-waiting");
+        }
+        const closeButton = document.querySelector("#close-chat-button");
+        if (closeButton) closeButton.hidden = false;
+        const addButton = document.querySelector("#support-page-picker-button");
+        if (addButton) addButton.disabled = false;
+        const input = document.querySelector("#message-input");
+        if (input) input.placeholder = "Reply as Well College Global…";
+        const note = document.querySelector("#composer-join-note");
+        if (note) note.textContent = "You joined this chat · Enter to send";
+        renderConversationList();
+        return claimed;
+      }
+
+      await loadInbox({ silent: true });
+      conversation = state.conversations.find((item) => item.id === id);
+      if (conversation?.joined_agent_id && !conversationIsMine(conversation)) {
+        state.messageSection = "all";
+        showToast("Another staff member picked up this chat.");
+        renderConversationList();
+        renderChatShell();
+      }
+      return conversationIsMine(conversation) ? conversation : null;
+    } catch (error) {
+      showToast(error?.message || "Unable to join this chat.", "error");
+      return null;
+    } finally {
+      state.joinPromises.delete(id);
+    }
+  })();
+
+  state.joinPromises.set(id, promise);
+  return promise;
+}
+
 async function markConversationRead(id, { force = false } = {}) {
   if (!id || !state.user) return;
 
@@ -6594,7 +6646,7 @@ async function markConversationRead(id, { force = false } = {}) {
 }
 
 async function selectConversation(id) {
-  let conversation = state.conversations.find((item) => item.id === id);
+  const conversation = state.conversations.find((item) => item.id === id);
   if (!conversation) return;
 
   state.currentView = "messages";
@@ -6603,40 +6655,8 @@ async function selectConversation(id) {
   dashboard?.classList.add("is-messages");
   updatePrimaryNavigation();
 
-  if (!conversation.joined_agent_id && conversation.status === "open") {
-    try {
-      const claimed = await markConversationJoined(id);
-
-      if (claimed) {
-        conversation = claimed;
-        state.messageSection = "current";
-      } else {
-        await loadInbox({ silent: true });
-        conversation = state.conversations.find((item) => item.id === id);
-
-        if (conversation?.joined_agent_id && !conversationIsMine(conversation)) {
-          state.messageSection = "all";
-          showToast("Another staff member picked up this chat.");
-        }
-      }
-    } catch (error) {
-      await loadInbox({ silent: true });
-
-      conversation = state.conversations.find((item) => item.id === id);
-      if (!conversation) {
-        showToast("This chat is no longer available.", "error");
-        return;
-      }
-
-      if (conversation.joined_agent_id && !conversationIsMine(conversation)) {
-        state.messageSection = "all";
-        showToast("Another staff member picked up this chat.");
-      } else {
-        showToast(error?.message || "Unable to pick up this chat.", "error");
-      }
-    }
-  }
-
+  // Viewing a waiting chat does not claim it. The first real typing action
+  // claims it so the visitor only sees a joined notice when staff engages.
   state.selectedId = id;
   dashboard?.classList.add("has-selection");
   renderConversationList();
@@ -6698,8 +6718,8 @@ function renderChatShell() {
           <span id="visitor-context-meta"></span>
         </div>
       </div>
-      ${mine ? `
-        <button id="close-chat-button" class="visitor-close-chat" type="button">
+      ${!assignedToOther ? `
+        <button id="close-chat-button" class="visitor-close-chat" type="button" ${mine ? "" : "hidden"}>
           ${closeIcon()}
           <span>Close chat</span>
         </button>
@@ -7273,7 +7293,10 @@ function renderComposer() {
   const conversation = currentConversation();
   if (!slot || !conversation) return;
 
-  if (!conversationIsMine(conversation)) {
+  const mine = conversationIsMine(conversation);
+  const assignedToOther = Boolean(conversation.joined_agent_id && !mine);
+
+  if (assignedToOther) {
     const owner = conversationOwner(conversation);
     slot.innerHTML = `
       <div class="readonly-composer">
@@ -7305,13 +7328,14 @@ function renderComposer() {
           aria-label="Share a website page"
           title="Share a website page"
           aria-expanded="false"
+          ${mine ? "" : "disabled"}
         >+</button>
 
         <textarea
           id="message-input"
           rows="1"
           maxlength="${MAX_MESSAGE_LENGTH}"
-          placeholder="Reply as Well College Global…"
+          placeholder="${mine ? "Reply as Well College Global…" : "Start typing to join this chat…"}"
           aria-label="Support reply"
         ></textarea>
 
@@ -7321,7 +7345,7 @@ function renderComposer() {
       </div>
 
       <div class="composer-note">
-        <span>+ Share a page · Enter to send · Shift + Enter for a new line</span>
+        <span id="composer-join-note">${mine ? "+ Share a page · Enter to send · Shift + Enter for a new line" : "Start typing to join · viewing alone will not claim the chat"}</span>
         <span>Powered by <strong>Well College Global</strong></span>
       </div>
     </form>
@@ -7331,8 +7355,17 @@ function renderComposer() {
   const input = document.querySelector("#message-input");
   const button = document.querySelector("#send-button");
 
-  input?.addEventListener("input", () => {
-    if (button) button.disabled = !input.value.trim();
+  input?.addEventListener("input", async () => {
+    const hasText = Boolean(input.value.trim());
+    if (hasText && !conversationIsMine(currentConversation())) {
+      if (button) button.disabled = true;
+      const note = document.querySelector("#composer-join-note");
+      if (note) note.textContent = "Joining chat…";
+      await ensureConversationJoinedFromTyping(conversation.id);
+    }
+    if (button) {
+      button.disabled = !input.value.trim() || !conversationIsMine(currentConversation());
+    }
     input.style.height = "auto";
     input.style.height = `${Math.min(input.scrollHeight, 130)}px`;
   });
@@ -7512,21 +7545,26 @@ function sendSupportPageLink(label, path) {
   deliverStaffMessage(optimistic);
 }
 
-function sendReply(event) {
+async function sendReply(event) {
   event.preventDefault();
 
   const input = document.querySelector("#message-input");
   const button = document.querySelector("#send-button");
   const body = String(input?.value || "").trim();
-  const conversation = currentConversation();
+  let conversation = currentConversation();
 
   if (
     !body ||
     !conversation ||
     conversation.status !== "open" ||
-    !state.user ||
-    !conversationIsMine(conversation)
+    !state.user
   ) return;
+
+  if (!conversationIsMine(conversation)) {
+    conversation = await ensureConversationJoinedFromTyping(conversation.id);
+  }
+
+  if (!conversation || !conversationIsMine(conversation)) return;
 
   if (body.length > MAX_MESSAGE_LENGTH) return;
 
