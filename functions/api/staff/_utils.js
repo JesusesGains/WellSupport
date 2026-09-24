@@ -300,71 +300,340 @@ export async function revokeCurrentSession(env, request) {
   }
 }
 
-export async function requireStaff(env, request) {
-  let config;
+const ACCESS_JWKS_CACHE = new Map();
+
+function accessConfig(env) {
+  let teamDomain = String(
+    env?.CLOUDFLARE_ACCESS_TEAM_DOMAIN ||
+    env?.TEAM_DOMAIN ||
+    ""
+  ).trim().replace(/\/+$/, "");
+
+  if (teamDomain && !/^https:\/\//i.test(teamDomain)) {
+    teamDomain = `https://${teamDomain}`;
+  }
+
+  const audience = String(
+    env?.CLOUDFLARE_ACCESS_AUD ||
+    env?.POLICY_AUD ||
+    ""
+  ).trim();
+
+  if (!teamDomain || !audience) {
+    const error = new Error(
+      "Cloudflare Access validation is not configured."
+    );
+    error.status = 503;
+    throw error;
+  }
+
+  return { teamDomain, audience };
+}
+
+function decodeBase64Url(value) {
+  const base64 = String(value || "")
+    .replace(/-/g, "+")
+    .replace(/_/g, "/")
+    .padEnd(Math.ceil(String(value || "").length / 4) * 4, "=");
+
+  const binary = atob(base64);
+  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+}
+
+function decodeJwtJson(value) {
+  const bytes = decodeBase64Url(value);
+  return JSON.parse(new TextDecoder().decode(bytes));
+}
+
+async function accessJwks(teamDomain, forceRefresh = false) {
+  const cached = ACCESS_JWKS_CACHE.get(teamDomain);
+
+  if (
+    !forceRefresh &&
+    cached &&
+    Date.now() - cached.fetchedAt < 60 * 60 * 1000
+  ) {
+    return cached.keys;
+  }
+
+  const response = await fetch(
+    `${teamDomain}/cdn-cgi/access/certs`,
+    {
+      headers: { Accept: "application/json" },
+      cf: { cacheTtl: 300, cacheEverything: true }
+    }
+  );
+
+  if (!response.ok) {
+    const error = new Error("Unable to verify Cloudflare Access.");
+    error.status = 503;
+    throw error;
+  }
+
+  const payload = await response.json();
+  const keys = Array.isArray(payload?.keys) ? payload.keys : [];
+
+  if (!keys.length) {
+    const error = new Error("Cloudflare Access signing keys are unavailable.");
+    error.status = 503;
+    throw error;
+  }
+
+  ACCESS_JWKS_CACHE.set(teamDomain, {
+    keys,
+    fetchedAt: Date.now()
+  });
+
+  return keys;
+}
+
+function audienceMatches(value, expected) {
+  if (Array.isArray(value)) return value.includes(expected);
+  return String(value || "") === expected;
+}
+
+async function verifyCloudflareAccess(env, request) {
+  const token = String(
+    request.headers.get("Cf-Access-Jwt-Assertion") || ""
+  ).trim();
+
+  if (!token) {
+    const error = new Error("Cloudflare Access authentication is required.");
+    error.status = 401;
+    throw error;
+  }
+
+  const parts = token.split(".");
+  if (parts.length !== 3) {
+    const error = new Error("Invalid Cloudflare Access token.");
+    error.status = 401;
+    throw error;
+  }
+
+  let header;
+  let payload;
 
   try {
-    config = supabaseConfig(env);
+    header = decodeJwtJson(parts[0]);
+    payload = decodeJwtJson(parts[1]);
+  } catch {
+    const error = new Error("Invalid Cloudflare Access token.");
+    error.status = 401;
+    throw error;
+  }
+
+  const { teamDomain, audience } = accessConfig(env);
+  const issuer = String(payload?.iss || "").replace(/\/+$/, "");
+  const now = Math.floor(Date.now() / 1000);
+
+  if (
+    header?.alg !== "RS256" ||
+    !header?.kid ||
+    issuer !== teamDomain ||
+    !audienceMatches(payload?.aud, audience) ||
+    !payload?.email ||
+    (payload?.exp && Number(payload.exp) <= now) ||
+    (payload?.nbf && Number(payload.nbf) > now + 30)
+  ) {
+    const error = new Error("Cloudflare Access token validation failed.");
+    error.status = 401;
+    throw error;
+  }
+
+  let keys = await accessJwks(teamDomain);
+  let jwk = keys.find((key) => key?.kid === header.kid);
+
+  if (!jwk) {
+    keys = await accessJwks(teamDomain, true);
+    jwk = keys.find((key) => key?.kid === header.kid);
+  }
+
+  if (!jwk) {
+    const error = new Error("Cloudflare Access signing key was not found.");
+    error.status = 401;
+    throw error;
+  }
+
+  const cryptoKey = await crypto.subtle.importKey(
+    "jwk",
+    jwk,
+    {
+      name: "RSASSA-PKCS1-v1_5",
+      hash: "SHA-256"
+    },
+    false,
+    ["verify"]
+  );
+
+  const valid = await crypto.subtle.verify(
+    "RSASSA-PKCS1-v1_5",
+    cryptoKey,
+    decodeBase64Url(parts[2]),
+    new TextEncoder().encode(`${parts[0]}.${parts[1]}`)
+  );
+
+  if (!valid) {
+    const error = new Error("Cloudflare Access signature validation failed.");
+    error.status = 401;
+    throw error;
+  }
+
+  return {
+    email: String(payload.email).trim().toLowerCase(),
+    sub: String(payload.sub || "").trim(),
+    name: String(payload.name || "").trim(),
+    payload
+  };
+}
+
+function staffDatabase(env) {
+  return env?.WELL_SUPPORT_DB || env?.DB || null;
+}
+
+async function staffAgentFromD1(env, identity) {
+  const db = staffDatabase(env);
+
+  if (!db?.prepare) {
+    const error = new Error(
+      "Well Support D1 binding is not configured. Bind the staff database as WELL_SUPPORT_DB or DB."
+    );
+    error.status = 503;
+    throw error;
+  }
+
+  let row;
+
+  try {
+    row = await db
+      .prepare(
+        "SELECT * FROM staff_users WHERE lower(email) = lower(?) LIMIT 1"
+      )
+      .bind(identity.email)
+      .first();
+  } catch (cause) {
+    const error = new Error(
+      "Well Support staff database is not ready. Apply the staff_users D1 schema."
+    );
+    error.status = 503;
+    error.cause = cause;
+    throw error;
+  }
+
+  if (!row) return null;
+
+  const active =
+    row.active == null ||
+    row.active === true ||
+    Number(row.active) === 1 ||
+    String(row.active).toLowerCase() === "true";
+
+  if (!active) return null;
+
+  if (
+    Object.prototype.hasOwnProperty.call(row, "access_subject") &&
+    row.access_subject &&
+    identity.sub &&
+    String(row.access_subject) !== identity.sub
+  ) {
+    const error = new Error(
+      "This Cloudflare identity does not match the staff account."
+    );
+    error.status = 403;
+    throw error;
+  }
+
+  if (
+    Object.prototype.hasOwnProperty.call(row, "access_subject") &&
+    !row.access_subject &&
+    identity.sub
+  ) {
+    await db
+      .prepare(
+        "UPDATE staff_users SET access_subject = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
+      )
+      .bind(identity.sub, row.id)
+      .run()
+      .catch(() => {});
+  }
+
+  const userId = String(row.id ?? identity.sub ?? identity.email);
+  const displayName = String(
+    row.display_name ||
+    identity.name ||
+    identity.email.split("@")[0] ||
+    "Support staff"
+  ).slice(0, 120);
+
+  return decorateStaffAgent(
+    {
+      ...row,
+      user_id: userId,
+      email: identity.email,
+      display_name: displayName,
+      avatar_url: row.avatar_url || null,
+      active: true
+    },
+    "support"
+  );
+}
+
+export async function requireStaff(env, request) {
+  let identity;
+
+  try {
+    identity = await verifyCloudflareAccess(env, request);
   } catch (error) {
     return {
       response: json(
-        { error: "Well Support is temporarily unavailable." },
+        { error: error.message || "Cloudflare Access authentication failed." },
+        error.status || 401
+      )
+    };
+  }
+
+  let agent;
+
+  try {
+    agent = await staffAgentFromD1(env, identity);
+  } catch (error) {
+    return {
+      response: json(
+        { error: error.message || "Well Support staff lookup failed." },
         error.status || 503
       )
     };
   }
 
-  const cookies = parseCookies(request);
-  let accessToken = cookies.get(ACCESS_COOKIE) || "";
-  const refreshToken = cookies.get(REFRESH_COOKIE) || "";
-  let user = await authUser(config, accessToken);
-  let cookieHeaders = [];
-
-  if (!user && refreshToken) {
-    const refreshed = await refreshSession(config, refreshToken);
-
-    if (refreshed?.access_token && refreshed?.refresh_token) {
-      accessToken = refreshed.access_token;
-      user = refreshed.user || await authUser(config, accessToken);
-      cookieHeaders = authCookies(refreshed);
-    }
-  }
-
-  if (!user || user.is_anonymous) {
-    return {
-      response: withCookies(
-        json({ error: "Authentication required." }, 401),
-        clearSessionCookies()
-      )
-    };
-  }
-
-  if (!await supportSessionIsActive(config, accessToken)) {
-    return {
-      response: withCookies(
-        json({ error: "This staff session is no longer active." }, 401),
-        clearSessionCookies()
-      )
-    };
-  }
-
-  const agent = await staffAgent(config, accessToken, user.id);
-
   if (!agent?.active) {
     return {
-      response: withCookies(
-        json({ error: "This account does not have Well Support access." }, 403),
-        clearSessionCookies()
+      response: json(
+        { error: "This email does not have Well Support access." },
+        403
       )
     };
+  }
+
+  const user = {
+    id: String(agent.user_id || identity.sub || identity.email),
+    email: identity.email
+  };
+
+  let config = null;
+  try {
+    config = supabaseConfig(env);
+  } catch {
+    // Legacy data endpoints may still depend on Supabase during migration.
+    // Staff authentication itself no longer depends on Supabase.
   }
 
   return {
-    accessToken,
+    accessToken: "",
     user,
     agent,
-    cookieHeaders,
-    config
+    cookieHeaders: [],
+    config,
+    identity,
+    db: staffDatabase(env)
   };
 }
 

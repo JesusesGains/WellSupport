@@ -198,7 +198,7 @@ async function apiRequest(path, {
       state.conversations = [];
       state.messages = [];
       state.selectedId = null;
-      renderLogin(response.status === 403 ? payload?.error || "Access denied." : "");
+      renderAccessError(response.status === 403 ? payload?.error || "Access denied." : "");
     }
 
     const error = new Error(payload?.error || "Support request failed.");
@@ -801,77 +801,31 @@ function showToast(message, tone = "default") {
   }, 3600);
 }
 
-function renderLogin(message = "") {
+function renderAccessError(message = "Your Cloudflare Access session could not be verified.") {
   app.innerHTML = `
     <main class="auth-shell">
-      <section class="auth-card" aria-labelledby="staff-sign-in-title">
+      <section class="auth-card" aria-labelledby="staff-access-title">
         <div class="auth-brand">
           <img class="auth-logo" src="/well-college-logo.png" alt="Well College Global" />
         </div>
-        <h1 id="staff-sign-in-title">Staff sign in</h1>
-        <p>Access website analytics, live conversations and visitor activity.</p>
-        <div id="auth-error" class="auth-error" role="status" ${message ? "" : "hidden"}></div>
-        <form id="login-form" class="auth-form" autocomplete="on">
-          <div class="field">
-            <label for="staff-email">Email</label>
-            <input id="staff-email" name="email" type="email" autocomplete="username" required />
-          </div>
-          <div class="field">
-            <label for="staff-password">Password</label>
-            <input id="staff-password" name="password" type="password" autocomplete="current-password" required />
-          </div>
-          <button id="login-submit" class="auth-submit" type="submit">Sign in</button>
-        </form>
+        <h1 id="staff-access-title">Staff access</h1>
+        <p>Well Support is protected by Cloudflare Access. There is no separate dashboard password.</p>
+        <div class="auth-error" role="status">${message}</div>
+        <div class="auth-form">
+          <button id="access-retry" class="auth-submit" type="button">Try again</button>
+          <button id="access-logout" class="auth-submit auth-submit-secondary" type="button">Sign out of Cloudflare Access</button>
+        </div>
       </section>
     </main>
   `;
 
-  const errorBox = document.querySelector("#auth-error");
-  if (message && errorBox) errorBox.textContent = message;
+  document.querySelector("#access-retry")?.addEventListener("click", () => {
+    window.location.reload();
+  });
 
-  document.querySelector("#login-form")?.addEventListener("submit", handleLogin);
-}
-
-async function handleLogin(event) {
-  event.preventDefault();
-
-  const form = new FormData(event.currentTarget);
-  const email = String(form.get("email") || "").trim();
-  const password = String(form.get("password") || "");
-  const submit = document.querySelector("#login-submit");
-  const errorBox = document.querySelector("#auth-error");
-
-  if (submit) {
-    submit.disabled = true;
-    submit.textContent = "Signing in…";
-  }
-
-  if (errorBox) {
-    errorBox.hidden = true;
-    errorBox.textContent = "";
-  }
-
-  try {
-    const result = await apiRequest("/login", {
-      method: "POST",
-      body: { email, password }
-    });
-
-    state.user = result.user;
-    state.agent = result.agent;
-    renderDashboard();
-    await initialiseDashboard();
-  } catch (error) {
-    if (errorBox && document.body.contains(errorBox)) {
-      errorBox.textContent = error?.message || "Unable to sign in.";
-      errorBox.hidden = false;
-    }
-  } finally {
-    if (submit && document.body.contains(submit)) {
-      submit.disabled = false;
-      submit.textContent = "Sign in";
-    }
-  }
+  document.querySelector("#access-logout")?.addEventListener("click", () => {
+    window.location.assign("/cdn-cgi/access/logout");
+  });
 }
 
 function dashboardIcon() {
@@ -7813,58 +7767,37 @@ function cleanupRealtime() {
 }
 
 async function signOut() {
-  try {
-    cleanupRealtime();
-    await apiRequest("/logout", { method: "POST" });
-  } catch {
-    // Server also expires the session cookie on normal logout; render locally regardless.
-  }
-
+  cleanupRealtime();
   state.agent = null;
   state.user = null;
-  state.conversations = [];
-  state.messages = [];
-  state.selectedId = null;
-  state.lastMessages = new Map();
-  state.unread = new Set();
-  state.unreadCounts = new Map();
-  state.agents = new Map();
-  state.readAt = new Map();
-  state.messageSection = "current";
-  state.knownVisitorMessageIds = new Set();
-  state.notificationsReady = false;
-  state.analytics = null;
-  state.analyticsCache = new Map();
-  state.analyticsError = "";
-  state.editorStatus = null;
-  state.editorMode = "beta";
-  state.editorPage = "/";
-  state.editorDirty = false;
-  if (state.editorSharedDraftTimer) window.clearTimeout(state.editorSharedDraftTimer);
-  state.editorSharedDraftTimer = null;
-  state.editorSharedDraftLoadedSha = "";
-  state.editorSharedDraftRevision = 0;
-  state.editorSharedDraftAvailable = null;
-  state.editorSharedDraftConflict = false;
-  state.editorDevtoolsTab = "elements";
-  state.editorDevtoolsData = null;
-  state.currentView = "dashboard";
-  renderLogin();
+  window.location.assign("/cdn-cgi/access/logout");
 }
 
 async function bootstrap() {
+  let result;
+
   try {
-    const result = await apiRequest("/session");
-    state.user = result.user;
-    state.agent = result.agent;
-    renderDashboard();
+    result = await apiRequest("/session");
+  } catch (error) {
+    renderAccessError(
+      error?.message ||
+      "Your Cloudflare Access session could not be verified."
+    );
+    return;
+  }
+
+  state.user = result.user;
+  state.agent = result.agent;
+  renderDashboard();
+
+  try {
     await initialiseDashboard();
   } catch (error) {
-    if (error.status !== 401 && error.status !== 403) {
-      renderLogin("Unable to initialise Well Support.");
-    } else if (!document.querySelector(".auth-shell")) {
-      renderLogin();
-    }
+    console.error("Well Support initialisation failed", error);
+    showToast(
+      error?.message || "Some dashboard data is temporarily unavailable.",
+      "error"
+    );
   }
 }
 

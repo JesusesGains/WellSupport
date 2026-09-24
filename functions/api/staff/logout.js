@@ -1,19 +1,14 @@
 import {
   assertSameOrigin,
-  clearSessionCookies,
-  json,
-  revokeCurrentSession,
-  withCookies
+  json
 } from "./_utils.js";
 
-export async function onRequestPost({ request, env }) {
+export async function onRequestPost({ request }) {
   const blocked = assertSameOrigin(request);
   if (blocked) return blocked;
 
-  await revokeCurrentSession(env, request);
-
-  return withCookies(
-    json({ ok: true }),
-    clearSessionCookies()
-  );
+  return json({
+    ok: true,
+    logoutUrl: "/cdn-cgi/access/logout"
+  });
 }
