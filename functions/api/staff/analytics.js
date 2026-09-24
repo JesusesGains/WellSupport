@@ -7,6 +7,13 @@ import {
 const CLOUDFLARE_GRAPHQL_URL = "https://api.cloudflare.com/client/v4/graphql";
 const DEFAULT_ANALYTICS_HOST = "wellcollegeglobal.com";
 const MAX_CLOUDFLARE_WINDOW_DAYS = 30;
+const CLOUDFLARE_CACHE_TTL_MS = 60 * 1000;
+
+// Cloudflare traffic is account-wide (not per staff member), so a short
+// isolate-level cache lets every signed-in dashboard share one GraphQL fetch
+// per range instead of re-querying Cloudflare on each poll. Concurrent
+// requests for the same range share the same in-flight promise.
+const cloudflareSummaryCache = new Map();
 
 function emptyCustomSummary(days) {
   return {
@@ -261,10 +268,28 @@ function topRows(map, mapper, limit = 12) {
     .slice(0, limit);
 }
 
-async function loadCloudflareSummary(env, days) {
+async function loadCloudflareSummary(env, days, { fresh = false } = {}) {
   const config = cloudflareConfig(env);
   if (!config) return null;
 
+  const key = `${config.accountId}:${config.host}:${days}`;
+  const cached = cloudflareSummaryCache.get(key);
+  if (cached && !fresh && Date.now() - cached.at < CLOUDFLARE_CACHE_TTL_MS) {
+    return cached.promise;
+  }
+
+  const promise = fetchCloudflareSummary(config, days);
+  cloudflareSummaryCache.set(key, { at: Date.now(), promise });
+  // Failures are never cached; the next request retries immediately.
+  promise.catch(() => {
+    if (cloudflareSummaryCache.get(key)?.promise === promise) {
+      cloudflareSummaryCache.delete(key);
+    }
+  });
+  return promise;
+}
+
+async function fetchCloudflareSummary(config, days) {
   let pageViews = 0;
   let visits = 0;
   const daily = new Map();
@@ -275,14 +300,19 @@ async function loadCloudflareSummary(env, days) {
   const browsers = new Map();
   const operatingSystems = new Map();
 
-  for (const window of analyticsWindows(days)) {
-    const data = await cloudflareGraphql(config, {
-      accountTag: config.accountId,
-      host: config.host,
-      start: window.start,
-      end: window.end
-    });
+  // The windows are independent, so the 90-day range queries them in parallel.
+  const windows = await Promise.all(
+    analyticsWindows(days).map((window) =>
+      cloudflareGraphql(config, {
+        accountTag: config.accountId,
+        host: config.host,
+        start: window.start,
+        end: window.end
+      })
+    )
+  );
 
+  for (const data of windows) {
     const overview = data?.overview?.[0];
     pageViews += Number(overview?.count || 0);
     visits += Number(overview?.sum?.visits || 0);
@@ -466,6 +496,7 @@ export async function onRequestGet({ request, env }) {
   const url = new URL(request.url);
   const requestedDays = Number(url.searchParams.get("days") || 30);
   const days = [7, 30, 90].includes(requestedDays) ? requestedDays : 30;
+  const fresh = url.searchParams.get("fresh") === "1";
 
   const [customResult, cloudflareResult] = await Promise.allSettled([
     restJson(
@@ -476,7 +507,7 @@ export async function onRequestGet({ request, env }) {
         body: { p_days: days }
       }
     ),
-    loadCloudflareSummary(env, days)
+    loadCloudflareSummary(env, days, { fresh })
   ]);
 
   const custom =

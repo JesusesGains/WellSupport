@@ -57,6 +57,8 @@ Cloudflare Web Analytics must be enabled for the production website so `rumPagel
 
 If the Cloudflare token/configuration is missing or Cloudflare is temporarily unavailable, the dashboard falls back to the existing first-party traffic summary rather than failing completely.
 
+Cloudflare results are cached for 60 seconds per date range inside the Pages Function isolate and shared by every signed-in dashboard, so background refreshes do not re-query Cloudflare. The dashboard's **Refresh** button bypasses the cache (`/api/staff/analytics?days=30&fresh=1`).
+
 Configure the **WellSupport** Cloudflare Pages project with:
 
 - `SUPABASE_URL` — Text
@@ -137,7 +139,7 @@ The website and this dashboard point to the same **Well Website** Supabase proje
 The Web Editor has two embedded preview modes:
 
 - **Visual** — the interactive website canvas with desktop/tablet/mobile controls.
-- **Code** — read-only source for the selected branch/page. The Code view opens on **HTML** and can switch to **CSS** without leaving the editor.
+- **Code** — the selected page's HTML source, docked beside the live preview. On beta it is editable and previews unsaved changes after you pause typing; production source is read-only.
 
 The source endpoint reads from the selected `WellWebsite` branch server-side. It does not expose the GitHub token to the browser and it does not allow source writes.
 

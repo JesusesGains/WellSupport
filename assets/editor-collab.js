@@ -1,6 +1,12 @@
 const PREVIEW_ORIGIN = "https://wellwebsite.pages.dev";
-const PRESENCE_POLL_MS = 120;
-const NOTES_POLL_MS = 650;
+// Polling adapts to whether anyone else is in the editor: live cursors need
+// fast presence reads, but a solo editor only needs to notice when someone
+// joins. Every poll re-validates the staff session server-side, so idle
+// polling is kept slow and stops entirely while the tab is hidden.
+const PRESENCE_ACTIVE_MS = 150;
+const PRESENCE_IDLE_MS = 2500;
+const NOTES_ACTIVE_MS = 1500;
+const NOTES_IDLE_MS = 5000;
 const CURSOR_WRITE_MS = 80;
 const HEARTBEAT_MS = 4000;
 
@@ -895,7 +901,33 @@ async function writePresence({ keepalive = false } = {}) {
   }
 }
 
+function othersPresent() {
+  return collab.presence.length > 0;
+}
+
+function schedulePoll(timerKey, load, activeMs, idleMs) {
+  window.clearTimeout(collab[timerKey]);
+  collab[timerKey] = null;
+  if (!collab.active || document.visibilityState === "hidden") return;
+
+  collab[timerKey] = window.setTimeout(async () => {
+    collab[timerKey] = null;
+    await load();
+    schedulePoll(timerKey, load, activeMs, idleMs);
+  }, othersPresent() ? activeMs : idleMs);
+}
+
+function schedulePresencePoll() {
+  schedulePoll("presenceTimer", loadPresence, PRESENCE_ACTIVE_MS, PRESENCE_IDLE_MS);
+}
+
+function scheduleNotesPoll() {
+  schedulePoll("notesTimer", loadNotes, NOTES_ACTIVE_MS, NOTES_IDLE_MS);
+}
+
 function queuePresenceWrite() {
+  // Nobody else can see this cursor; the heartbeat keeps presence alive.
+  if (!othersPresent()) return;
   if (collab.cursorWriteTimer || collab.unavailable) return;
   collab.cursorWriteTimer = window.setTimeout(() => {
     collab.cursorWriteTimer = null;
@@ -924,9 +956,9 @@ function leavePresence() {
 function stopCollaboration() {
   if (!collab.active) return;
   collab.active = false;
-  for (const timer of [collab.presenceTimer, collab.notesTimer, collab.heartbeatTimer]) {
-    if (timer) window.clearInterval(timer);
-  }
+  window.clearTimeout(collab.presenceTimer);
+  window.clearTimeout(collab.notesTimer);
+  window.clearInterval(collab.heartbeatTimer);
   collab.presenceTimer = null;
   collab.presenceLoading = false;
   collab.notesTimer = null;
@@ -952,8 +984,7 @@ function startCollaboration() {
   }
 
   if (collab.active && collab.frame === frame) {
-    ensurePresenceControl();
-    ensureNoteTool();
+    refreshCollaborationChrome();
     return;
   }
 
@@ -977,14 +1008,38 @@ function startCollaboration() {
   collab.page = currentPage();
   collab.device = currentDevice();
 
-  loadPresence();
-  loadNotes();
+  loadPresence().then(schedulePresencePoll);
+  loadNotes().then(scheduleNotesPoll);
   writePresence();
 
-  collab.presenceTimer = window.setInterval(loadPresence, PRESENCE_POLL_MS);
-  collab.notesTimer = window.setInterval(loadNotes, NOTES_POLL_MS);
   collab.heartbeatTimer = window.setInterval(() => writePresence(), HEARTBEAT_MS);
 }
+
+// The editor re-renders its chrome around a kept iframe, which removes the
+// presence chips and notes button without changing the frame.
+function refreshCollaborationChrome() {
+  ensurePresenceControl();
+  collab.peopleSignature = "";
+  renderPresence();
+  ensureNoteTool();
+
+  const workspace = document.querySelector(".editor-preview-placeholder.is-fullscreen");
+  const panel = workspace?.querySelector("#editor-notes-panel");
+  if (!workspace || !panel) {
+    renderNotesPanel();
+    return;
+  }
+
+  const open = collab.notesOpen && !workspace.classList.contains("has-code-dock");
+  const wasOpen = panel.classList.contains("is-open");
+  workspace.classList.toggle("has-notes-dock", open);
+  panel.classList.toggle("is-open", open);
+  if (open && !wasOpen) renderNotesPanel();
+}
+
+document.addEventListener("wcg:editor-rendered", () => {
+  if (collab.active && collab.frame === currentFrame()) refreshCollaborationChrome();
+});
 
 document.addEventListener("click", async (event) => {
   const interaction = event.target?.closest?.("[data-editor-interaction]");
@@ -1225,9 +1280,17 @@ document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden") {
     collab.lastCursor = { ...collab.lastCursor, visible: false };
     writePresence({ keepalive: true });
+    window.clearTimeout(collab.presenceTimer);
+    window.clearTimeout(collab.notesTimer);
+    collab.presenceTimer = null;
+    collab.notesTimer = null;
   } else if (currentFrame()) {
     collab.lastCursor = { ...collab.lastCursor, visible: true };
     writePresence();
+    if (collab.active) {
+      loadPresence().then(schedulePresencePoll);
+      loadNotes().then(scheduleNotesPoll);
+    }
   }
 });
 
