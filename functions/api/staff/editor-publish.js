@@ -960,8 +960,8 @@ export async function onRequestPost({ request, env }) {
 
     for (const [pagePath, patch] of pagePatches) {
       if (!patch.supplied.seo || !Object.values(patch.seo).some(Boolean)) continue;
-      const htmlPath = pagePath === "/" ? "index.html" : pagePath.replace(/^\\/+/, "");
-      if (!/\\.html$/i.test(htmlPath)) continue;
+      const htmlPath = pagePath === "/" ? "index.html" : pagePath.replace(/^\/+/, "");
+      if (!/\.html$/i.test(htmlPath)) continue;
       const staged = files.find((file) => file.path === htmlPath);
       let source = staged?.content;
       if (typeof source !== "string") {
