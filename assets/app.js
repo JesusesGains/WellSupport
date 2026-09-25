@@ -157,6 +157,10 @@ const state = {
   editorRemoteDraftTimer: null,
   editorDevtoolsTab: "elements",
   editorDevtoolsData: null,
+  editorA11yIssues: [],
+  editorA11yLoading: false,
+  editorA11yCheckedAt: "",
+
   editorDockRatio: (() => {
     const value = Number(sessionStorage.getItem("well-editor-dock-ratio") || 0.58);
     return Number.isFinite(value) ? Math.min(0.72, Math.max(0.28, value)) : 0.58;
@@ -3241,6 +3245,40 @@ function editorSeoMarkup(editable) {
   `;
 }
 
+function editorAuditMarkup() {
+  const issues = Array.isArray(state.editorA11yIssues) ? state.editorA11yIssues : [];
+  const errors = issues.filter((issue) => issue.severity === "error").length;
+  const warnings = issues.filter((issue) => issue.severity !== "error").length;
+  return `
+    <section class="editor-inspector-section">
+      <div class="editor-inspector-heading">
+        <strong>Accessibility audit</strong>
+        <button id="editor-a11y-run" type="button" ${state.editorA11yLoading ? "disabled" : ""}>
+          ${state.editorA11yLoading ? "Checking…" : "Run audit"}
+        </button>
+      </div>
+      <div class="editor-a11y-summary">
+        <span class="is-error">${errors} errors</span>
+        <span class="is-warning">${warnings} warnings</span>
+      </div>
+      <small class="editor-a11y-note">Checks visible headings, image alt text, labels, accessible names, duplicate IDs and keyboard basics in the current preview.</small>
+    </section>
+    <div class="editor-a11y-list">
+      ${issues.length ? issues.map((issue, index) => `
+        <button type="button" class="editor-a11y-issue is-${escapeEditorAttribute(issue.severity || "warning")}" data-editor-a11y-selector="${escapeEditorAttribute(issue.selector || "")}">
+          <span>${issue.severity === "error" ? "!" : "△"}</span>
+          <div>
+            <strong>${escapeEditorAttribute(issue.message || "Accessibility issue")}</strong>
+            <small>${escapeEditorAttribute(issue.selector || issue.kind || "Page")}</small>
+          </div>
+        </button>
+      `).join("") : `
+        <div class="editor-inspector-empty">${state.editorA11yLoading ? "Inspecting the current page…" : state.editorA11yCheckedAt ? "No issues found by these automated checks." : "Run the audit to inspect this page."}</div>
+      `}
+    </div>
+  `;
+}
+
 function editorInspectorMarkup(editable) {
   const tab = state.editorInspectorTab;
   const tabs = [
@@ -3249,6 +3287,7 @@ function editorInspectorMarkup(editable) {
     ["layers", "Layers"],
     ["assets", "Assets"],
     ["seo", "SEO"],
+    ["audit", "Audit"],
     ["site", "Site"],
     ["history", "History"]
   ];
@@ -3258,6 +3297,7 @@ function editorInspectorMarkup(editable) {
   else if (tab === "layers") body = editorLayoutMarkup(editable);
   else if (tab === "assets") body = editorAssetsMarkup(editable);
   else if (tab === "seo") body = editorSeoMarkup(editable);
+  else if (tab === "audit") body = editorAuditMarkup();
   else if (tab === "site") {
     body = `
       <section class="editor-inspector-section">
@@ -4594,6 +4634,14 @@ function renderWebEditor() {
       return;
     }
 
+    if (event.data.type === "WCG_EDITOR_A11Y_DATA") {
+      state.editorA11yIssues = Array.isArray(event.data.issues) ? event.data.issues : [];
+      state.editorA11yCheckedAt = String(event.data.checkedAt || new Date().toISOString());
+      state.editorA11yLoading = false;
+      if (state.editorInspectorTab === "audit") renderWebEditor();
+      return;
+    }
+
     if (event.data.type === "WCG_EDITOR_COLOURS") {
       state.editorColours = Array.isArray(event.data.colours)
         ? event.data.colours
@@ -4972,6 +5020,9 @@ function renderWebEditor() {
     state.editorColours = [];
     state.editorSelectedText = null;
     state.editorSelectedObject = null;
+    state.editorA11yIssues = [];
+    state.editorA11yCheckedAt = "";
+    state.editorA11yLoading = false;
     state.editorCodeSource = null;
     state.editorCodeSourceKey = "";
     state.editorCodeDraft = "";
@@ -4991,6 +5042,9 @@ function renderWebEditor() {
         }
       }
       renderWebEditor();
+      if (state.editorInspectorTab === "audit" && !state.editorA11yCheckedAt) {
+        window.setTimeout(() => document.querySelector("#editor-a11y-run")?.click(), 40);
+      }
     });
   });
 
@@ -5025,6 +5079,30 @@ function renderWebEditor() {
     };
     input.addEventListener("input", applySeoField);
     if (input.tagName === "SELECT") input.addEventListener("change", applySeoField);
+  });
+
+  document.querySelector("#editor-a11y-run")?.addEventListener("click", () => {
+    if (!frame?.contentWindow) return;
+    state.editorA11yLoading = true;
+    renderWebEditor();
+    window.setTimeout(() => {
+      const nextFrame = document.querySelector("#web-editor-frame");
+      nextFrame?.contentWindow?.postMessage(
+        { type: "WCG_EDITOR_A11Y_REQUEST" },
+        frameOrigin()
+      );
+    }, 30);
+  });
+
+  document.querySelectorAll("[data-editor-a11y-selector]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const selector = String(button.dataset.editorA11ySelector || "");
+      if (!selector || !frame?.contentWindow) return;
+      frame.contentWindow.postMessage(
+        { type: "WCG_EDITOR_DEVTOOLS_FOCUS", selector },
+        frameOrigin()
+      );
+    });
   });
 
   document.querySelector("#editor-page-search")?.addEventListener("input", (event) => {
