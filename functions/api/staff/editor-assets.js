@@ -14,6 +14,14 @@ function assetKind(path) {
   return "file";
 }
 
+function assetUrl(base, path) {
+  try {
+    return new URL(String(path || "").replace(/^\/+/, ""), base).toString();
+  } catch {
+    return "";
+  }
+}
+
 export async function onRequestGet({ request, env }) {
   const session = await requireStaff(env, request);
   if (session.response) return session.response;
@@ -23,6 +31,17 @@ export async function onRequestGet({ request, env }) {
   const url = new URL(request.url);
   const target = url.searchParams.get("target") === "production" ? "production" : "beta";
   const branch = target === "production" ? MAIN_BRANCH : BETA_BRANCH;
+  const previewBases =
+    target === "production"
+      ? [
+          "https://wellwebsite.pages.dev/",
+          "https://www.wellcollegeglobal.com/"
+        ]
+      : [
+          "https://beta-main.wellwebsite.pages.dev/",
+          "https://wellwebsite.pages.dev/",
+          "https://www.wellcollegeglobal.com/"
+        ];
 
   try {
     const branchInfo = await githubRequest(
@@ -45,13 +64,20 @@ export async function onRequestGet({ request, env }) {
           item.path.startsWith("assets/")
       )
       .slice(0, 600)
-      .map((item) => ({
-        path: item.path,
-        name: item.path.split("/").pop(),
-        size: Number(item.size || 0),
-        kind: assetKind(item.path),
-        url: `https://www.wellcollegeglobal.com/${item.path}`
-      }));
+      .map((item) => {
+        const previewUrls = previewBases
+          .map((base) => assetUrl(base, item.path))
+          .filter(Boolean);
+
+        return {
+          path: item.path,
+          name: item.path.split("/").pop(),
+          size: Number(item.size || 0),
+          kind: assetKind(item.path),
+          url: previewUrls[0] || "",
+          previewUrls
+        };
+      });
 
     return sessionResponse({ target, branch, assets }, session);
   } catch (error) {

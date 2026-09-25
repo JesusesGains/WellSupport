@@ -1650,19 +1650,31 @@ function editorImageAssetOptions() {
       path: asset.path,
       value: `/${asset.path}`,
       preview: asset.previewUrl,
+      previews: [asset.previewUrl].filter(Boolean),
       name: asset.name || asset.path.split("/").pop() || "Image",
       draft: true
     }));
 
   const existingOptions = state.editorAssets
     .filter((asset) => asset.kind === "image")
-    .map((asset) => ({
-      path: asset.path,
-      value: `/${asset.path}`,
-      preview: asset.url || editorAssetPublicUrl(asset.path),
-      name: asset.name || asset.path.split("/").pop() || "Image",
-      draft: false
-    }));
+    .map((asset) => {
+      const previews = [...new Set(
+        [
+          ...(Array.isArray(asset.previewUrls) ? asset.previewUrls : []),
+          asset.url,
+          editorAssetPublicUrl(asset.path)
+        ].filter(Boolean)
+      )];
+
+      return {
+        path: asset.path,
+        value: `/${asset.path}`,
+        preview: previews[0] || "",
+        previews,
+        name: asset.name || asset.path.split("/").pop() || "Image",
+        draft: false
+      };
+    });
 
   const seen = new Set();
   return [...draftOptions, ...existingOptions].filter((asset) => {
@@ -3874,9 +3886,14 @@ function renderWebEditor() {
         "backgroundColor",
         "color",
         "minHeight",
+        "width",
+        "height",
         "paddingTop",
+        "paddingRight",
         "paddingBottom",
-        "borderRadius"
+        "paddingLeft",
+        "borderRadius",
+        "objectFit"
       ]);
       const nextStyles = {};
       for (const [name, value] of Object.entries(styles)) {
