@@ -2876,6 +2876,268 @@ function editorDeviceIcon(device) {
   return `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="4" width="19" height="12.5" rx="1.5"></rect><path d="M8.5 20h7M12 16.5V20"></path></svg>`;
 }
 
+
+function editorPageOptions() {
+  const seen = new Set();
+  return EDITOR_LINK_DESTINATIONS
+    .map(([href, label]) => {
+      const path = href === "index.html" ? "/" : `/${String(href || "").replace(/^\/+/, "").split("#")[0]}`;
+      return { path, label };
+    })
+    .filter((item) => {
+      if (!item.path || seen.has(item.path)) return false;
+      seen.add(item.path);
+      return true;
+    });
+}
+
+function editorAssetsMarkup(editable) {
+  const options = editorImageAssetOptions();
+  if (!options.length) {
+    return `<div class="editor-inspector-empty">No image assets loaded yet.</div>`;
+  }
+
+  return `
+    <div class="editor-assets-toolbar">
+      <input id="editor-assets-search" type="search" placeholder="Search assets…" aria-label="Search assets">
+      <button id="editor-assets-upload" type="button" ${editable ? "" : "disabled"}>Upload</button>
+    </div>
+    <div id="editor-assets-grid" class="editor-assets-grid">
+      ${options.slice(0, 240).map((asset) => `
+        <article class="editor-asset-card" data-editor-asset-name="${escapeEditorAttribute(String(asset.name || "").toLowerCase())}">
+          <div class="editor-asset-preview">
+            ${asset.preview ? `<img src="${escapeEditorAttribute(asset.preview)}" alt="">` : "<span>IMG</span>"}
+          </div>
+          <div class="editor-asset-meta">
+            <strong title="${escapeEditorAttribute(asset.path)}">${escapeEditorAttribute(asset.name || asset.path)}</strong>
+            <small>${asset.draft ? "Staged upload" : escapeEditorAttribute(asset.path)}</small>
+          </div>
+          <div class="editor-asset-actions">
+            <button type="button" data-editor-asset-copy="${escapeEditorAttribute(asset.value)}">Copy path</button>
+            <button type="button" data-editor-asset-use="${escapeEditorAttribute(asset.value)}" ${editable ? "" : "disabled"}>Use</button>
+          </div>
+        </article>
+      `).join("")}
+    </div>
+  `;
+}
+
+function editorNavigationMarkup(editable) {
+  const headerOrder = state.editorNavigationHeaderOrder.length
+    ? state.editorNavigationHeaderOrder
+    : Object.keys(EDITOR_HEADER_NAV_LABELS);
+  const groupOrder = state.editorNavigationGroupOrder.length
+    ? state.editorNavigationGroupOrder
+    : EDITOR_SHORT_COURSE_GROUPS;
+
+  return `
+    <section class="editor-inspector-section">
+      <div class="editor-inspector-heading"><strong>Header navigation</strong><small>Drag to reorder</small></div>
+      <div id="editor-header-order-list" class="editor-order-list">
+        ${headerOrder.map((key) => editorNavigationItemMarkup(key, EDITOR_HEADER_NAV_LABELS[key] || key, editable)).join("")}
+      </div>
+    </section>
+    <section class="editor-inspector-section">
+      <div class="editor-inspector-heading"><strong>Short Courses groups</strong><small>Drag to reorder</small></div>
+      <div id="editor-short-course-order-list" class="editor-order-list">
+        ${groupOrder.map((key) => editorNavigationItemMarkup(key, key, editable)).join("")}
+      </div>
+      <button id="editor-navigation-save" class="editor-inspector-secondary" type="button" ${editable && state.editorNavigationDirty ? "" : "disabled"}>Save order to draft</button>
+    </section>
+  `;
+}
+
+function editorLayoutMarkup(editable) {
+  const scopes = Object.entries(state.editorLayoutOrders || {});
+  if (!scopes.length) {
+    return `<div class="editor-inspector-empty">${state.editorLayoutLoading ? "Loading page sections…" : "No source-backed section groups are registered for this page."}</div>`;
+  }
+
+  return scopes.map(([scope, order]) => `
+    <section class="editor-inspector-section">
+      <div class="editor-inspector-heading">
+        <strong>${escapeEditorAttribute(scope.replaceAll("-", " "))}</strong>
+        <small>Section order</small>
+      </div>
+      <div class="editor-layout-order-list" data-editor-layout-scope-list="${escapeEditorAttribute(scope)}">
+        ${order.map((key, index) => `
+          <div class="editor-layout-order-item">
+            <span>⋮⋮</span>
+            <strong>${escapeEditorAttribute(String(key).replaceAll("-", " "))}</strong>
+            <div>
+              <button type="button" data-editor-layout-move="${escapeEditorAttribute(scope)}" data-editor-layout-index="${index}" data-editor-layout-direction="-1" ${editable && index > 0 ? "" : "disabled"} aria-label="Move up">↑</button>
+              <button type="button" data-editor-layout-move="${escapeEditorAttribute(scope)}" data-editor-layout-index="${index}" data-editor-layout-direction="1" ${editable && index < order.length - 1 ? "" : "disabled"} aria-label="Move down">↓</button>
+            </div>
+          </div>
+        `).join("")}
+      </div>
+    </section>
+  `).join("");
+}
+
+function editorBannerMarkup(editable) {
+  const items = state.editorBannerItems || [];
+  return `
+    <section class="editor-inspector-section">
+      <div class="editor-inspector-heading">
+        <strong>Rolling banners</strong>
+        <button id="editor-banner-add" type="button" ${editable ? "" : "disabled"}>+ Add</button>
+      </div>
+      <label class="editor-inspector-field">
+        <span>Rotation interval</span>
+        <select id="editor-banner-interval" ${editable ? "" : "disabled"}>
+          ${[[3200,"3.2 sec"],[4200,"4.2 sec"],[5200,"5.2 sec"],[6500,"6.5 sec"],[8000,"8 sec"],[10000,"10 sec"]].map(([value,label]) => `<option value="${value}" ${Number(state.editorBannerInterval) === value ? "selected" : ""}>${label}</option>`).join("")}
+        </select>
+      </label>
+      <div id="editor-banner-list" class="editor-banner-list">
+        ${items.length ? items.map((item, index) => {
+          const open = state.editorBannerOpenId === item.id;
+          return `
+            <article class="editor-banner-card ${open ? "is-open" : ""}" data-banner-index="${index}">
+              <button type="button" class="editor-banner-summary" data-banner-toggle="${index}" aria-expanded="${open}">
+                <strong>${escapeEditorAttribute(item.message || "Announcement")}</strong>
+                <span>${item.enabled === false ? "Off" : "On"}</span>
+              </button>
+              <div class="editor-banner-fields">
+                <label><span>Message</span><input data-banner-field="message" value="${escapeEditorAttribute(item.message || "")}" ${editable ? "" : "disabled"}></label>
+                <label><span>CTA</span><input data-banner-field="cta" value="${escapeEditorAttribute(item.cta || "")}" ${editable ? "" : "disabled"}></label>
+                <label><span>Link</span><input data-banner-field="href" value="${escapeEditorAttribute(item.href || "")}" ${editable ? "" : "disabled"}></label>
+                <div class="editor-banner-colours">
+                  <label class="editor-banner-colour-input"><span>Background</span><input type="color" data-banner-field="background" value="${escapeEditorAttribute(item.background || "#304660")}" ${editable ? "" : "disabled"}><code>${escapeEditorAttribute(item.background || "#304660")}</code></label>
+                  <label class="editor-banner-colour-input"><span>Text</span><input type="color" data-banner-field="foreground" value="${escapeEditorAttribute(item.foreground || "#FFFEFA")}" ${editable ? "" : "disabled"}><code>${escapeEditorAttribute(item.foreground || "#FFFEFA")}</code></label>
+                </div>
+                <label><span>Starts</span><input type="datetime-local" data-banner-field="startsAt" value="${escapeEditorAttribute(editorDateTimeLocal(item.startsAt))}" ${editable ? "" : "disabled"}></label>
+                <label><span>Ends</span><input type="datetime-local" data-banner-field="endsAt" value="${escapeEditorAttribute(editorDateTimeLocal(item.endsAt))}" ${editable ? "" : "disabled"}></label>
+                <label class="editor-banner-toggle-row"><input type="checkbox" data-banner-field="enabled" ${item.enabled === false ? "" : "checked"} ${editable ? "" : "disabled"}><span>Enabled</span></label>
+                <button type="button" class="editor-banner-remove" data-banner-remove="${index}" ${editable ? "" : "disabled"}>Delete banner</button>
+              </div>
+            </article>
+          `;
+        }).join("") : `<div class="editor-inspector-empty">No rolling banners.</div>`}
+      </div>
+      <button id="editor-banner-save" class="editor-inspector-secondary" type="button" ${editable ? "" : "disabled"}>Save banner draft</button>
+    </section>
+  `;
+}
+
+function editorHistoryMarkup() {
+  const commits = state.editorVersionHistory || [];
+  const audit = state.editorAuditHistory || [];
+  return `
+    <section class="editor-inspector-section">
+      <div class="editor-inspector-heading">
+        <strong>Production history</strong>
+        <button id="editor-history-toggle" type="button">${state.editorHistoryLoading ? "Loading…" : "Refresh"}</button>
+      </div>
+      <div class="editor-version-list">
+        ${commits.length ? commits.map((commit) => `
+          <article class="editor-version-row">
+            <div><strong>${escapeEditorAttribute(commit.message || "Website update")}</strong><small>${escapeEditorAttribute(commit.author || "Unknown")} · ${escapeEditorAttribute(formatDay(commit.authoredAt))}</small></div>
+            ${staffCan("publish") ? `<button type="button" data-editor-restore-sha="${escapeEditorAttribute(commit.sha || "")}">Stage restore</button>` : ""}
+          </article>
+        `).join("") : `<div class="editor-inspector-empty">${state.editorHistoryLoading ? "Loading history…" : "Open History to load recent versions."}</div>`}
+      </div>
+    </section>
+    <section class="editor-inspector-section">
+      <div class="editor-inspector-heading"><strong>Editor audit</strong><small>Recent actions</small></div>
+      <div class="editor-audit-list">
+        ${audit.length ? audit.slice(0,30).map((entry) => `
+          <div class="editor-audit-row">
+            <strong>${escapeEditorAttribute(entry.actor_display_name || "Staff")}</strong>
+            <span>${escapeEditorAttribute(String(entry.action || "").replaceAll("_", " "))}</span>
+            <small>${escapeEditorAttribute(formatTime(entry.created_at))}</small>
+          </div>
+        `).join("") : `<div class="editor-inspector-empty">No audit events loaded.</div>`}
+      </div>
+    </section>
+  `;
+}
+
+function editorPagesMarkup() {
+  const query = String(state.editorPageSearch || "").trim().toLowerCase();
+  const pages = editorPageOptions().filter((item) =>
+    !query ||
+    item.label.toLowerCase().includes(query) ||
+    item.path.toLowerCase().includes(query)
+  );
+
+  return `
+    <div class="editor-pages-search">
+      <input id="editor-page-search" type="search" value="${escapeEditorAttribute(state.editorPageSearch || "")}" placeholder="Search pages…" aria-label="Search website pages">
+    </div>
+    <div class="editor-page-list">
+      ${pages.slice(0,120).map((item) => `
+        <button type="button" class="${state.editorPage === item.path ? "is-active" : ""}" data-editor-page-jump="${escapeEditorAttribute(item.path)}">
+          <strong>${escapeEditorAttribute(item.label)}</strong>
+          <small>${escapeEditorAttribute(item.path)}</small>
+        </button>
+      `).join("")}
+    </div>
+  `;
+}
+
+function editorInspectorMarkup(editable) {
+  const tab = state.editorInspectorTab;
+  const tabs = [
+    ["inspector", "Inspect"],
+    ["pages", "Pages"],
+    ["layers", "Layers"],
+    ["assets", "Assets"],
+    ["site", "Site"],
+    ["history", "History"]
+  ];
+
+  let body = "";
+  if (tab === "pages") body = editorPagesMarkup();
+  else if (tab === "layers") body = editorLayoutMarkup(editable);
+  else if (tab === "assets") body = editorAssetsMarkup(editable);
+  else if (tab === "site") {
+    body = `
+      <section class="editor-inspector-section">
+        <div class="editor-inspector-heading"><strong>Selected colours</strong><small id="editor-colour-count">No colours found</small></div>
+        <div id="editor-colour-swatches" class="editor-colour-swatches"></div>
+        <div class="editor-colour-actions">
+          <button id="editor-eyedropper" type="button">Eyedropper</button>
+          <button id="editor-copy-colour" type="button">Copy selected</button>
+        </div>
+        <div class="editor-picked-colour">
+          <span id="editor-picked-colour-swatch"></span>
+          <code id="editor-picked-colour-value">${escapeEditorAttribute(state.editorPickedColour || "No colour selected")}</code>
+          <button id="editor-apply-picked-accent" type="button" ${editable && state.editorPickedColour ? "" : "disabled"}>Use as site accent</button>
+        </div>
+      </section>
+      ${editorNavigationMarkup(editable)}
+      ${editorBannerMarkup(editable)}
+    `;
+  } else if (tab === "history") body = editorHistoryMarkup();
+  else {
+    body = `
+      <section class="editor-inspector-section">
+        <div class="editor-inspector-heading"><strong>Selection</strong><small>Click anything in the preview</small></div>
+        <div id="editor-selected-item" class="editor-selected-item"></div>
+      </section>
+      <section class="editor-inspector-section">
+        <div class="editor-inspector-heading"><strong>Quick actions</strong><small>Source-backed</small></div>
+        <div class="editor-inspector-quick-grid">
+          <button type="button" data-editor-inspector-jump="assets">Assets</button>
+          <button type="button" data-editor-inspector-jump="layers">Layers</button>
+          <button type="button" data-editor-inspector-jump="site">Navigation & banners</button>
+          <button type="button" data-editor-preview-mode="devtools">DevTools</button>
+        </div>
+      </section>
+    `;
+  }
+
+  return `
+    <aside class="editor-inspector">
+      <div class="editor-inspector-tabs" role="tablist" aria-label="Website editor panels">
+        ${tabs.map(([key,label]) => `<button type="button" data-editor-inspector-tab="${key}" class="${tab === key ? "is-active" : ""}">${label}</button>`).join("")}
+      </div>
+      <div class="editor-inspector-content">${body}</div>
+    </aside>
+  `;
+}
+
 function syncElementAttributes(target, source, keep = []) {
   for (const { name } of [...target.attributes]) {
     if (!keep.includes(name) && !source.hasAttribute(name)) target.removeAttribute(name);
