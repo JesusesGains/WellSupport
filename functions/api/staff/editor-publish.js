@@ -39,6 +39,8 @@ const NAVIGATION_PATH = "src/data/navigation.js";
 const LAYOUT_PATH = "src/data/editorLayout.json";
 const MAX_ASSET_BYTES = 6 * 1024 * 1024;
 const MAX_ASSET_TOTAL_BYTES = 20 * 1024 * 1024;
+const MAX_HTML_CHARS = 350000;
+const MAX_CSS_CHARS = 650000;
 
 function cleanText(value, max) {
   return String(value || "").trim().slice(0, max);
@@ -494,6 +496,55 @@ function cleanAssets(value) {
   return output;
 }
 
+
+function cleanSourceFiles(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+  const output = [];
+  let total = 0;
+
+  for (const [rawPath, rawDraft] of Object.entries(value).slice(0, 24)) {
+    const path = String(rawPath || "").trim().replace(/^\/+/, "");
+    if (
+      !path ||
+      path.length > 240 ||
+      path.includes("..") ||
+      !/^[a-z0-9][a-z0-9._/-]*\.(?:html|css)$/i.test(path) ||
+      !rawDraft ||
+      typeof rawDraft !== "object" ||
+      Array.isArray(rawDraft)
+    ) {
+      continue;
+    }
+
+    const kind = path.toLowerCase().endsWith(".css") ? "css" : "html";
+    const content = String(rawDraft.content ?? "");
+    const max = kind === "css" ? MAX_CSS_CHARS : MAX_HTML_CHARS;
+    if (!content.trim() || content.length > max || content.includes("\0")) {
+      const error = new Error(`${kind.toUpperCase()} source for ${path} is empty, invalid, or too large.`);
+      error.status = 400;
+      throw error;
+    }
+
+    total += content.length;
+    if (total > 1_050_000) {
+      const error = new Error("Saved source drafts exceed the publish limit.");
+      error.status = 413;
+      throw error;
+    }
+
+    output.push({
+      path,
+      kind,
+      content,
+      originalSha: /^[0-9a-f]{40}$/i.test(String(rawDraft.originalSha || ""))
+        ? String(rawDraft.originalSha)
+        : ""
+    });
+  }
+
+  return output;
+}
+
 export async function onRequestPost({ request, env }) {
   const blocked = assertSameOrigin(request);
   if (blocked) return blocked;
@@ -597,16 +648,30 @@ export async function onRequestPost({ request, env }) {
     }
 
     const assets = cleanAssets(input.assets);
+    const sourceFiles = cleanSourceFiles(input.sourceDrafts);
     const hasPageChanges = pagePatches.length > 0;
     const hasNavigationChange = Boolean(navigationResult);
     const hasLayoutChange = Boolean(rawLayoutOrders && Object.keys(rawLayoutOrders).length);
     const hasAssets = assets.length > 0;
+    const hasSourceFiles = sourceFiles.length > 0;
 
-    if (!hasPageChanges && !hasBannerChange && !hasNavigationChange && !hasLayoutChange && !hasAssets) {
+    if (!hasPageChanges && !hasBannerChange && !hasNavigationChange && !hasLayoutChange && !hasAssets && !hasSourceFiles) {
       return sessionResponse({ error: "No website changes supplied." }, session, 400);
     }
 
     const files = [];
+
+    for (const sourceFile of sourceFiles) {
+      const currentSource = await readTextFile(env, BETA_BRANCH, sourceFile.path);
+      if (sourceFile.originalSha && currentSource.sha !== sourceFile.originalSha) {
+        const error = new Error(`${sourceFile.path} changed on beta-main while you were editing. Reload before publishing.`);
+        error.status = 409;
+        throw error;
+      }
+      if (String(currentSource.content || "") !== sourceFile.content) {
+        files.push({ path: sourceFile.path, content: sourceFile.content });
+      }
+    }
 
     if (hasPageChanges || hasBannerChange) {
       files.push({
@@ -650,7 +715,8 @@ export async function onRequestPost({ request, env }) {
       navigation_changed: hasNavigationChange,
       layout_changed: hasLayoutChange,
       banner_changed: hasBannerChange,
-      asset_paths: assets.map((asset) => asset.path)
+      asset_paths: assets.map((asset) => asset.path),
+      source_paths: sourceFiles.map((file) => file.path)
     });
 
     return sessionResponse({
@@ -661,7 +727,8 @@ export async function onRequestPost({ request, env }) {
       overrides: nextOverrides,
       navigation: navigationResult,
       layoutOrders: nextLayout,
-      assets: assets.map((asset) => ({ path: asset.path, url: `/${asset.path}` }))
+      assets: assets.map((asset) => ({ path: asset.path, url: `/${asset.path}` })),
+      sourceFiles: sourceFiles.map(({ path, kind }) => ({ path, kind }))
     }, session);
   } catch (error) {
     return sessionResponse(
