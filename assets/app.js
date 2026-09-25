@@ -86,8 +86,10 @@ const state = {
     ogTitle: "",
     ogDescription: "",
     ogImage: "",
+    canonical: "",
     robots: ""
   },
+  editorSeoHydratedKey: "",
   editorColours: [],
   editorSelectedText: null,
   editorSelectedObject: null,
@@ -1138,6 +1140,7 @@ function editorDraftFromConfig(config = {}) {
             ogTitle: String(config.seo.ogTitle || ""),
             ogDescription: String(config.seo.ogDescription || ""),
             ogImage: String(config.seo.ogImage || ""),
+            canonical: String(config.seo.canonical || ""),
             robots: String(config.seo.robots || "")
           }
         : {
@@ -1146,6 +1149,7 @@ function editorDraftFromConfig(config = {}) {
             ogTitle: "",
             ogDescription: "",
             ogImage: "",
+            canonical: "",
             robots: ""
           },
     text:
@@ -2584,6 +2588,32 @@ async function stageEditorProductionRestore(sourceSha) {
   }
 }
 
+function hydrateEditorSeoFromHtml(html, key) {
+  if (!key || state.editorSeoHydratedKey === key) return;
+  state.editorSeoHydratedKey = key;
+
+  const hasDraftSeo = Object.values(state.editorSeoDraft || {}).some((value) =>
+    String(value || "").trim()
+  );
+  if (hasDraftSeo) return;
+
+  try {
+    const doc = new DOMParser().parseFromString(String(html || ""), "text/html");
+    const meta = (selector) => String(doc.querySelector(selector)?.getAttribute("content") || "");
+    state.editorSeoDraft = {
+      title: String(doc.querySelector("title")?.textContent || "").trim(),
+      description: meta('meta[name="description"]'),
+      ogTitle: meta('meta[property="og:title"]'),
+      ogDescription: meta('meta[property="og:description"]'),
+      ogImage: meta('meta[property="og:image"]'),
+      canonical: String(doc.querySelector('link[rel="canonical"]')?.getAttribute("href") || ""),
+      robots: meta('meta[name="robots"]').toLowerCase()
+    };
+  } catch {
+    // Keep the SEO panel empty if the source cannot be parsed.
+  }
+}
+
 async function loadEditorCodeSource({ quiet = false, force = false } = {}) {
   if (!state.editorStatus?.connected || state.editorCodeLoading) return;
 
@@ -2608,6 +2638,7 @@ async function loadEditorCodeSource({ quiet = false, force = false } = {}) {
     );
     state.editorCodeSource = result;
     state.editorCodeSourceKey = key;
+    hydrateEditorSeoFromHtml(result?.html?.content || "", key);
 
     const cssFiles = Array.isArray(result?.css?.files) ? result.css.files : [];
     if (state.editorCodeKind === "css") {
@@ -3361,6 +3392,7 @@ function editorSeoMarkup(editable) {
       </div>
       ${field("title", "Page title", 180, "Title shown in search results")}
       ${field("description", "Meta description", 320, "Describe this page")}
+      ${field("canonical", "Canonical URL", 2000, "https://www.wellcollegeglobal.com/...")}
       <label class="editor-inspector-field">
         <span>Robots</span>
         <select data-editor-seo-field="robots" ${editable ? "" : "disabled"}>
@@ -5169,6 +5201,7 @@ function renderWebEditor() {
     state.editorA11yIssues = [];
     state.editorA11yCheckedAt = "";
     state.editorA11yLoading = false;
+    state.editorSeoHydratedKey = "";
     state.editorCodeSource = null;
     state.editorCodeSourceKey = "";
     state.editorCodeDraft = "";
@@ -5186,6 +5219,13 @@ function renderWebEditor() {
         if (!state.editorVersionHistory.length && !state.editorHistoryLoading) {
           window.setTimeout(() => loadEditorVersionHistory({ quiet: true }), 0);
         }
+      }
+      if (
+        state.editorInspectorTab === "seo" &&
+        !state.editorCodeLoading &&
+        !state.editorCodeSource
+      ) {
+        window.setTimeout(() => loadEditorCodeSource({ quiet: true }), 0);
       }
       renderWebEditor();
       if (state.editorInspectorTab === "audit" && !state.editorA11yCheckedAt) {
@@ -5206,7 +5246,7 @@ function renderWebEditor() {
     const applySeoField = () => {
       if (!editable) return;
       const key = String(input.dataset.editorSeoField || "");
-      if (!["title","description","ogTitle","ogDescription","ogImage","robots"].includes(key)) return;
+      if (!["title","description","ogTitle","ogDescription","ogImage","canonical","robots"].includes(key)) return;
       recordEditorHistory();
       state.editorSeoDraft = {
         ...(state.editorSeoDraft || {}),
