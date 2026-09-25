@@ -307,30 +307,84 @@ function cleanOrderOverrides(value) {
 function cleanElementOverrides(value) {
   if (!Array.isArray(value)) return [];
 
+  const cleanColour = (value, fallback) => {
+    const colour = cleanText(value, 16);
+    return /^#[0-9a-f]{6}$/i.test(colour) ? colour.toUpperCase() : fallback;
+  };
+  const cleanFont = (value) => {
+    const font = cleanText(value, 80);
+    return ["DM Sans", "DM Serif Display", "System Sans"].includes(font)
+      ? font
+      : "DM Sans";
+  };
+
   return value
-    .slice(0, 40)
-    .filter((item) => item && typeof item === "object" && item.type === "text")
+    .slice(0, 60)
+    .filter((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+      return ["text", "image", "button", "section"].includes(String(item.type || ""));
+    })
     .map((item, index) => {
-      const colour = cleanText(item.color, 16);
-      const fontFamily = cleanText(item.fontFamily, 80);
-      const textAlign = cleanText(item.textAlign, 12);
-      return {
-        id: cleanText(item.id, 80) || `text-${index + 1}`,
-        type: "text",
-        text: cleanText(item.text, 4000) || "Text",
+      const type = String(item.type || "text");
+      const base = {
+        id: cleanText(item.id, 80) || `${type}-${index + 1}`,
+        type,
         x: Math.max(0, Math.min(10000, Number(item.x || 0))),
         y: Math.max(0, Math.min(50000, Number(item.y || 0))),
-        width: Math.max(80, Math.min(3000, Number(item.width || 240))),
-        minHeight: Math.max(34, Math.min(2000, Number(item.minHeight || 60))),
-        fontFamily: ["DM Sans", "DM Serif Display", "System Sans"].includes(fontFamily)
-          ? fontFamily
-          : "DM Sans",
+        width: Math.max(40, Math.min(5000, Number(item.width || (type === "section" ? 960 : 240)))),
+        minHeight: Math.max(24, Math.min(4000, Number(item.minHeight || (type === "section" ? 240 : 60))))
+      };
+
+      if (type === "image") {
+        return {
+          ...base,
+          src: cleanResourceValue(item.src, "src"),
+          alt: cleanResourceValue(item.alt, "alt"),
+          objectFit: ["cover", "contain", "fill", "scale-down", "none"].includes(String(item.objectFit || ""))
+            ? String(item.objectFit)
+            : "cover",
+          borderRadius: Math.max(0, Math.min(400, Number(item.borderRadius || 0)))
+        };
+      }
+
+      if (type === "button") {
+        return {
+          ...base,
+          text: cleanText(item.text, 240) || "Button",
+          href: cleanResourceValue(item.href, "href") || "#",
+          fontFamily: cleanFont(item.fontFamily),
+          fontSize: Math.max(8, Math.min(120, Number(item.fontSize || 16))),
+          fontWeight: Math.max(300, Math.min(900, Number(item.fontWeight || 700))),
+          color: cleanColour(item.color, "#FFFFFF"),
+          backgroundColor: cleanColour(item.backgroundColor, "#304660"),
+          borderRadius: Math.max(0, Math.min(240, Number(item.borderRadius || 10))),
+          paddingX: Math.max(0, Math.min(160, Number(item.paddingX || 20))),
+          paddingY: Math.max(0, Math.min(120, Number(item.paddingY || 12)))
+        };
+      }
+
+      if (type === "section") {
+        return {
+          ...base,
+          backgroundColor: cleanColour(item.backgroundColor, "#FFFEFA"),
+          borderRadius: Math.max(0, Math.min(400, Number(item.borderRadius || 0)))
+        };
+      }
+
+      const colour = cleanText(item.color, 16);
+      return {
+        ...base,
+        type: "text",
+        text: cleanText(item.text, 4000) || "Text",
+        fontFamily: cleanFont(item.fontFamily),
         fontSize: Math.max(8, Math.min(120, Number(item.fontSize || 24))),
         fontWeight: Math.max(300, Math.min(900, Number(item.fontWeight || 500))),
         lineHeight: Math.max(.8, Math.min(2.5, Number(item.lineHeight || 1.2))),
         letterSpacing: Math.max(-4, Math.min(20, Number(item.letterSpacing || 0))),
         color: /^#[0-9a-f]{6}$/i.test(colour) ? colour.toUpperCase() : "#304660",
-        textAlign: ["left", "center", "right"].includes(textAlign) ? textAlign : "left"
+        textAlign: ["left", "center", "right"].includes(String(item.textAlign || ""))
+          ? String(item.textAlign)
+          : "left"
       };
     });
 }
