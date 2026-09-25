@@ -1694,6 +1694,9 @@ async function loadEditorLayout({ quiet = false } = {}) {
     if (!quiet) showToast(error?.message || "Unable to load website layout source.", "error");
   } finally {
     state.editorLayoutLoading = false;
+    if (state.currentView === "editor" && state.editorInspectorTab === "layers") {
+      renderWebEditor();
+    }
   }
 }
 
@@ -1712,7 +1715,10 @@ async function loadEditorAssets({ quiet = false } = {}) {
     if (!quiet) showToast(error?.message || "Unable to load website assets.", "error");
   } finally {
     state.editorAssetsLoading = false;
-    if (state.currentView === "editor") postEditorAssetsToPreview();
+    if (state.currentView === "editor") {
+      postEditorAssetsToPreview();
+      if (state.editorInspectorTab === "assets") renderWebEditor();
+    }
   }
 }
 
@@ -1744,9 +1750,19 @@ function editorImageAssetOptions() {
       draft: true
     }));
 
+  const mutationByPath = new Map(
+    (state.editorAssetMutations || []).map((item) => [String(item.path || ""), item])
+  );
+
   const existingOptions = state.editorAssets
     .filter((asset) => asset.kind === "image")
-    .map((asset) => {
+    .flatMap((asset) => {
+      const mutation = mutationByPath.get(asset.path);
+      if (mutation?.action === "delete") return [];
+      const displayedPath =
+        mutation?.action === "rename" && mutation.nextPath
+          ? mutation.nextPath
+          : asset.path;
       const previews = [...new Set(
         [
           ...(Array.isArray(asset.previewUrls) ? asset.previewUrls : []),
@@ -1755,14 +1771,16 @@ function editorImageAssetOptions() {
         ].filter(Boolean)
       )];
 
-      return {
-        path: asset.path,
-        value: `/${asset.path}`,
+      return [{
+        path: displayedPath,
+        sourcePath: asset.path,
+        value: `/${displayedPath}`,
         preview: previews[0] || "",
         previews,
-        name: asset.name || asset.path.split("/").pop() || "Image",
-        draft: false
-      };
+        name: displayedPath.split("/").pop() || asset.name || "Image",
+        draft: false,
+        renamed: displayedPath !== asset.path
+      }];
     });
 
   const seen = new Set();
@@ -2072,6 +2090,9 @@ async function loadEditorNavigation({ quiet = false } = {}) {
     }
   } finally {
     state.editorNavigationLoading = false;
+    if (state.currentView === "editor" && state.editorInspectorTab === "site") {
+      renderWebEditor();
+    }
   }
 }
 
@@ -3152,8 +3173,8 @@ function editorAssetsMarkup(editable) {
           <div class="editor-asset-actions">
             <button type="button" data-editor-asset-copy="${escapeEditorAttribute(asset.value)}">Copy</button>
             <button type="button" data-editor-asset-use="${escapeEditorAttribute(asset.value)}" ${editable ? "" : "disabled"}>Use</button>
-            <button type="button" data-editor-asset-rename="${escapeEditorAttribute(asset.path)}" ${editable && !asset.draft ? "" : "disabled"}>Rename</button>
-            <button type="button" data-editor-asset-delete="${escapeEditorAttribute(asset.path)}" ${editable ? "" : "disabled"}>Delete</button>
+            <button type="button" data-editor-asset-rename="${escapeEditorAttribute(asset.sourcePath || asset.path)}" ${editable && !asset.draft ? "" : "disabled"}>Rename</button>
+            <button type="button" data-editor-asset-delete="${escapeEditorAttribute(asset.sourcePath || asset.path)}" ${editable ? "" : "disabled"}>Delete</button>
           </div>
         </article>
       `).join("")}
