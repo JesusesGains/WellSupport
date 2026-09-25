@@ -3529,7 +3529,7 @@ function renderWebEditor() {
               class="editor-topbar-button is-primary"
               type="button"
               ${editable && state.editorCodeDirty && !state.editorCodeSaving ? "" : "disabled"}
-            >${state.editorCodeSaving ? "Building preview…" : "Save code to beta preview"}</button>
+            >${state.editorCodeSaving ? "Saving draft…" : "Save draft"}</button>
           ` : `
             <button
               id="web-editor-preview-submit"
@@ -3572,13 +3572,31 @@ function renderWebEditor() {
                   <span>${escapeEditorAttribute(editorCodeFileLabel())}</span>
                   <b class="${state.editorMode === "beta" ? "is-beta" : ""}">${state.editorMode === "beta" ? "BETA HTML" : "LIVE HTML"}</b>
                 </div>
-                <div class="editor-code-meta">
-                  <span>HTML</span>
+                <div class="editor-code-meta is-source-tabs">
+                  <div class="editor-code-source-tabs" role="tablist" aria-label="Source files">
+                    <button type="button" data-editor-code-kind="html" class="${state.editorCodeKind === "html" ? "is-active" : ""}">HTML</button>
+                    ${(Array.isArray(state.editorCodeSource?.css?.files) ? state.editorCodeSource.css.files : []).map((file) => `
+                      <button
+                        type="button"
+                        data-editor-code-kind="css"
+                        data-editor-css-path="${escapeEditorAttribute(file.path || "")}"
+                        class="${state.editorCodeKind === "css" && state.editorCodeCssPath === file.path ? "is-active" : ""}"
+                      >${escapeEditorAttribute((file.path || "CSS").split("/").pop())}</button>
+                    `).join("")}
+                  </div>
                   <small>${state.editorMode === "beta"
                     ? state.editorCodeDirty
-                      ? "Unsaved source changes · save to build a new beta preview"
-                      : "beta-main source · editable"
+                      ? state.editorAutosaveEnabled
+                        ? "Changed · autosave will persist this draft"
+                        : "Changed · use Save to keep this draft across refreshes"
+                      : "Saved source draft · publish beta preview separately"
                     : "main source · read only"}</small>
+                </div>
+                <div class="editor-code-searchbar">
+                  <input id="editor-code-find" type="search" placeholder="Find…" aria-label="Find in source">
+                  <button id="editor-code-find-next" type="button">Find next</button>
+                  <input id="editor-code-replace" type="text" placeholder="Replace…" aria-label="Replace in source" ${editable ? "" : "disabled"}>
+                  <button id="editor-code-replace-next" type="button" ${editable ? "" : "disabled"}>Replace</button>
                 </div>
                 <div class="editor-code-editor">
                   <pre id="editor-code-highlight" class="editor-code-highlight" aria-hidden="true"><code>${state.editorCodeLoading
