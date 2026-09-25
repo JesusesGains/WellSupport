@@ -283,6 +283,17 @@ function cleanStyleOverrides(value) {
   return output;
 }
 
+function cleanResponsiveStyleOverrides(value) {
+  const input =
+    value && typeof value === "object" && !Array.isArray(value)
+      ? value
+      : {};
+  return {
+    tablet: cleanStyleOverrides(input.tablet),
+    mobile: cleanStyleOverrides(input.mobile)
+  };
+}
+
 function cleanOrderOverrides(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
 
@@ -398,6 +409,7 @@ function normalisePagePatch(raw) {
   const text = cleanTextOverrides(input.text);
   const attributes = cleanAttributeOverrides(input.attributes);
   const styles = cleanStyleOverrides(input.styles);
+  const responsiveStyles = cleanResponsiveStyleOverrides(input.responsiveStyles);
   const order = cleanOrderOverrides(input.order);
   const elements = cleanElementOverrides(input.elements);
 
@@ -413,7 +425,7 @@ function normalisePagePatch(raw) {
   }
 
   return {
-    heading, copy, accent, font, text, attributes, styles, order, elements,
+    heading, copy, accent, font, text, attributes, styles, responsiveStyles, order, elements,
     supplied: {
       heading: Object.prototype.hasOwnProperty.call(input, "heading"),
       copy: Object.prototype.hasOwnProperty.call(input, "copy"),
@@ -422,6 +434,7 @@ function normalisePagePatch(raw) {
       text: Object.prototype.hasOwnProperty.call(input, "text"),
       attributes: Object.prototype.hasOwnProperty.call(input, "attributes"),
       styles: Object.prototype.hasOwnProperty.call(input, "styles"),
+      responsiveStyles: Object.prototype.hasOwnProperty.call(input, "responsiveStyles"),
       order: Object.prototype.hasOwnProperty.call(input, "order"),
       elements: Object.prototype.hasOwnProperty.call(input, "elements")
     }
@@ -451,6 +464,13 @@ function applyPagePatch(existing, patch) {
   if (patch.supplied.styles) {
     if (Object.keys(patch.styles).length) config.styles = patch.styles;
     else delete config.styles;
+  }
+  if (patch.supplied.responsiveStyles) {
+    const hasResponsive =
+      Object.keys(patch.responsiveStyles.tablet || {}).length ||
+      Object.keys(patch.responsiveStyles.mobile || {}).length;
+    if (hasResponsive) config.responsiveStyles = patch.responsiveStyles;
+    else delete config.responsiveStyles;
   }
   if (patch.supplied.order) {
     if (Object.keys(patch.order).length) config.order = patch.order;
