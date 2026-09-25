@@ -80,6 +80,18 @@ function cleanSourceDrafts(value) {
   return output;
 }
 
+function cleanAssetMutations(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .slice(0, 30)
+    .map((item) => ({
+      action: item?.action === "rename" ? "rename" : item?.action === "delete" ? "delete" : "",
+      path: String(item?.path || "").trim().slice(0, 240),
+      nextPath: String(item?.nextPath || "").trim().slice(0, 240)
+    }))
+    .filter((item) => item.action && item.path.startsWith("assets/"));
+}
+
 function cleanWorkspaceState(input) {
   return {
     pages: cleanPages(input.pages),
@@ -89,6 +101,7 @@ function cleanWorkspaceState(input) {
       input.banner && typeof input.banner === "object" && !Array.isArray(input.banner)
         ? input.banner
         : {},
+    assetMutations: cleanAssetMutations(input.assetMutations),
     sourceDrafts: cleanSourceDrafts(input.sourceDrafts)
   };
 }
