@@ -4188,7 +4188,7 @@ function renderWebEditor() {
           >
         </label>
       `;
-    } else {
+    } else if (tag === "a") {
       selectedItem.innerHTML = `
         <div class="editor-selection-summary">
           <span class="editor-selection-type">Link</span>
@@ -4206,6 +4206,99 @@ function renderWebEditor() {
           <small class="editor-selection-field-hint">Choose a Well College page. The link updates instantly in the live draft.</small>
         </label>
       `;
+    } else {
+      selectedItem.innerHTML = `
+        <div class="editor-selection-summary">
+          <span class="editor-selection-type">Container</span>
+          <strong>${escapeEditorAttribute(tag || "Element")} selected</strong>
+          <small>Use the layout and style controls below. Shift-click in the preview selects a parent container.</small>
+        </div>
+      `;
+    }
+
+    const activeSelector = String(selectedText?.selector || selectedObject?.selector || "");
+    if (activeSelector) {
+      const styles = state.editorStyleDrafts?.[activeSelector] || {};
+      const pxValue = (name) => {
+        const match = String(styles[name] || "").match(/^(-?\d+(?:\.\d+)?)px$/i);
+        return match ? match[1] : "";
+      };
+      const value = (name) => escapeEditorAttribute(String(styles[name] || ""));
+      selectedItem.insertAdjacentHTML("beforeend", `
+        <div class="editor-selection-style-panel">
+          <div class="editor-selection-style-title"><strong>Style</strong><small>Draft only until beta publish</small></div>
+          <div class="editor-style-grid">
+            <label><span>Text</span><input type="color" data-editor-style-field="color" value="${/^#[0-9a-f]{6}$/i.test(styles.color || "") ? value("color") : "#304660"}" ${editable ? "" : "disabled"}></label>
+            <label><span>Background</span><input type="color" data-editor-style-field="backgroundColor" value="${/^#[0-9a-f]{6}$/i.test(styles.backgroundColor || "") ? value("backgroundColor") : "#FFFFFF"}" ${editable ? "" : "disabled"}></label>
+            <label><span>Font px</span><input type="number" min="8" max="240" data-editor-style-field="fontSize" data-editor-style-unit="px" value="${pxValue("fontSize")}" placeholder="site" ${editable ? "" : "disabled"}></label>
+            <label><span>Weight</span><select data-editor-style-field="fontWeight" ${editable ? "" : "disabled"}>
+              <option value="">Site</option>
+              ${[300,400,500,600,700,800,900].map((weight) => `<option value="${weight}" ${String(styles.fontWeight || "") === String(weight) ? "selected" : ""}>${weight}</option>`).join("")}
+            </select></label>
+            <label><span>Line height</span><input type="number" min=".7" max="4" step=".1" data-editor-style-field="lineHeight" value="${value("lineHeight")}" placeholder="site" ${editable ? "" : "disabled"}></label>
+            <label><span>Letter px</span><input type="number" min="-20" max="80" step=".5" data-editor-style-field="letterSpacing" data-editor-style-unit="px" value="${pxValue("letterSpacing")}" placeholder="site" ${editable ? "" : "disabled"}></label>
+            <label><span>Align</span><select data-editor-style-field="textAlign" ${editable ? "" : "disabled"}>
+              ${[["","Site"],["left","Left"],["center","Center"],["right","Right"],["justify","Justify"]].map(([option,label]) => `<option value="${option}" ${String(styles.textAlign || "") === option ? "selected" : ""}>${label}</option>`).join("")}
+            </select></label>
+            <label><span>Opacity</span><input type="number" min="0" max="1" step=".05" data-editor-style-field="opacity" value="${value("opacity")}" placeholder="1" ${editable ? "" : "disabled"}></label>
+          </div>
+          <div class="editor-selection-style-title"><strong>Size & spacing</strong><small>px</small></div>
+          <div class="editor-style-grid">
+            ${["width","height","minHeight","paddingTop","paddingRight","paddingBottom","paddingLeft","marginTop","marginRight","marginBottom","marginLeft","gap","borderRadius","borderWidth"].map((name) => `
+              <label><span>${escapeEditorAttribute(name.replace(/([A-Z])/g, " $1"))}</span><input type="number" min="0" max="5000" data-editor-style-field="${name}" data-editor-style-unit="px" value="${pxValue(name)}" placeholder="site" ${editable ? "" : "disabled"}></label>
+            `).join("")}
+          </div>
+          <div class="editor-selection-style-title"><strong>Layout</strong><small>advanced</small></div>
+          <div class="editor-style-grid">
+            <label><span>Display</span><select data-editor-style-field="display" ${editable ? "" : "disabled"}>
+              ${[["","Site"],["block","Block"],["inline","Inline"],["inline-block","Inline block"],["flex","Flex"],["grid","Grid"],["none","Hidden"]].map(([option,label]) => `<option value="${option}" ${String(styles.display || "") === option ? "selected" : ""}>${label}</option>`).join("")}
+            </select></label>
+            <label><span>Direction</span><select data-editor-style-field="flexDirection" ${editable ? "" : "disabled"}>
+              ${[["","Site"],["row","Row"],["column","Column"],["row-reverse","Row reverse"],["column-reverse","Column reverse"]].map(([option,label]) => `<option value="${option}" ${String(styles.flexDirection || "") === option ? "selected" : ""}>${label}</option>`).join("")}
+            </select></label>
+            <label><span>Justify</span><select data-editor-style-field="justifyContent" ${editable ? "" : "disabled"}>
+              ${[["","Site"],["flex-start","Start"],["center","Center"],["flex-end","End"],["space-between","Space between"],["space-around","Space around"]].map(([option,label]) => `<option value="${option}" ${String(styles.justifyContent || "") === option ? "selected" : ""}>${label}</option>`).join("")}
+            </select></label>
+            <label><span>Align items</span><select data-editor-style-field="alignItems" ${editable ? "" : "disabled"}>
+              ${[["","Site"],["flex-start","Start"],["center","Center"],["flex-end","End"],["stretch","Stretch"]].map(([option,label]) => `<option value="${option}" ${String(styles.alignItems || "") === option ? "selected" : ""}>${label}</option>`).join("")}
+            </select></label>
+            <label><span>Border</span><select data-editor-style-field="borderStyle" ${editable ? "" : "disabled"}>
+              ${[["","Site"],["none","None"],["solid","Solid"],["dashed","Dashed"],["dotted","Dotted"]].map(([option,label]) => `<option value="${option}" ${String(styles.borderStyle || "") === option ? "selected" : ""}>${label}</option>`).join("")}
+            </select></label>
+            <label><span>Border colour</span><input type="color" data-editor-style-field="borderColor" value="${/^#[0-9a-f]{6}$/i.test(styles.borderColor || "") ? value("borderColor") : "#304660"}" ${editable ? "" : "disabled"}></label>
+          </div>
+          <label class="editor-selection-field"><span>Box shadow</span><input type="text" data-editor-style-field="boxShadow" value="${value("boxShadow")}" placeholder="e.g. 0 8px 24px rgba(0,0,0,.12)" ${editable ? "" : "disabled"}></label>
+        </div>
+      `);
+
+      selectedItem.querySelectorAll("[data-editor-style-field]").forEach((input) => {
+        input.addEventListener("focus", () => {
+          if (!input.dataset.historyCaptured) {
+            recordEditorHistory();
+            input.dataset.historyCaptured = "1";
+          }
+        });
+
+        const applyStyleField = () => {
+          if (!editable || !activeSelector) return;
+          const name = String(input.dataset.editorStyleField || "");
+          const unit = String(input.dataset.editorStyleUnit || "");
+          const raw = String(input.value || "").trim();
+          const nextValue = raw && unit ? `${raw}${unit}` : raw;
+          state.editorStyleDrafts = {
+            ...state.editorStyleDrafts,
+            [activeSelector]: {
+              ...(state.editorStyleDrafts[activeSelector] || {}),
+              [name]: nextValue
+            }
+          };
+          setDirty();
+          postDraft();
+        };
+
+        input.addEventListener("input", applyStyleField);
+        if (input.tagName === "SELECT") input.addEventListener("change", applyStyleField);
+      });
     }
 
     selectedItem.querySelectorAll("[data-editor-object-field]").forEach((input) => {
