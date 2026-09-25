@@ -9,6 +9,7 @@ import {
   BETA_BRANCH,
   compareBranches,
   commitFiles,
+  readBase64File,
   readOverrides,
   readTextFile
 } from "./_github.js";
@@ -803,6 +804,30 @@ function cleanSourceFiles(value) {
   return output;
 }
 
+function cleanAssetMutations(value) {
+  if (!Array.isArray(value)) return [];
+  const safePath = (value) => {
+    const path = String(value || "").trim();
+    if (
+      !path.startsWith("assets/") ||
+      path.includes("..") ||
+      path.length > 240 ||
+      !/^[a-z0-9][a-z0-9._/-]*\.(?:png|jpe?g|webp|gif|svg|avif|mp4|webm|mov|pdf)$/i.test(path)
+    ) return "";
+    return path;
+  };
+
+  const output = [];
+  for (const raw of value.slice(0, 30)) {
+    const action = raw?.action === "rename" ? "rename" : raw?.action === "delete" ? "delete" : "";
+    const path = safePath(raw?.path);
+    const nextPath = action === "rename" ? safePath(raw?.nextPath) : "";
+    if (!action || !path || (action === "rename" && (!nextPath || nextPath === path))) continue;
+    output.push({ action, path, nextPath });
+  }
+  return output;
+}
+
 export async function onRequestPost({ request, env }) {
   const blocked = assertSameOrigin(request);
   if (blocked) return blocked;
@@ -906,14 +931,16 @@ export async function onRequestPost({ request, env }) {
     }
 
     const assets = cleanAssets(input.assets);
+    const assetMutations = cleanAssetMutations(input.assetMutations);
     const sourceFiles = cleanSourceFiles(input.sourceDrafts);
     const hasPageChanges = pagePatches.length > 0;
     const hasNavigationChange = Boolean(navigationResult);
     const hasLayoutChange = Boolean(rawLayoutOrders && Object.keys(rawLayoutOrders).length);
     const hasAssets = assets.length > 0;
+    const hasAssetMutations = assetMutations.length > 0;
     const hasSourceFiles = sourceFiles.length > 0;
 
-    if (!hasPageChanges && !hasBannerChange && !hasNavigationChange && !hasLayoutChange && !hasAssets && !hasSourceFiles) {
+    if (!hasPageChanges && !hasBannerChange && !hasNavigationChange && !hasLayoutChange && !hasAssets && !hasAssetMutations && !hasSourceFiles) {
       return sessionResponse({ error: "No website changes supplied." }, session, 400);
     }
 
@@ -970,6 +997,26 @@ export async function onRequestPost({ request, env }) {
       });
     }
 
+    for (const mutation of assetMutations) {
+      if (mutation.action === "delete") {
+        files.push({ path: mutation.path, delete: true });
+        continue;
+      }
+
+      const source = await readBase64File(env, BETA_BRANCH, mutation.path);
+      if (!source?.contentBase64) {
+        const error = new Error(`Unable to read ${mutation.path} for rename.`);
+        error.status = 409;
+        throw error;
+      }
+      files.push({
+        path: mutation.nextPath,
+        content: source.contentBase64,
+        encoding: "base64"
+      });
+      files.push({ path: mutation.path, delete: true });
+    }
+
     for (const asset of assets) {
       files.push({
         path: asset.path,
@@ -992,6 +1039,7 @@ export async function onRequestPost({ request, env }) {
       layout_changed: hasLayoutChange,
       banner_changed: hasBannerChange,
       asset_paths: assets.map((asset) => asset.path),
+      asset_mutations: assetMutations,
       source_paths: sourceFiles.map((file) => file.path)
     });
 
@@ -1004,6 +1052,7 @@ export async function onRequestPost({ request, env }) {
       navigation: navigationResult,
       layoutOrders: nextLayout,
       assets: assets.map((asset) => ({ path: asset.path, url: `/${asset.path}` })),
+      assetMutations,
       sourceFiles: sourceFiles.map(({ path, kind }) => ({ path, kind }))
     }, session);
   } catch (error) {
