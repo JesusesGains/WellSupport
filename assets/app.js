@@ -71,6 +71,7 @@ const state = {
   editorTextDrafts: {},
   editorAttributeDrafts: {},
   editorStyleDrafts: {},
+  editorResponsiveStyleDrafts: { tablet: {}, mobile: {} },
   editorOrderDrafts: {},
   editorElementDrafts: [],
   editorTool: "select",
@@ -1057,6 +1058,30 @@ function cloneEditorStyleDrafts(value) {
   );
 }
 
+function cloneEditorResponsiveStyleDrafts(value) {
+  const source =
+    value && typeof value === "object" && !Array.isArray(value)
+      ? value
+      : {};
+  return {
+    tablet: cloneEditorStyleDrafts(source.tablet),
+    mobile: cloneEditorStyleDrafts(source.mobile)
+  };
+}
+
+function resolvedEditorStyleDraftsForDevice(device = state.editorDevice) {
+  const base = cloneEditorStyleDrafts(state.editorStyleDrafts);
+  const responsive = cloneEditorResponsiveStyleDrafts(state.editorResponsiveStyleDrafts);
+  const merge = (target, addition) => {
+    for (const [selector, styles] of Object.entries(addition || {})) {
+      target[selector] = { ...(target[selector] || {}), ...(styles || {}) };
+    }
+  };
+  if (device === "tablet" || device === "mobile") merge(base, responsive.tablet);
+  if (device === "mobile") merge(base, responsive.mobile);
+  return base;
+}
+
 
 function cloneEditorOrderDrafts(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
@@ -1097,6 +1122,7 @@ function editorDraftFromConfig(config = {}) {
         : {},
     attributes: cloneEditorAttributeDrafts(config.attributes),
     styles: cloneEditorStyleDrafts(config.styles),
+    responsiveStyles: cloneEditorResponsiveStyleDrafts(config.responsiveStyles),
     order: cloneEditorOrderDrafts(config.order),
     elements: cloneEditorElementDrafts(config.elements)
   };
@@ -1111,6 +1137,7 @@ function currentEditorDraftSnapshot() {
     text: { ...state.editorTextDrafts },
     attributes: cloneEditorAttributeDrafts(state.editorAttributeDrafts),
     styles: cloneEditorStyleDrafts(state.editorStyleDrafts),
+    responsiveStyles: cloneEditorResponsiveStyleDrafts(state.editorResponsiveStyleDrafts),
     order: cloneEditorOrderDrafts(state.editorOrderDrafts),
     elements: cloneEditorElementDrafts(state.editorElementDrafts)
   };
@@ -1125,6 +1152,7 @@ function applyEditorDraftSnapshot(snapshot = {}) {
   state.editorTextDrafts = draft.text;
   state.editorAttributeDrafts = draft.attributes;
   state.editorStyleDrafts = draft.styles;
+  state.editorResponsiveStyleDrafts = cloneEditorResponsiveStyleDrafts(draft.responsiveStyles);
   state.editorOrderDrafts = draft.order;
   state.editorElementDrafts = draft.elements;
 }
@@ -1723,7 +1751,9 @@ function currentEditorPreviewPayload() {
     font: state.editorFontDraft || "",
     text: { ...state.editorTextDrafts },
     attributes: cloneEditorAttributeDrafts(state.editorAttributeDrafts),
-    styles: cloneEditorStyleDrafts(state.editorStyleDrafts),
+    styles: resolvedEditorStyleDraftsForDevice(state.editorDevice),
+    responsiveStyles: cloneEditorResponsiveStyleDrafts(state.editorResponsiveStyleDrafts),
+    previewDevice: state.editorDevice,
     order: cloneEditorOrderDrafts(state.editorOrderDrafts),
     elements: cloneEditorElementDrafts(state.editorElementDrafts),
     linkDestinations: EDITOR_LINK_DESTINATIONS.map(([href, label]) => ({ href, label })),
@@ -4225,7 +4255,7 @@ function renderWebEditor() {
 
     const activeSelector = String(selectedText?.selector || selectedObject?.selector || "");
     if (activeSelector) {
-      const styles = state.editorStyleDrafts?.[activeSelector] || {};
+      const styles = resolvedEditorStyleDraftsForDevice(state.editorDevice)?.[activeSelector] || {};
       const pxValue = (name) => {
         const match = String(styles[name] || "").match(/^(-?\d+(?:\.\d+)?)px$/i);
         return match ? match[1] : "";
@@ -4233,7 +4263,7 @@ function renderWebEditor() {
       const value = (name) => escapeEditorAttribute(String(styles[name] || ""));
       selectedItem.insertAdjacentHTML("beforeend", `
         <div class="editor-selection-style-panel">
-          <div class="editor-selection-style-title"><strong>Style</strong><small>Draft only until beta publish</small></div>
+          <div class="editor-selection-style-title"><strong>Style · ${escapeEditorAttribute(state.editorDevice === "mobile" ? "Phone" : state.editorDevice === "tablet" ? "Tablet" : "Desktop")}</strong><small>${state.editorDevice === "desktop" ? "Base style" : "Breakpoint override"}</small></div>
           <div class="editor-style-grid">
             <label><span>Text</span><input type="color" data-editor-style-field="color" value="${/^#[0-9a-f]{6}$/i.test(styles.color || "") ? value("color") : "#304660"}" ${editable ? "" : "disabled"}></label>
             <label><span>Background</span><input type="color" data-editor-style-field="backgroundColor" value="${/^#[0-9a-f]{6}$/i.test(styles.backgroundColor || "") ? value("backgroundColor") : "#FFFFFF"}" ${editable ? "" : "disabled"}></label>
@@ -4292,13 +4322,26 @@ function renderWebEditor() {
           const unit = String(input.dataset.editorStyleUnit || "");
           const raw = String(input.value || "").trim();
           const nextValue = raw && unit ? `${raw}${unit}` : raw;
-          state.editorStyleDrafts = {
-            ...state.editorStyleDrafts,
-            [activeSelector]: {
-              ...(state.editorStyleDrafts[activeSelector] || {}),
-              [name]: nextValue
-            }
-          };
+          if (state.editorDevice === "desktop") {
+            state.editorStyleDrafts = {
+              ...state.editorStyleDrafts,
+              [activeSelector]: {
+                ...(state.editorStyleDrafts[activeSelector] || {}),
+                [name]: nextValue
+              }
+            };
+          } else {
+            const breakpoint = state.editorDevice === "mobile" ? "mobile" : "tablet";
+            const responsive = cloneEditorResponsiveStyleDrafts(state.editorResponsiveStyleDrafts);
+            responsive[breakpoint] = {
+              ...responsive[breakpoint],
+              [activeSelector]: {
+                ...(responsive[breakpoint]?.[activeSelector] || {}),
+                [name]: nextValue
+              }
+            };
+            state.editorResponsiveStyleDrafts = responsive;
+          }
           setDirty();
           postDraft();
         };
@@ -4715,13 +4758,26 @@ function renderWebEditor() {
       if (!Object.keys(nextStyles).length) return;
 
       recordEditorHistory();
-      state.editorStyleDrafts = {
-        ...state.editorStyleDrafts,
-        [selector]: {
-          ...(state.editorStyleDrafts[selector] || {}),
-          ...nextStyles
-        }
-      };
+      if (state.editorDevice === "desktop") {
+        state.editorStyleDrafts = {
+          ...state.editorStyleDrafts,
+          [selector]: {
+            ...(state.editorStyleDrafts[selector] || {}),
+            ...nextStyles
+          }
+        };
+      } else {
+        const breakpoint = state.editorDevice === "mobile" ? "mobile" : "tablet";
+        const responsive = cloneEditorResponsiveStyleDrafts(state.editorResponsiveStyleDrafts);
+        responsive[breakpoint] = {
+          ...responsive[breakpoint],
+          [selector]: {
+            ...(responsive[breakpoint]?.[selector] || {}),
+            ...nextStyles
+          }
+        };
+        state.editorResponsiveStyleDrafts = responsive;
+      }
       storeCurrentEditorDraft();
       state.editorDirty = editorPendingChangeCount() > 0;
 
@@ -5266,6 +5322,8 @@ function renderWebEditor() {
         item.setAttribute("aria-pressed", String(active));
       });
       syncPreviewViewport();
+      postDraft();
+      renderSelectedItem();
     });
   });
 
