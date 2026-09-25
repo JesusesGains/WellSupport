@@ -123,6 +123,7 @@ const state = {
   editorAssetDrafts: [],
   editorAssetUploadBusy: false,
   editorAssetUploadTargetSelector: "",
+  editorAssetSavedSignature: "[]",
   editorPreviewMode: "visual",
   editorCodeSource: null,
   editorCodeSourceKey: "",
@@ -1839,6 +1840,110 @@ function postEditorAssetsToPreview() {
   }
 }
 
+const EDITOR_ASSET_DRAFT_DB = "well-support-editor-drafts";
+const EDITOR_ASSET_DRAFT_STORE = "asset-drafts";
+
+function editorAssetDraftSignature() {
+  return JSON.stringify(
+    (state.editorAssetDrafts || []).map((asset) => ({
+      path: String(asset.path || ""),
+      name: String(asset.name || ""),
+      type: String(asset.type || ""),
+      size: Number(asset.size || 0)
+    }))
+  );
+}
+
+function openEditorAssetDraftDb() {
+  if (!("indexedDB" in window)) return Promise.resolve(null);
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(EDITOR_ASSET_DRAFT_DB, 1);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(EDITOR_ASSET_DRAFT_STORE)) {
+        db.createObjectStore(EDITOR_ASSET_DRAFT_STORE, { keyPath: "workspace" });
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error("Unable to open local asset draft storage."));
+  });
+}
+
+async function persistEditorAssetDrafts(betaSha) {
+  const db = await openEditorAssetDraftDb().catch(() => null);
+  if (!db || !betaSha) return false;
+  try {
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(EDITOR_ASSET_DRAFT_STORE, "readwrite");
+      const store = tx.objectStore(EDITOR_ASSET_DRAFT_STORE);
+      store.put({
+        workspace: betaSha,
+        updatedAt: new Date().toISOString(),
+        assets: (state.editorAssetDrafts || []).map((asset) => ({
+          path: asset.path,
+          name: asset.name,
+          type: asset.type,
+          size: asset.size,
+          contentBase64: asset.contentBase64,
+          previewUrl: asset.previewUrl,
+          publicUrl: asset.publicUrl,
+          kind: asset.kind
+        }))
+      });
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error || new Error("Unable to save local asset drafts."));
+      tx.onabort = () => reject(tx.error || new Error("Unable to save local asset drafts."));
+    });
+    state.editorAssetSavedSignature = editorAssetDraftSignature();
+    return true;
+  } finally {
+    db.close();
+  }
+}
+
+async function loadPersistedEditorAssetDrafts(betaSha) {
+  const db = await openEditorAssetDraftDb().catch(() => null);
+  if (!db || !betaSha) {
+    state.editorAssetSavedSignature = editorAssetDraftSignature();
+    return;
+  }
+  try {
+    const row = await new Promise((resolve, reject) => {
+      const tx = db.transaction(EDITOR_ASSET_DRAFT_STORE, "readonly");
+      const request = tx.objectStore(EDITOR_ASSET_DRAFT_STORE).get(betaSha);
+      request.onsuccess = () => resolve(request.result || null);
+      request.onerror = () => reject(request.error || new Error("Unable to read local asset drafts."));
+    }).catch(() => null);
+
+    if (row && Array.isArray(row.assets) && !state.editorAssetDrafts.length) {
+      state.editorAssetDrafts = row.assets
+        .filter((asset) => asset && asset.path && asset.contentBase64)
+        .slice(0, 12)
+        .map((asset) => ({ ...asset }));
+      state.editorDirty = editorPendingChangeCount() > 0;
+    }
+    state.editorAssetSavedSignature = editorAssetDraftSignature();
+  } finally {
+    db.close();
+  }
+}
+
+async function clearPersistedEditorAssetDrafts(betaSha) {
+  const db = await openEditorAssetDraftDb().catch(() => null);
+  if (!db || !betaSha) return;
+  try {
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(EDITOR_ASSET_DRAFT_STORE, "readwrite");
+      tx.objectStore(EDITOR_ASSET_DRAFT_STORE).delete(betaSha);
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error || new Error("Unable to clear local asset drafts."));
+    }).catch(() => {});
+  } finally {
+    db.close();
+  }
+  state.editorAssetSavedSignature = "[]";
+}
+
 function editorAssetKind(path = "") {
   const value = String(path).toLowerCase();
   if (/\.(png|jpe?g|webp|gif|svg|avif)$/.test(value)) return "image";
@@ -1922,6 +2027,7 @@ async function stageEditorAssetFiles(fileList) {
     if (staged.length) {
       state.editorAssetDrafts = [...state.editorAssetDrafts, ...staged];
       state.editorDirty = editorPendingChangeCount() > 0;
+      markEditorWorkspaceChanged();
       markEditorWorkspaceChanged();
       showToast(
         `${staged.length} asset${staged.length === 1 ? "" : "s"} staged locally. Publish beta preview to upload.`
@@ -2067,6 +2173,7 @@ async function loadSharedEditorDraft({ quiet = false, force = false } = {}) {
   ) return;
 
   try {
+    await loadPersistedEditorAssetDrafts(betaSha);
     const result = await apiRequest("/editor-draft");
     state.editorSharedDraftAvailable = result.available !== false;
     state.editorSharedDraftLoadedSha = betaSha;
@@ -2241,13 +2348,16 @@ function editorWorkspaceSignature() {
 }
 
 function editorUnsavedSessionCount() {
-  if (!state.editorSessionSavedSignature) return 0;
-  if (editorWorkspaceSignature() === state.editorSessionSavedSignature) return 0;
-  return Math.max(
-    1,
-    editorPendingChangeCount() +
-      Object.keys(state.editorSourceDrafts || {}).length
-  );
+  const pending = editorPendingChangeCount();
+  const workspaceChanged =
+    state.editorSessionSavedSignature
+      ? editorWorkspaceSignature() !== state.editorSessionSavedSignature
+      : pending > 0;
+  const assetsChanged =
+    editorAssetDraftSignature() !== (state.editorAssetSavedSignature || "[]");
+
+  if (!workspaceChanged && !assetsChanged) return 0;
+  return Math.max(1, pending);
 }
 
 function refreshEditorSessionChrome() {
@@ -2326,6 +2436,7 @@ async function saveSharedEditorDraft({ quiet = false } = {}) {
   refreshEditorSessionChrome();
 
   try {
+    await persistEditorAssetDrafts(betaSha);
     const workspace = sharedEditorWorkspace();
     const result = await apiRequest("/editor-draft", {
       method: "POST",
@@ -2370,6 +2481,7 @@ async function saveSharedEditorDraft({ quiet = false } = {}) {
 }
 
 async function clearSharedEditorDraft() {
+  const betaSha = state.editorStatus?.beta?.sha || state.editorSharedDraftLoadedSha || "";
   if (state.editorSharedDraftTimer) window.clearTimeout(state.editorSharedDraftTimer);
   state.editorSharedDraftTimer = null;
   try {
@@ -2382,6 +2494,7 @@ async function clearSharedEditorDraft() {
   state.editorSharedDraftConflict = false;
   state.editorSessionSavedAt = "";
   state.editorSessionSavedSignature = editorWorkspaceSignature();
+  await clearPersistedEditorAssetDrafts(betaSha);
   refreshEditorSessionChrome();
 }
 
