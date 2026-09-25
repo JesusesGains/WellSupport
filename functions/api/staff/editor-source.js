@@ -106,7 +106,7 @@ export async function onRequestGet({ request, env }) {
         content: html
       },
       css: {
-        files: cssFiles.map(({ path, sha }) => ({ path, sha })),
+        files: cssFiles.map(({ path, sha, content }) => ({ path, sha, content })),
         content: cssFiles
           .map((file) => `/* ===== ${file.path} ===== */\n${file.content}`)
           .join("\n\n")
