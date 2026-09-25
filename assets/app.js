@@ -3846,15 +3846,21 @@ function renderWebEditor() {
       const file = editorCodeActiveFile();
       const path = editorCodeActivePath();
       if (file && path) {
-        state.editorSourceDrafts = {
-          ...state.editorSourceDrafts,
-          [path]: {
-            path,
-            kind: file.kind,
-            content: state.editorCodeDraft,
-            originalSha: String(file.sha || "")
-          }
-        };
+        if (state.editorCodeDirty) {
+          state.editorSourceDrafts = {
+            ...state.editorSourceDrafts,
+            [path]: {
+              path,
+              kind: file.kind,
+              content: state.editorCodeDraft,
+              originalSha: String(file.sha || "")
+            }
+          };
+        } else {
+          const nextSourceDrafts = { ...state.editorSourceDrafts };
+          delete nextSourceDrafts[path];
+          state.editorSourceDrafts = nextSourceDrafts;
+        }
         state.editorDirty = editorPendingChangeCount() > 0;
         markEditorWorkspaceChanged();
       }
