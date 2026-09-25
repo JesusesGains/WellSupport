@@ -2006,6 +2006,10 @@ async function loadSharedEditorDraft({ quiet = false, force = false } = {}) {
       return;
     }
 
+    if (force && Number(draft.revision || 0) === Number(state.editorSharedDraftRevision || 0)) {
+      return;
+    }
+
     const payload =
       draft.payload && typeof draft.payload === "object" && !Array.isArray(draft.payload)
         ? draft.payload
@@ -4319,7 +4323,7 @@ function renderWebEditor() {
     }
 
     if (event.data.type === "WCG_EDITOR_TOOL_CHANGED") {
-      state.editorTool = ["text-box", "view"].includes(event.data.tool)
+      state.editorTool = ["text-box", "image-box", "button-box", "section-box", "view"].includes(event.data.tool)
         ? event.data.tool
         : "select";
 
@@ -4577,6 +4581,139 @@ function renderWebEditor() {
     renderWebEditor();
   });
 
+  document.querySelectorAll("[data-editor-inspector-tab]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.editorInspectorTab = String(button.dataset.editorInspectorTab || "inspector");
+      sessionStorage.setItem("well-editor-inspector-tab", state.editorInspectorTab);
+      if (state.editorInspectorTab === "history") {
+        state.editorHistoryOpen = true;
+        if (!state.editorVersionHistory.length && !state.editorHistoryLoading) {
+          window.setTimeout(() => loadEditorVersionHistory({ quiet: true }), 0);
+        }
+      }
+      renderWebEditor();
+    });
+  });
+
+  document.querySelectorAll("[data-editor-inspector-jump]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.editorInspectorTab = String(button.dataset.editorInspectorJump || "inspector");
+      sessionStorage.setItem("well-editor-inspector-tab", state.editorInspectorTab);
+      renderWebEditor();
+    });
+  });
+
+  document.querySelector("#editor-page-search")?.addEventListener("input", (event) => {
+    state.editorPageSearch = String(event.target?.value || "");
+    const query = state.editorPageSearch.trim().toLowerCase();
+    document.querySelectorAll("[data-editor-page-jump]").forEach((button) => {
+      const text = button.textContent?.toLowerCase() || "";
+      button.hidden = Boolean(query && !text.includes(query));
+    });
+  });
+
+  document.querySelectorAll("[data-editor-page-jump]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const path = String(button.dataset.editorPageJump || "/");
+      if (!pageSelect) return;
+      if (![...pageSelect.options].some((option) => option.value === path)) {
+        const option = document.createElement("option");
+        option.value = path;
+        option.textContent = button.querySelector("strong")?.textContent || path;
+        pageSelect.appendChild(option);
+      }
+      pageSelect.value = path;
+      pageSelect.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+  });
+
+  document.querySelectorAll("[data-editor-layout-move]").forEach((button) => {
+    button.addEventListener("click", () => {
+      if (!editable) return;
+      const scope = String(button.dataset.editorLayoutMove || "");
+      const index = Number(button.dataset.editorLayoutIndex);
+      const direction = Number(button.dataset.editorLayoutDirection);
+      const order = Array.isArray(state.editorLayoutOrders?.[scope])
+        ? [...state.editorLayoutOrders[scope]]
+        : [];
+      const nextIndex = index + direction;
+      if (!scope || !Number.isInteger(index) || nextIndex < 0 || nextIndex >= order.length) return;
+      [order[index], order[nextIndex]] = [order[nextIndex], order[index]];
+      state.editorLayoutOrders = { ...state.editorLayoutOrders, [scope]: order };
+      state.editorLayoutDirty = true;
+      state.editorDirty = editorPendingChangeCount() > 0;
+      markEditorWorkspaceChanged();
+      postDraft();
+      renderWebEditor();
+    });
+  });
+
+  document.querySelector("#editor-assets-search")?.addEventListener("input", (event) => {
+    const query = String(event.target?.value || "").trim().toLowerCase();
+    document.querySelectorAll(".editor-asset-card").forEach((card) => {
+      const haystack =
+        String(card.dataset.editorAssetName || "") +
+        " " +
+        String(card.textContent || "").toLowerCase();
+      card.hidden = Boolean(query && !haystack.includes(query));
+    });
+  });
+
+  document.querySelector("#editor-assets-upload")?.addEventListener("click", () => {
+    if (!editable) return;
+    state.editorAssetUploadTargetSelector =
+      state.editorSelectedObject?.tag === "img"
+        ? String(state.editorSelectedObject.selector || "")
+        : "";
+    const input = document.querySelector("#editor-assets-input");
+    if (input instanceof HTMLInputElement) {
+      input.value = "";
+      input.click();
+    }
+  });
+
+  document.querySelector("#editor-session-save")?.addEventListener("click", async () => {
+    await saveSharedEditorDraft({ quiet: false });
+  });
+
+  const closeAutosaveConfirm = () => {
+    const modal = document.querySelector("#editor-autosave-modal");
+    if (modal) modal.hidden = true;
+    document.body.classList.remove("has-support-confirm-modal");
+  };
+
+  document.querySelector("#editor-autosave-toggle")?.addEventListener("click", () => {
+    if (state.editorAutosaveEnabled) {
+      state.editorAutosaveEnabled = false;
+      localStorage.setItem("well-editor-autosave", "0");
+      if (state.editorSharedDraftTimer) window.clearTimeout(state.editorSharedDraftTimer);
+      state.editorSharedDraftTimer = null;
+      refreshEditorSessionChrome();
+      showToast("Autosave is off. Use Save to keep draft changes across refreshes.");
+      return;
+    }
+
+    const modal = document.querySelector("#editor-autosave-modal");
+    if (modal) modal.hidden = false;
+    document.body.classList.add("has-support-confirm-modal");
+    window.setTimeout(() => document.querySelector("#confirm-editor-autosave")?.focus(), 0);
+  });
+
+  document.querySelector("#editor-autosave-backdrop")?.addEventListener("click", closeAutosaveConfirm);
+  document.querySelector("#cancel-editor-autosave")?.addEventListener("click", closeAutosaveConfirm);
+  document.querySelector("#confirm-editor-autosave")?.addEventListener("click", async () => {
+    state.editorAutosaveEnabled = true;
+    state.editorAutosaveConfirmed = true;
+    localStorage.setItem("well-editor-autosave", "1");
+    localStorage.setItem("well-editor-autosave-confirmed", "1");
+    closeAutosaveConfirm();
+    refreshEditorSessionChrome();
+    if (editorUnsavedSessionCount()) {
+      await saveSharedEditorDraft({ quiet: true });
+    }
+    showToast("Autosave is on. Draft changes persist across refreshes but are not published.");
+  });
+
   bindEditorNavigationSortable(
     headerOrderList,
     "header",
@@ -4825,7 +4962,7 @@ function renderWebEditor() {
   document.querySelectorAll("[data-editor-preview-mode]").forEach((button) => {
     button.addEventListener("click", () => {
       const requested = button.dataset.editorPreviewMode;
-      const mode = ["visual", "code"].includes(requested)
+      const mode = ["visual", "code", "devtools"].includes(requested)
         ? requested
         : "visual";
       if (mode === state.editorPreviewMode) return;
@@ -4927,7 +5064,9 @@ function renderWebEditor() {
   document.querySelectorAll("[data-editor-tool]").forEach((button) => {
     button.addEventListener("click", () => {
       if (!editable) return;
-      state.editorTool = button.dataset.editorTool === "text-box" ? "text-box" : "select";
+      state.editorTool = ["text-box", "image-box", "button-box", "section-box"].includes(button.dataset.editorTool)
+        ? button.dataset.editorTool
+        : "select";
       document.querySelectorAll("[data-editor-interaction]").forEach((item) => {
         item.classList.toggle("is-active", item.dataset.editorInteraction === "edit");
       });
@@ -5206,6 +5345,18 @@ function renderWebEditor() {
     if (state.editorPreviewMode === "code" && state.editorCodeDirty) {
       scheduleCodeSourcePreview();
     }
+  }
+
+  refreshEditorSessionChrome();
+
+  if (state.editorRemoteDraftTimer) window.clearTimeout(state.editorRemoteDraftTimer);
+  state.editorRemoteDraftTimer = null;
+  if (state.editorMode === "beta" && state.editorSharedDraftAvailable !== false) {
+    state.editorRemoteDraftTimer = window.setTimeout(async () => {
+      state.editorRemoteDraftTimer = null;
+      if (state.currentView !== "editor" || state.editorMode !== "beta") return;
+      await loadSharedEditorDraft({ quiet: true, force: true });
+    }, 2500);
   }
 
   document.dispatchEvent(
