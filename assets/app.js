@@ -80,6 +80,14 @@ const state = {
   editorFontDraft: "",
   editorHeadingDraft: "",
   editorCopyDraft: "",
+  editorSeoDraft: {
+    title: "",
+    description: "",
+    ogTitle: "",
+    ogDescription: "",
+    ogImage: "",
+    robots: ""
+  },
   editorColours: [],
   editorSelectedText: null,
   editorSelectedObject: null,
@@ -1116,6 +1124,24 @@ function editorDraftFromConfig(config = {}) {
     copy: String(config.copy || ""),
     accent: String(config.accent || ""),
     font: String(config.font || ""),
+    seo:
+      config.seo && typeof config.seo === "object" && !Array.isArray(config.seo)
+        ? {
+            title: String(config.seo.title || ""),
+            description: String(config.seo.description || ""),
+            ogTitle: String(config.seo.ogTitle || ""),
+            ogDescription: String(config.seo.ogDescription || ""),
+            ogImage: String(config.seo.ogImage || ""),
+            robots: String(config.seo.robots || "")
+          }
+        : {
+            title: "",
+            description: "",
+            ogTitle: "",
+            ogDescription: "",
+            ogImage: "",
+            robots: ""
+          },
     text:
       config.text && typeof config.text === "object" && !Array.isArray(config.text)
         ? { ...config.text }
@@ -1134,6 +1160,7 @@ function currentEditorDraftSnapshot() {
     copy: state.editorCopyDraft || "",
     accent: state.editorAccentDraft || "",
     font: state.editorFontDraft || "",
+    seo: { ...(state.editorSeoDraft || {}) },
     text: { ...state.editorTextDrafts },
     attributes: cloneEditorAttributeDrafts(state.editorAttributeDrafts),
     styles: cloneEditorStyleDrafts(state.editorStyleDrafts),
@@ -1149,6 +1176,7 @@ function applyEditorDraftSnapshot(snapshot = {}) {
   state.editorCopyDraft = draft.copy;
   state.editorAccentDraft = draft.accent;
   state.editorFontDraft = draft.font;
+  state.editorSeoDraft = { ...(draft.seo || {}) };
   state.editorTextDrafts = draft.text;
   state.editorAttributeDrafts = draft.attributes;
   state.editorStyleDrafts = draft.styles;
@@ -3158,6 +3186,61 @@ function editorPagesMarkup() {
   `;
 }
 
+function editorSeoMarkup(editable) {
+  const seo = state.editorSeoDraft || {};
+  const field = (key, label, max, placeholder = "") => `
+    <label class="editor-inspector-field">
+      <span>${escapeEditorAttribute(label)}</span>
+      <input
+        type="text"
+        data-editor-seo-field="${escapeEditorAttribute(key)}"
+        maxlength="${max}"
+        value="${escapeEditorAttribute(seo[key] || "")}"
+        placeholder="${escapeEditorAttribute(placeholder)}"
+        ${editable ? "" : "disabled"}
+      >
+      <small>${String(seo[key] || "").length}/${max}</small>
+    </label>
+  `;
+
+  return `
+    <section class="editor-inspector-section">
+      <div class="editor-inspector-heading">
+        <strong>Search appearance</strong>
+        <small>Source-backed metadata</small>
+      </div>
+      ${field("title", "Page title", 180, "Title shown in search results")}
+      ${field("description", "Meta description", 320, "Describe this page")}
+      <label class="editor-inspector-field">
+        <span>Robots</span>
+        <select data-editor-seo-field="robots" ${editable ? "" : "disabled"}>
+          ${[
+            ["", "Use site default"],
+            ["index,follow", "Index, follow"],
+            ["index,nofollow", "Index, nofollow"],
+            ["noindex,follow", "Noindex, follow"],
+            ["noindex,nofollow", "Noindex, nofollow"]
+          ].map(([value,label]) => `<option value="${value}" ${String(seo.robots || "") === value ? "selected" : ""}>${label}</option>`).join("")}
+        </select>
+      </label>
+    </section>
+    <section class="editor-inspector-section">
+      <div class="editor-inspector-heading">
+        <strong>Social sharing</strong>
+        <small>Open Graph</small>
+      </div>
+      ${field("ogTitle", "Social title", 180, "Defaults to page title")}
+      ${field("ogDescription", "Social description", 320, "Defaults to meta description")}
+      ${field("ogImage", "Social image URL", 2000, "/assets/... or https://...")}
+      <div class="editor-seo-preview">
+        <small>Preview</small>
+        <strong>${escapeEditorAttribute(seo.ogTitle || seo.title || "Page title")}</strong>
+        <p>${escapeEditorAttribute(seo.ogDescription || seo.description || "Page description will appear here.")}</p>
+      </div>
+    </section>
+  `;
+}
+
 function editorInspectorMarkup(editable) {
   const tab = state.editorInspectorTab;
   const tabs = [
@@ -3165,6 +3248,7 @@ function editorInspectorMarkup(editable) {
     ["pages", "Pages"],
     ["layers", "Layers"],
     ["assets", "Assets"],
+    ["seo", "SEO"],
     ["site", "Site"],
     ["history", "History"]
   ];
@@ -3173,6 +3257,7 @@ function editorInspectorMarkup(editable) {
   if (tab === "pages") body = editorPagesMarkup();
   else if (tab === "layers") body = editorLayoutMarkup(editable);
   else if (tab === "assets") body = editorAssetsMarkup(editable);
+  else if (tab === "seo") body = editorSeoMarkup(editable);
   else if (tab === "site") {
     body = `
       <section class="editor-inspector-section">
@@ -4915,6 +5000,31 @@ function renderWebEditor() {
       sessionStorage.setItem("well-editor-inspector-tab", state.editorInspectorTab);
       renderWebEditor();
     });
+  });
+
+  document.querySelectorAll("[data-editor-seo-field]").forEach((input) => {
+    const applySeoField = () => {
+      if (!editable) return;
+      const key = String(input.dataset.editorSeoField || "");
+      if (!["title","description","ogTitle","ogDescription","ogImage","robots"].includes(key)) return;
+      recordEditorHistory();
+      state.editorSeoDraft = {
+        ...(state.editorSeoDraft || {}),
+        [key]: String(input.value || "")
+      };
+      storeCurrentEditorDraft();
+      state.editorDirty = editorPendingChangeCount() > 0;
+      markEditorWorkspaceChanged();
+
+      const small = input.parentElement?.querySelector("small");
+      if (small && input.maxLength > 0) {
+        small.textContent = `${String(input.value || "").length}/${input.maxLength}`;
+      }
+      const publish = document.querySelector("#web-editor-preview-submit");
+      if (publish) publish.disabled = false;
+    };
+    input.addEventListener("input", applySeoField);
+    if (input.tagName === "SELECT") input.addEventListener("change", applySeoField);
   });
 
   document.querySelector("#editor-page-search")?.addEventListener("input", (event) => {
