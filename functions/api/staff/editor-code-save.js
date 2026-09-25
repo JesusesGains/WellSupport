@@ -35,6 +35,24 @@ function cleanPage(value) {
   return path;
 }
 
+function validateHtmlSource(path, content) {
+  const source = String(content || "");
+  const lower = source.toLowerCase();
+  const required = ["<html", "<head", "<body", "</body", "</html"];
+  if (required.some((token) => !lower.includes(token))) {
+    const error = new Error(`HTML source for ${path} is missing a required document element.`);
+    error.status = 400;
+    throw error;
+  }
+  const openScript = (source.match(/<script\b/gi) || []).length;
+  const closeScript = (source.match(/<\/script\s*>/gi) || []).length;
+  if (openScript !== closeScript) {
+    const error = new Error(`HTML source for ${path} has an unclosed script element.`);
+    error.status = 400;
+    throw error;
+  }
+}
+
 async function betaHead(env) {
   const branch = await githubRequest(
     env,
@@ -76,6 +94,7 @@ export async function onRequestPost({ request, env }) {
   }
 
   try {
+    validateHtmlSource(page, content);
     let currentBetaSha = await betaHead(env);
     if (currentBetaSha !== expectedBetaSha) {
       return sessionResponse(
