@@ -2374,7 +2374,10 @@ async function loadEditorCodeSource({ quiet = false, force = false } = {}) {
     ? state.editorStatus?.beta?.sha || ""
     : state.editorStatus?.main?.sha || ""}`;
 
-  if (!force && state.editorCodeSourceKey === key && state.editorCodeSource) return;
+  if (!force && state.editorCodeSourceKey === key && state.editorCodeSource) {
+    syncActiveCodeDraft();
+    return;
+  }
 
   state.editorCodeLoading = true;
   if (state.currentView === "editor" && state.editorPreviewMode === "code") {
@@ -2387,9 +2390,14 @@ async function loadEditorCodeSource({ quiet = false, force = false } = {}) {
     );
     state.editorCodeSource = result;
     state.editorCodeSourceKey = key;
-    state.editorCodeOriginal = String(result?.html?.content || "");
-    state.editorCodeDraft = state.editorCodeOriginal;
-    state.editorCodeDirty = false;
+
+    const cssFiles = Array.isArray(result?.css?.files) ? result.css.files : [];
+    if (state.editorCodeKind === "css") {
+      const stillExists = cssFiles.some((file) => file.path === state.editorCodeCssPath);
+      if (!stillExists) state.editorCodeCssPath = cssFiles[0]?.path || "";
+      if (!state.editorCodeCssPath) state.editorCodeKind = "html";
+    }
+    syncActiveCodeDraft();
   } catch (error) {
     state.editorCodeSource = {
       error: error?.message || "Unable to load website source."
@@ -2407,16 +2415,63 @@ async function loadEditorCodeSource({ quiet = false, force = false } = {}) {
   }
 }
 
+function editorCodeActiveFile() {
+  if (state.editorCodeKind === "css") {
+    const files = Array.isArray(state.editorCodeSource?.css?.files)
+      ? state.editorCodeSource.css.files
+      : [];
+    const selected =
+      files.find((file) => file.path === state.editorCodeCssPath) ||
+      files[0] ||
+      null;
+    if (selected) return { ...selected, kind: "css" };
+  }
+
+  const html = state.editorCodeSource?.html;
+  return html ? { ...html, kind: "html" } : null;
+}
+
+function editorCodeActivePath() {
+  return String(editorCodeActiveFile()?.path || "");
+}
+
+function syncActiveCodeDraft() {
+  const file = editorCodeActiveFile();
+  if (!file) {
+    state.editorCodeOriginal = "";
+    state.editorCodeDraft = "";
+    state.editorCodeDirty = false;
+    return;
+  }
+
+  const path = String(file.path || "");
+  const original = String(file.content || "");
+  const savedDraft = state.editorSourceDrafts?.[path];
+
+  state.editorCodeOriginal = original;
+  state.editorCodeDraft =
+    savedDraft && typeof savedDraft.content === "string"
+      ? savedDraft.content
+      : original;
+  state.editorCodeDirty = state.editorCodeDraft !== state.editorCodeOriginal;
+}
+
 function editorCodeContent() {
-  return String(
-    state.editorCodeDraft ||
-    state.editorCodeSource?.html?.content ||
-    ""
-  );
+  return String(state.editorCodeDraft ?? "");
 }
 
 function editorCodeFileLabel() {
-  return state.editorCodeSource?.html?.path || "HTML";
+  return editorCodeActiveFile()?.path || (state.editorCodeKind === "css" ? "CSS" : "HTML");
+}
+
+function editorHighlightCode(source) {
+  if (state.editorCodeKind === "css") {
+    return escapeEditorAttribute(String(source || ""))
+      .replace(/(\/\*[\s\S]*?\*\/)/g, '<span class="html-comment">$1</span>')
+      .replace(/([.#]?[a-zA-Z][a-zA-Z0-9_:\-\[\]="']*)(\s*\{)/g, '<span class="html-tag">$1</span>$2')
+      .replace(/([a-z-]+)(\s*:)/gi, '<span class="html-attr">$1</span>$2');
+  }
+  return highlightHtmlSource(source);
 }
 
 function highlightHtmlTag(tag) {
@@ -2550,7 +2605,7 @@ function paintCodeHighlight(input, highlight, { force = false } = {}) {
     );
     const to = Math.min(starts.length, lastVisible + CODE_HIGHLIGHT_BUFFER_LINES);
     const end = to < starts.length ? starts[to] : text.length;
-    code.innerHTML = highlightHtmlSource(text.slice(starts[from], end));
+    code.innerHTML = editorHighlightCode(text.slice(starts[from], end));
     cache.from = from;
     cache.to = to;
   }
@@ -2686,7 +2741,7 @@ function sourceRangeForSelection(source, hint) {
   return { start: chosen.start, end: Math.max(chosen.start + 1, end) };
 }
 function revealCodeSelection(hint) {
-  if (state.editorPreviewMode !== "code") return;
+  if (state.editorPreviewMode !== "code" || state.editorCodeKind !== "html") return;
   const input = document.querySelector("#editor-code-input");
   const editor = document.querySelector(".editor-code-editor");
   if (!(input instanceof HTMLTextAreaElement) || !editor) return;
@@ -2711,17 +2766,11 @@ function revealCodeSelection(hint) {
 }
 
 async function saveEditorCodeSource() {
-  if (
-    state.editorMode !== "beta" ||
-    state.editorCodeSaving ||
-    !state.editorCodeDirty
-  ) {
-    return;
-  }
+  if (state.editorMode !== "beta" || state.editorCodeSaving) return;
 
-  const expectedBetaSha = state.editorStatus?.beta?.sha || "";
-  const expectedFileSha = state.editorCodeSource?.html?.sha || "";
-  if (!expectedBetaSha || !expectedFileSha) {
+  const path = editorCodeActivePath();
+  const file = editorCodeActiveFile();
+  if (!path || !file) {
     showToast("Reload the page source before saving.", "error");
     return;
   }
@@ -2730,41 +2779,28 @@ async function saveEditorCodeSource() {
   const button = document.querySelector("#editor-code-save");
   if (button) {
     button.disabled = true;
-    button.textContent = "Building preview…";
+    button.textContent = "Saving draft…";
   }
 
   try {
-    const result = await apiRequest("/editor-code-save", {
-      method: "POST",
-      body: {
-        page: state.editorPage,
-        expectedBetaSha,
-        expectedFileSha,
-        content: state.editorCodeDraft
+    state.editorSourceDrafts = {
+      ...state.editorSourceDrafts,
+      [path]: {
+        path,
+        kind: file.kind,
+        content: String(state.editorCodeDraft || ""),
+        originalSha: String(file.sha || "")
       }
-    });
-
-    state.editorCodeOriginal = state.editorCodeDraft;
-    state.editorCodeDirty = false;
-    state.editorCodeSource = null;
-    state.editorCodeSourceKey = "";
-    state.editorStatus = null;
-    state.editorDraftKey = "";
-
-    await loadWebEditorStatus({ quiet: true });
-    await loadEditorCodeSource({ quiet: true, force: true });
-
-    showToast(
-      `HTML saved to beta-main as ${String(result.commitSha || "").slice(0, 7)}. Review the Cloudflare preview before publishing live.`
-    );
-  } catch (error) {
-    showToast(error?.message || "Unable to save HTML source.", "error");
+    };
+    markEditorWorkspaceChanged();
+    const saved = await saveSharedEditorDraft({ quiet: false });
+    if (saved) state.editorCodeDirty = state.editorCodeDraft !== state.editorCodeOriginal;
   } finally {
     state.editorCodeSaving = false;
+    refreshEditorSessionChrome();
     if (state.currentView === "editor") renderWebEditor();
   }
 }
-
 
 function editorDevtoolsContentMarkup() {
   const data = state.editorDevtoolsData;
