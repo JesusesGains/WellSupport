@@ -3217,7 +3217,6 @@ function patchEditorPanel(panel, markup, reuseFrame) {
 }
 
 function renderWebEditor() {
-  if (state.editorPreviewMode === "devtools") state.editorPreviewMode = "visual";
   const panel = document.querySelector("#chat-panel");
   if (!panel) return;
 
@@ -3312,6 +3311,7 @@ function renderWebEditor() {
   }
 
   const pendingCount = editorPendingChangeCount();
+  const sessionUnsavedCount = editorUnsavedSessionCount();
   const canUndo = editable && editorCanUndo();
   const canRedo = editable && editorCanRedo();
 
@@ -3332,7 +3332,7 @@ function renderWebEditor() {
             <strong>Well Website Editor</strong>
           </div>
 
-          <select id="web-editor-page" class="editor-header-select" aria-label="Website page" hidden>
+          <select id="web-editor-page" class="editor-header-select" aria-label="Website page">
             <option value="/">Home</option>
             <option value="/qualifications.html">Qualifications</option>
             <option value="/short-courses.html">Short Courses</option>
@@ -3350,6 +3350,7 @@ function renderWebEditor() {
           <div class="editor-view-toolbar" role="group" aria-label="Editor surface">
             <button class="${state.editorPreviewMode === "visual" ? "is-active" : ""}" type="button" data-editor-preview-mode="visual">Visual</button>
             <button class="${state.editorPreviewMode === "code" ? "is-active" : ""}" type="button" data-editor-preview-mode="code">&lt;/&gt; Code</button>
+            <button class="${state.editorPreviewMode === "devtools" ? "is-active" : ""}" type="button" data-editor-preview-mode="devtools">DevTools</button>
           </div>
 
           ${state.editorPreviewMode === "visual" ? `
@@ -3384,6 +3385,30 @@ function renderWebEditor() {
                 aria-label="Draw a new text area"
                 ${editable ? "" : "disabled"}
               >✎ <span>Text</span></button>
+              <button
+                class="${state.editorTool === "image-box" ? "is-active" : ""}"
+                type="button"
+                data-editor-tool="image-box"
+                title="Add an image"
+                aria-label="Add an image"
+                ${editable ? "" : "disabled"}
+              >▧ <span>Image</span></button>
+              <button
+                class="${state.editorTool === "button-box" ? "is-active" : ""}"
+                type="button"
+                data-editor-tool="button-box"
+                title="Add a button"
+                aria-label="Add a button"
+                ${editable ? "" : "disabled"}
+              >▣ <span>Button</span></button>
+              <button
+                class="${state.editorTool === "section-box" ? "is-active" : ""}"
+                type="button"
+                data-editor-tool="section-box"
+                title="Add a section"
+                aria-label="Add a section"
+                ${editable ? "" : "disabled"}
+              >▤ <span>Section</span></button>
             </div>
 
             <div class="editor-notes-mode-slot" aria-label="Page notes"></div>
@@ -3404,6 +3429,30 @@ function renderWebEditor() {
         </div>
 
         <div class="editor-fullscreen-topbar-right">
+          ${state.editorMode === "beta" ? `
+            <div class="editor-session-controls">
+              <span id="editor-session-status" class="editor-session-status ${state.editorSharedDraftConflict ? "is-conflict" : sessionUnsavedCount ? "is-unsaved" : "is-saved"}">
+                ${state.editorSharedDraftConflict
+                  ? "Draft conflict"
+                  : sessionUnsavedCount
+                    ? `${sessionUnsavedCount} unsaved change${sessionUnsavedCount === 1 ? "" : "s"}`
+                    : "Saved"}
+              </span>
+              <button
+                id="editor-session-save"
+                class="editor-topbar-button is-save"
+                type="button"
+                ${sessionUnsavedCount && !state.editorSharedDraftConflict && !state.editorSessionSaving ? "" : "disabled"}
+              >${state.editorSessionSaving ? "Saving…" : "Save"}</button>
+              <button
+                id="editor-autosave-toggle"
+                class="editor-autosave-toggle ${state.editorAutosaveEnabled ? "is-active" : ""}"
+                type="button"
+                aria-pressed="${state.editorAutosaveEnabled ? "true" : "false"}"
+                title="Persist editor drafts automatically without publishing the beta preview"
+              ><i aria-hidden="true"></i><span>${state.editorAutosaveEnabled ? "Autosave on" : "Autosave off"}</span></button>
+            </div>
+          ` : ""}
           <div class="editor-history-actions" role="group" aria-label="Undo and redo">
             <button id="web-editor-undo" class="editor-topbar-icon-button" type="button" aria-label="Undo last change" title="Undo" ${canUndo ? "" : "disabled"}>↶</button>
             <button id="web-editor-redo" class="editor-topbar-icon-button" type="button" aria-label="Redo change" title="Redo" ${canRedo ? "" : "disabled"}>↷</button>
@@ -3454,7 +3503,7 @@ function renderWebEditor() {
 
       <div class="editor-fullscreen-body">
         <main class="editor-live-workspace">
-          <div class="editor-preview-placeholder is-fullscreen ${state.editorPreviewMode === "code" ? "has-code-dock" : ""}">
+          <div class="editor-preview-placeholder is-fullscreen ${state.editorPreviewMode === "code" ? "has-code-dock" : state.editorPreviewMode === "devtools" ? "has-devtools-dock" : ""}">
             <div id="web-editor-browser" class="editor-preview-browser is-fullscreen" data-device="${state.editorDevice}">
               <div class="editor-preview-browser-bar">
                 <i></i><i></i><i></i>
@@ -3538,6 +3587,7 @@ function renderWebEditor() {
             ` : ""}
           </div>
         </main>
+        ${state.editorPreviewMode === "visual" ? editorInspectorMarkup(editable) : ""}
       </div>
     </div>
 
@@ -3555,6 +3605,20 @@ function renderWebEditor() {
         <div class="confirm-actions">
           <button id="cancel-editor-banner-delete" class="confirm-secondary" type="button">Cancel</button>
           <button id="confirm-editor-banner-delete" class="confirm-danger" type="button">Delete banner</button>
+        </div>
+      </section>
+    </div>
+
+    <div id="editor-autosave-modal" class="confirm-modal" hidden>
+      <button id="editor-autosave-backdrop" class="confirm-modal-backdrop" type="button" aria-label="Cancel autosave"></button>
+      <section class="confirm-card" role="dialog" aria-modal="true" aria-labelledby="editor-autosave-title">
+        <div class="confirm-icon">${editorIcon()}</div>
+        <h2 id="editor-autosave-title">Turn on autosave?</h2>
+        <p>Autosave makes every editor change persistent in the saved draft. Refreshing, closing the tab, or returning later will not undo those saved changes.</p>
+        <p><strong>Autosave does not publish the beta preview and does not change the live website.</strong> Publishing remains a separate action.</p>
+        <div class="confirm-actions">
+          <button id="cancel-editor-autosave" class="confirm-secondary" type="button">Keep autosave off</button>
+          <button id="confirm-editor-autosave" class="editor-topbar-button is-primary" type="button">Turn on autosave</button>
         </div>
       </section>
     </div>
