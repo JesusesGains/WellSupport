@@ -400,6 +400,104 @@ function cleanElementOverrides(value) {
     });
 }
 
+function cleanSeo(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const robotsAllowed = new Set(["", "index,follow", "index,nofollow", "noindex,follow", "noindex,nofollow"]);
+  const robots = cleanText(value.robots, 40).toLowerCase();
+  return {
+    title: cleanText(value.title, 180),
+    description: cleanText(value.description, 320),
+    ogTitle: cleanText(value.ogTitle, 180),
+    ogDescription: cleanText(value.ogDescription, 320),
+    ogImage: cleanResourceValue(value.ogImage, "src"),
+    robots: robotsAllowed.has(robots) ? robots : ""
+  };
+}
+
+function escapeHtmlText(value) {
+  return String(value || "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+}
+
+function escapeHtmlAttribute(value) {
+  return escapeHtmlText(value).replaceAll('"', "&quot;").replaceAll("'", "&#39;");
+}
+
+function replaceOrInsertHeadTag(html, expression, tag) {
+  const source = String(html || "");
+  if (expression.test(source)) return source.replace(expression, tag);
+  return /<\/head\s*>/i.test(source) ? source.replace(/<\/head\s*>/i, `  ${tag}\n</head>`) : source;
+}
+
+function applySeoToHtml(html, seo) {
+  let next = String(html || "");
+  if (!next || !/<head\b/i.test(next)) return next;
+  const title = escapeHtmlText(seo.title);
+  if (title) {
+    next = replaceOrInsertHeadTag(next, /<title\b[^>]*>[\s\S]*?<\/title\s*>/i, `<title>${title}</title>`);
+  }
+  const upsertMeta = (attribute, name, content) => {
+    if (!content) return;
+    const safe = escapeHtmlAttribute(content);
+    const safeName = String(name || "").replace(/[^a-z0-9:._-]/gi, "");
+    const expression = new RegExp(`<meta\\b(?=[^>]*\\b${attribute}=["\']${safeName}["\'])[^>]*>`, "i");
+    next = replaceOrInsertHeadTag(next, expression, `<meta ${attribute}="${escapeHtmlAttribute(name)}" content="${safe}">`);
+  };
+  upsertMeta("name", "description", seo.description);
+  upsertMeta("property", "og:title", seo.ogTitle || seo.title);
+  upsertMeta("property", "og:description", seo.ogDescription || seo.description);
+  upsertMeta("property", "og:image", seo.ogImage);
+  upsertMeta("name", "robots", seo.robots);
+  return next;
+}
+
+function validateSourceFile(path, content) {
+  const source = String(content || "");
+  if (path.toLowerCase().endsWith(".html")) {
+    const lower = source.toLowerCase();
+    const required = ["<html", "<head", "<body", "</body", "</html"];
+    if (required.some((token) => !lower.includes(token))) {
+      const error = new Error(`HTML source for ${path} is missing a required document element.`);
+      error.status = 400;
+      throw error;
+    }
+    const openScript = (source.match(/<script\b/gi) || []).length;
+    const closeScript = (source.match(/<\/script\s*>/gi) || []).length;
+    if (openScript !== closeScript) {
+      const error = new Error(`HTML source for ${path} has an unclosed script element.`);
+      error.status = 400;
+      throw error;
+    }
+    return;
+  }
+  if (path.toLowerCase().endsWith(".css")) {
+    let depth = 0;
+    let quote = "";
+    let comment = false;
+    for (let index = 0; index < source.length; index += 1) {
+      const char = source[index];
+      const next = source[index + 1];
+      if (comment) {
+        if (char === "*" && next === "/") { comment = false; index += 1; }
+        continue;
+      }
+      if (!quote && char === "/" && next === "*") { comment = true; index += 1; continue; }
+      if (quote) {
+        if (char === "\\") { index += 1; continue; }
+        if (char === quote) quote = "";
+        continue;
+      }
+      if (char === '"' || char === "'") { quote = char; continue; }
+      if (char === "{") depth += 1;
+      if (char === "}") depth -= 1;
+      if (depth < 0) break;
+    }
+    if (depth !== 0 || quote || comment) {
+      const error = new Error(`CSS source for ${path} has unbalanced braces, quotes, or comments.`);
+      error.status = 400;
+      throw error;
+    }
+  }
+}
 function normalisePagePatch(raw) {
   const input = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
   const heading = cleanText(input.heading, 300);
@@ -410,6 +508,7 @@ function normalisePagePatch(raw) {
   const attributes = cleanAttributeOverrides(input.attributes);
   const styles = cleanStyleOverrides(input.styles);
   const responsiveStyles = cleanResponsiveStyleOverrides(input.responsiveStyles);
+  const seo = cleanSeo(input.seo);
   const order = cleanOrderOverrides(input.order);
   const elements = cleanElementOverrides(input.elements);
 
@@ -425,7 +524,7 @@ function normalisePagePatch(raw) {
   }
 
   return {
-    heading, copy, accent, font, text, attributes, styles, responsiveStyles, order, elements,
+    heading, copy, accent, font, text, attributes, styles, responsiveStyles, seo, order, elements,
     supplied: {
       heading: Object.prototype.hasOwnProperty.call(input, "heading"),
       copy: Object.prototype.hasOwnProperty.call(input, "copy"),
@@ -435,6 +534,7 @@ function normalisePagePatch(raw) {
       attributes: Object.prototype.hasOwnProperty.call(input, "attributes"),
       styles: Object.prototype.hasOwnProperty.call(input, "styles"),
       responsiveStyles: Object.prototype.hasOwnProperty.call(input, "responsiveStyles"),
+      seo: Object.prototype.hasOwnProperty.call(input, "seo"),
       order: Object.prototype.hasOwnProperty.call(input, "order"),
       elements: Object.prototype.hasOwnProperty.call(input, "elements")
     }
@@ -471,6 +571,10 @@ function applyPagePatch(existing, patch) {
       Object.keys(patch.responsiveStyles.mobile || {}).length;
     if (hasResponsive) config.responsiveStyles = patch.responsiveStyles;
     else delete config.responsiveStyles;
+  }
+  if (patch.supplied.seo) {
+    if (Object.values(patch.seo).some(Boolean)) config.seo = patch.seo;
+    else delete config.seo;
   }
   if (patch.supplied.order) {
     if (Object.keys(patch.order).length) config.order = patch.order;
@@ -685,6 +789,7 @@ function cleanSourceFiles(value) {
       throw error;
     }
 
+    validateSourceFile(path, content);
     output.push({
       path,
       kind,
@@ -823,6 +928,24 @@ export async function onRequestPost({ request, env }) {
       }
       if (String(currentSource.content || "") !== sourceFile.content) {
         files.push({ path: sourceFile.path, content: sourceFile.content });
+      }
+    }
+
+    for (const [pagePath, patch] of pagePatches) {
+      if (!patch.supplied.seo || !Object.values(patch.seo).some(Boolean)) continue;
+      const htmlPath = pagePath === "/" ? "index.html" : pagePath.replace(/^\\/+/, "");
+      if (!/\\.html$/i.test(htmlPath)) continue;
+      const staged = files.find((file) => file.path === htmlPath);
+      let source = staged?.content;
+      if (typeof source !== "string") {
+        const currentHtml = await readTextFile(env, BETA_BRANCH, htmlPath);
+        source = String(currentHtml.content || "");
+      }
+      const withSeo = applySeoToHtml(source, patch.seo);
+      validateSourceFile(htmlPath, withSeo);
+      if (withSeo !== source) {
+        if (staged) staged.content = withSeo;
+        else files.push({ path: htmlPath, content: withSeo });
       }
     }
 
