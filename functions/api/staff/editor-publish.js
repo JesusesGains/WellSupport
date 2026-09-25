@@ -411,6 +411,7 @@ function cleanSeo(value) {
     ogTitle: cleanText(value.ogTitle, 180),
     ogDescription: cleanText(value.ogDescription, 320),
     ogImage: cleanResourceValue(value.ogImage, "src"),
+    canonical: cleanResourceValue(value.canonical, "href"),
     robots: robotsAllowed.has(robots) ? robots : ""
   };
 }
@@ -448,6 +449,13 @@ function applySeoToHtml(html, seo) {
   upsertMeta("property", "og:description", seo.ogDescription || seo.description);
   upsertMeta("property", "og:image", seo.ogImage);
   upsertMeta("name", "robots", seo.robots);
+  if (seo.canonical) {
+    next = replaceOrInsertHeadTag(
+      next,
+      /<link\b(?=[^>]*\brel=["']canonical["'])[^>]*>/i,
+      `<link rel="canonical" href="${escapeHtmlAttribute(seo.canonical)}">`
+    );
+  }
   return next;
 }
 
