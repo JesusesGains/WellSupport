@@ -124,6 +124,7 @@ const state = {
   editorAssetUploadBusy: false,
   editorAssetUploadTargetSelector: "",
   editorAssetSavedSignature: "[]",
+  editorAssetMutations: [],
   editorPreviewMode: "visual",
   editorCodeSource: null,
   editorCodeSourceKey: "",
@@ -1286,6 +1287,7 @@ function editorPendingChangeCount() {
   if (state.editorLayoutDirty) count += 1;
   if (state.editorBannerDirty) count += 1;
   count += state.editorAssetDrafts.length;
+  count += state.editorAssetMutations.length;
   count += Object.keys(state.editorSourceDrafts || {}).length;
   return count;
 }
@@ -1568,6 +1570,7 @@ async function publishWebEditorDraft(payload) {
     state.editorLayoutDirty = false;
     state.editorBannerDirty = false;
     state.editorAssetDrafts = [];
+    state.editorAssetMutations = [];
     state.editorAssetsLoaded = false;
     state.editorSourceDrafts = {};
     state.editorCodeDirty = false;
@@ -2298,6 +2301,11 @@ function normaliseSharedWorkspace(payload = {}) {
       intervalMs: Number(banner.intervalMs || 5200),
       items: Array.isArray(banner.items) ? banner.items.map((item) => ({ ...item })) : []
     },
+    assetMutations: Array.isArray(payload.assetMutations)
+      ? payload.assetMutations
+          .filter((item) => item && ["rename","delete"].includes(item.action))
+          .map((item) => ({ ...item }))
+      : [],
     sourceDrafts
   };
 }
@@ -2314,6 +2322,7 @@ function sharedEditorWorkspace() {
       intervalMs: Number(state.editorBannerInterval || 5200),
       items: state.editorBannerItems
     },
+    assetMutations: state.editorAssetMutations,
     sourceDrafts: state.editorSourceDrafts
   });
 }
@@ -2338,6 +2347,7 @@ function applySharedEditorWorkspace(payload = {}) {
     state.editorBannerInterval = workspace.banner.intervalMs;
     state.editorBannerDirty = true;
   }
+  state.editorAssetMutations = workspace.assetMutations;
   state.editorSourceDrafts = workspace.sourceDrafts;
   state.editorDirty = editorPendingChangeCount() > 0 || Object.keys(state.editorSourceDrafts).length > 0;
   state.editorDraftKey = "";
@@ -3140,8 +3150,10 @@ function editorAssetsMarkup(editable) {
             <small>${asset.draft ? "Staged upload" : escapeEditorAttribute(asset.path)}</small>
           </div>
           <div class="editor-asset-actions">
-            <button type="button" data-editor-asset-copy="${escapeEditorAttribute(asset.value)}">Copy path</button>
+            <button type="button" data-editor-asset-copy="${escapeEditorAttribute(asset.value)}">Copy</button>
             <button type="button" data-editor-asset-use="${escapeEditorAttribute(asset.value)}" ${editable ? "" : "disabled"}>Use</button>
+            <button type="button" data-editor-asset-rename="${escapeEditorAttribute(asset.path)}" ${editable && !asset.draft ? "" : "disabled"}>Rename</button>
+            <button type="button" data-editor-asset-delete="${escapeEditorAttribute(asset.path)}" ${editable ? "" : "disabled"}>Delete</button>
           </div>
         </article>
       `).join("")}
@@ -5546,6 +5558,70 @@ function renderWebEditor() {
       return;
     }
 
+    const renameButton = event.target?.closest?.("[data-editor-asset-rename]");
+    if (renameButton) {
+      const path = String(renameButton.dataset.editorAssetRename || "");
+      const asset = state.editorAssets.find((item) => item.path === path);
+      if (!asset) return;
+      const dot = path.lastIndexOf(".");
+      const extension = dot >= 0 ? path.slice(dot) : "";
+      const folder = path.includes("/") ? path.slice(0, path.lastIndexOf("/") + 1) : "";
+      const currentBase = dot >= 0 ? path.slice(folder.length, dot) : path.slice(folder.length);
+      const requested = window.prompt("Rename asset", currentBase);
+      if (requested == null) return;
+      const clean = cleanEditorAssetName(requested + extension);
+      const nextPath = `${folder}${clean.base}${clean.extension ? `.${clean.extension}` : extension}`;
+      if (!nextPath || nextPath === path) return;
+      if (
+        state.editorAssets.some((item) => item.path === nextPath) ||
+        state.editorAssetDrafts.some((item) => item.path === nextPath)
+      ) {
+        showToast("An asset with that name already exists.", "error");
+        return;
+      }
+      state.editorAssetMutations = [
+        ...state.editorAssetMutations.filter((item) => item.path !== path),
+        { action: "rename", path, nextPath }
+      ];
+      for (const [selector, attrs] of Object.entries(state.editorAttributeDrafts || {})) {
+        if (String(attrs?.src || "").replace(/^\/+/, "") === path) {
+          state.editorAttributeDrafts = {
+            ...state.editorAttributeDrafts,
+            [selector]: { ...attrs, src: `/${nextPath}` }
+          };
+        }
+      }
+      state.editorDirty = editorPendingChangeCount() > 0;
+      markEditorWorkspaceChanged();
+      renderWebEditor();
+      showToast("Asset rename staged. Save keeps the draft; Publish beta preview applies it.");
+      return;
+    }
+
+    const deleteButton = event.target?.closest?.("[data-editor-asset-delete]");
+    if (deleteButton) {
+      const path = String(deleteButton.dataset.editorAssetDelete || "");
+      const stagedIndex = state.editorAssetDrafts.findIndex((item) => item.path === path);
+      if (stagedIndex >= 0) {
+        state.editorAssetDrafts = state.editorAssetDrafts.filter((_, index) => index !== stagedIndex);
+        state.editorDirty = editorPendingChangeCount() > 0;
+        markEditorWorkspaceChanged();
+        postEditorAssetsToPreview();
+        renderWebEditor();
+        return;
+      }
+      if (!window.confirm(`Delete ${path.split("/").pop()} from the beta website when you publish?`)) return;
+      state.editorAssetMutations = [
+        ...state.editorAssetMutations.filter((item) => item.path !== path),
+        { action: "delete", path, nextPath: "" }
+      ];
+      state.editorDirty = editorPendingChangeCount() > 0;
+      markEditorWorkspaceChanged();
+      renderWebEditor();
+      showToast("Asset deletion staged. It will not affect the beta website until Publish beta preview.");
+      return;
+    }
+
     const useButton = event.target?.closest?.("[data-editor-asset-use]");
     if (!useButton || state.editorSelectedObject?.tag !== "img") return;
 
@@ -5864,6 +5940,7 @@ function renderWebEditor() {
         contentBase64: asset.contentBase64,
         size: asset.size
       })),
+      assetMutations: state.editorAssetMutations.map((item) => ({ ...item })),
       sourceDrafts: Object.fromEntries(
         Object.entries(state.editorSourceDrafts || {}).map(([path, draft]) => [
           path,
