@@ -1130,7 +1130,7 @@ function storeCurrentEditorDraft() {
     [state.editorPage]: currentEditorDraftSnapshot()
   };
   state.editorDirty = Object.keys(state.editorPendingPages).length > 0;
-  scheduleSharedEditorDraft();
+  markEditorWorkspaceChanged();
 }
 
 function recordEditorHistory() {
@@ -1408,6 +1408,7 @@ function newEditorBannerItem() {
 function publishEditorBanner() {
   state.editorBannerDirty = true;
   state.editorDirty = editorPendingChangeCount() > 0;
+  markEditorWorkspaceChanged();
   showToast("Banner changes are staged locally. Publish beta preview to build them.");
 }
 
@@ -1419,6 +1420,7 @@ async function deleteEditorBannerItem(index) {
   );
   state.editorBannerDirty = true;
   state.editorDirty = editorPendingChangeCount() > 0;
+  markEditorWorkspaceChanged();
   state.editorBannerPendingDeleteIndex = null;
   document.body.classList.remove("has-support-confirm-modal");
 
@@ -1846,6 +1848,7 @@ async function stageEditorAssetFiles(fileList) {
     if (staged.length) {
       state.editorAssetDrafts = [...state.editorAssetDrafts, ...staged];
       state.editorDirty = editorPendingChangeCount() > 0;
+      markEditorWorkspaceChanged();
       showToast(
         `${staged.length} asset${staged.length === 1 ? "" : "s"} staged locally. Publish beta preview to upload.`
       );
@@ -1892,6 +1895,7 @@ async function loadEditorNavigation({ quiet = false } = {}) {
 function saveEditorNavigationOrder() {
   if (state.editorMode !== "beta" || !state.editorNavigationDirty) return;
   state.editorDirty = editorPendingChangeCount() > 0;
+  markEditorWorkspaceChanged();
   showToast("Header order is staged locally. Publish beta preview to build it.");
 }
 
@@ -1960,6 +1964,7 @@ function bindEditorNavigationSortable(list, orderKey, editable) {
     state.editorNavigationDirty = true;
 
     state.editorDirty = editorPendingChangeCount() > 0;
+  markEditorWorkspaceChanged();
 
     const save = document.querySelector("#editor-navigation-save");
     if (save) {
@@ -3922,6 +3927,7 @@ function renderWebEditor() {
 
       state.editorNavigationDirty = true;
       state.editorDirty = editorPendingChangeCount() > 0;
+      markEditorWorkspaceChanged();
 
       const list =
         kind === "header"
@@ -3967,6 +3973,7 @@ function renderWebEditor() {
       };
       state.editorLayoutDirty = true;
       state.editorDirty = editorPendingChangeCount() > 0;
+      markEditorWorkspaceChanged();
 
       const publish = document.querySelector("#web-editor-preview-submit");
       if (publish) publish.disabled = false;
@@ -3979,6 +3986,7 @@ function renderWebEditor() {
       state.editorElementDrafts = cloneEditorElementDrafts(event.data.elements);
       storeCurrentEditorDraft();
       state.editorDirty = editorPendingChangeCount() > 0;
+      markEditorWorkspaceChanged();
       const publish = document.querySelector("#web-editor-preview-submit");
       if (publish) publish.disabled = false;
       return;
@@ -4081,6 +4089,7 @@ function renderWebEditor() {
       };
       storeCurrentEditorDraft();
       state.editorDirty = editorPendingChangeCount() > 0;
+      markEditorWorkspaceChanged();
 
       const publish = document.querySelector("#web-editor-preview-submit");
       if (publish) publish.disabled = false;
@@ -4259,6 +4268,7 @@ function renderWebEditor() {
     state.editorBannerInterval = Number(bannerInterval.value || 5200);
     state.editorBannerDirty = true;
     state.editorDirty = editorPendingChangeCount() > 0;
+  markEditorWorkspaceChanged();
     postDraft();
     const publish = document.querySelector("#web-editor-preview-submit");
     if (publish) publish.disabled = false;
@@ -4291,6 +4301,7 @@ function renderWebEditor() {
 
     state.editorBannerDirty = true;
     state.editorDirty = editorPendingChangeCount() > 0;
+  markEditorWorkspaceChanged();
     postDraft();
     const publish = document.querySelector("#web-editor-preview-submit");
     if (publish) publish.disabled = false;
@@ -4356,6 +4367,7 @@ function renderWebEditor() {
     state.editorBannerOpenId = item.id;
     state.editorBannerDirty = true;
     state.editorDirty = editorPendingChangeCount() > 0;
+  markEditorWorkspaceChanged();
     renderWebEditor();
     window.setTimeout(postDraft, 30);
   });
@@ -4426,6 +4438,7 @@ function renderWebEditor() {
       }
 
       state.editorDirty = editorPendingChangeCount() > 0;
+      markEditorWorkspaceChanged();
       document.querySelector("#web-editor-preview-submit")?.removeAttribute("disabled");
 
       frame?.contentWindow?.postMessage(
@@ -4703,7 +4716,7 @@ function renderWebEditor() {
     );
 
     state.editorDirty = editorPendingChangeCount() > 0;
-    scheduleSharedEditorDraft();
+    markEditorWorkspaceChanged();
     state.editorSelectedText = null;
     state.editorSelectedObject = null;
 
