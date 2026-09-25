@@ -1979,9 +1979,13 @@ function bindEditorNavigationSortable(list, orderKey, editable) {
 
 
 
-async function loadSharedEditorDraft({ quiet = false } = {}) {
+async function loadSharedEditorDraft({ quiet = false, force = false } = {}) {
   const betaSha = state.editorStatus?.beta?.sha || "";
-  if (!betaSha || state.editorMode !== "beta" || state.editorSharedDraftLoadedSha === betaSha) return;
+  if (
+    !betaSha ||
+    state.editorMode !== "beta" ||
+    (!force && state.editorSharedDraftLoadedSha === betaSha)
+  ) return;
 
   try {
     const result = await apiRequest("/editor-draft");
@@ -1992,39 +1996,45 @@ async function loadSharedEditorDraft({ quiet = false } = {}) {
     if (!draft || draft.base_sha !== betaSha) {
       state.editorSharedDraftRevision = 0;
       state.editorSharedDraftConflict = false;
+      state.editorSessionSavedSignature = editorWorkspaceSignature();
+      refreshEditorSessionChrome();
       return;
     }
 
-    const pages =
-      draft.payload?.pages &&
-      typeof draft.payload.pages === "object" &&
-      !Array.isArray(draft.payload.pages)
-        ? draft.payload.pages
+    const payload =
+      draft.payload && typeof draft.payload === "object" && !Array.isArray(draft.payload)
+        ? draft.payload
         : {};
 
-    if (!Object.keys(state.editorPendingPages || {}).length) {
-      state.editorPendingPages = Object.fromEntries(
-        Object.entries(pages).map(([path, pageDraft]) => [
-          path,
-          editorDraftFromConfig(pageDraft)
-        ])
-      );
-      state.editorDirty = editorPendingChangeCount() > 0;
-      state.editorDraftKey = "";
-    } else if (JSON.stringify(sharedEditorPages()) !== JSON.stringify(pages)) {
+    const remoteSignature = JSON.stringify(normaliseSharedWorkspace(payload));
+    const localSignature = editorWorkspaceSignature();
+    const hasUnsavedLocal =
+      Boolean(state.editorSessionSavedSignature) &&
+      localSignature !== state.editorSessionSavedSignature;
+
+    if (force && hasUnsavedLocal && remoteSignature !== state.editorSessionSavedSignature) {
       state.editorSharedDraftConflict = true;
-      if (!quiet) showToast("A different shared website draft already exists. Reload before overwriting it.", "error");
+      if (!quiet) {
+        showToast("Another staff member changed the saved draft while you have unsaved edits.", "error");
+      }
+      refreshEditorSessionChrome();
+      return;
     }
 
+    applySharedEditorWorkspace(payload);
     state.editorSharedDraftRevision = Number(draft.revision || 0);
+    state.editorSharedDraftConflict = false;
+    state.editorSessionSavedAt = String(draft.updated_at || "");
+    state.editorSessionSavedSignature = editorWorkspaceSignature();
   } catch (error) {
     if (error.status === 503) {
       state.editorSharedDraftAvailable = false;
       state.editorSharedDraftLoadedSha = betaSha;
     } else if (!quiet) {
-      showToast(error?.message || "Unable to load the shared website draft.", "error");
+      showToast(error?.message || "Unable to load the saved website draft.", "error");
     }
   } finally {
+    refreshEditorSessionChrome();
     if (state.currentView === "editor") {
       if (!postCurrentEditorDraftToPreview()) renderWebEditor();
     }
@@ -2040,49 +2050,239 @@ function sharedEditorPages() {
   );
 }
 
-function scheduleSharedEditorDraft() {
-  if (state.editorSharedDraftTimer) window.clearTimeout(state.editorSharedDraftTimer);
-  state.editorSharedDraftTimer = window.setTimeout(saveSharedEditorDraft, 900);
+function normaliseSharedWorkspace(payload = {}) {
+  const pages =
+    payload.pages && typeof payload.pages === "object" && !Array.isArray(payload.pages)
+      ? Object.fromEntries(
+          Object.entries(payload.pages).map(([path, pageDraft]) => [
+            path,
+            editorDraftFromConfig(pageDraft)
+          ])
+        )
+      : {};
+
+  const navigation =
+    payload.navigation && typeof payload.navigation === "object" && !Array.isArray(payload.navigation)
+      ? payload.navigation
+      : {};
+  const layoutOrders =
+    payload.layoutOrders && typeof payload.layoutOrders === "object" && !Array.isArray(payload.layoutOrders)
+      ? Object.fromEntries(
+          Object.entries(payload.layoutOrders).map(([scope, order]) => [
+            scope,
+            Array.isArray(order) ? [...order] : []
+          ])
+        )
+      : {};
+  const banner =
+    payload.banner && typeof payload.banner === "object" && !Array.isArray(payload.banner)
+      ? payload.banner
+      : {};
+  const sourceDrafts =
+    payload.sourceDrafts && typeof payload.sourceDrafts === "object" && !Array.isArray(payload.sourceDrafts)
+      ? Object.fromEntries(
+          Object.entries(payload.sourceDrafts)
+            .filter(([, draft]) => draft && typeof draft === "object" && !Array.isArray(draft))
+            .map(([path, draft]) => [
+              path,
+              {
+                path,
+                kind: draft.kind === "css" ? "css" : "html",
+                content: String(draft.content || ""),
+                originalSha: String(draft.originalSha || "")
+              }
+            ])
+        )
+      : {};
+
+  return {
+    pages,
+    navigation: {
+      headerOrder: Array.isArray(navigation.headerOrder) ? [...navigation.headerOrder] : [],
+      shortCourseGroupOrder: Array.isArray(navigation.shortCourseGroupOrder)
+        ? [...navigation.shortCourseGroupOrder]
+        : []
+    },
+    layoutOrders,
+    banner: {
+      intervalMs: Number(banner.intervalMs || 5200),
+      items: Array.isArray(banner.items) ? banner.items.map((item) => ({ ...item })) : []
+    },
+    sourceDrafts
+  };
 }
 
-async function saveSharedEditorDraft() {
+function sharedEditorWorkspace() {
+  return normaliseSharedWorkspace({
+    pages: sharedEditorPages(),
+    navigation: {
+      headerOrder: state.editorNavigationHeaderOrder,
+      shortCourseGroupOrder: state.editorNavigationGroupOrder
+    },
+    layoutOrders: state.editorLayoutOrders,
+    banner: {
+      intervalMs: Number(state.editorBannerInterval || 5200),
+      items: state.editorBannerItems
+    },
+    sourceDrafts: state.editorSourceDrafts
+  });
+}
+
+function applySharedEditorWorkspace(payload = {}) {
+  const workspace = normaliseSharedWorkspace(payload);
+  state.editorPendingPages = workspace.pages;
+  if (workspace.navigation.headerOrder.length) {
+    state.editorNavigationHeaderOrder = workspace.navigation.headerOrder;
+    state.editorNavigationDirty = true;
+  }
+  if (workspace.navigation.shortCourseGroupOrder.length) {
+    state.editorNavigationGroupOrder = workspace.navigation.shortCourseGroupOrder;
+    state.editorNavigationDirty = true;
+  }
+  if (Object.keys(workspace.layoutOrders).length) {
+    state.editorLayoutOrders = workspace.layoutOrders;
+    state.editorLayoutDirty = true;
+  }
+  if (workspace.banner.items.length || Number(workspace.banner.intervalMs) !== 5200) {
+    state.editorBannerItems = workspace.banner.items;
+    state.editorBannerInterval = workspace.banner.intervalMs;
+    state.editorBannerDirty = true;
+  }
+  state.editorSourceDrafts = workspace.sourceDrafts;
+  state.editorDirty = editorPendingChangeCount() > 0 || Object.keys(state.editorSourceDrafts).length > 0;
+  state.editorDraftKey = "";
+}
+
+function editorWorkspaceSignature() {
+  return JSON.stringify(sharedEditorWorkspace());
+}
+
+function editorUnsavedSessionCount() {
+  if (!state.editorSessionSavedSignature) return 0;
+  if (editorWorkspaceSignature() === state.editorSessionSavedSignature) return 0;
+  return Math.max(
+    1,
+    editorPendingChangeCount() +
+      Object.keys(state.editorSourceDrafts || {}).length
+  );
+}
+
+function refreshEditorSessionChrome() {
+  const count = editorUnsavedSessionCount();
+  const status = document.querySelector("#editor-session-status");
+  const save = document.querySelector("#editor-session-save");
+  const autosave = document.querySelector("#editor-autosave-toggle");
+
+  if (status) {
+    if (state.editorSharedDraftConflict) {
+      status.textContent = "Draft conflict";
+      status.className = "editor-session-status is-conflict";
+    } else if (state.editorSessionSaving || state.editorSharedDraftSaving) {
+      status.textContent = "Saving…";
+      status.className = "editor-session-status is-saving";
+    } else if (count) {
+      status.textContent = `${count} unsaved change${count === 1 ? "" : "s"}`;
+      status.className = "editor-session-status is-unsaved";
+    } else if (state.editorSessionSavedAt) {
+      const savedAt = new Date(state.editorSessionSavedAt);
+      status.textContent = Number.isNaN(savedAt.getTime())
+        ? "Saved"
+        : `Saved ${savedAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
+      status.className = "editor-session-status is-saved";
+    } else {
+      status.textContent = "Saved";
+      status.className = "editor-session-status is-saved";
+    }
+  }
+
+  if (save) {
+    save.disabled =
+      state.editorMode !== "beta" ||
+      state.editorSessionSaving ||
+      state.editorSharedDraftSaving ||
+      state.editorSharedDraftConflict ||
+      count < 1;
+  }
+
+  if (autosave) {
+    autosave.classList.toggle("is-active", state.editorAutosaveEnabled);
+    autosave.setAttribute("aria-pressed", state.editorAutosaveEnabled ? "true" : "false");
+    const label = autosave.querySelector("span");
+    if (label) label.textContent = state.editorAutosaveEnabled ? "Autosave on" : "Autosave off";
+  }
+}
+
+function markEditorWorkspaceChanged() {
+  refreshEditorSessionChrome();
+  if (state.editorAutosaveEnabled) scheduleSharedEditorDraft();
+}
+
+function scheduleSharedEditorDraft() {
+  if (!state.editorAutosaveEnabled) return;
+  if (state.editorSharedDraftTimer) window.clearTimeout(state.editorSharedDraftTimer);
+  state.editorSharedDraftTimer = window.setTimeout(
+    () => saveSharedEditorDraft({ quiet: true }),
+    900
+  );
+}
+
+async function saveSharedEditorDraft({ quiet = false } = {}) {
   state.editorSharedDraftTimer = null;
   if (
     state.editorMode !== "beta" ||
     state.editorSharedDraftSaving ||
     state.editorSharedDraftAvailable === false ||
     state.editorSharedDraftConflict
-  ) return;
+  ) return false;
 
   const betaSha = state.editorStatus?.beta?.sha || "";
-  if (!betaSha) return;
+  if (!betaSha) return false;
 
   state.editorSharedDraftSaving = true;
+  state.editorSessionSaving = true;
+  refreshEditorSessionChrome();
+
   try {
+    const workspace = sharedEditorWorkspace();
     const result = await apiRequest("/editor-draft", {
       method: "POST",
       body: {
         baseSha: betaSha,
         revision: state.editorSharedDraftRevision || 0,
-        pages: sharedEditorPages()
+        ...workspace
       }
     });
     if (result.available === false) {
       state.editorSharedDraftAvailable = false;
-      return;
+      if (!quiet) showToast("Saved draft storage is not available.", "error");
+      return false;
     }
     state.editorSharedDraftAvailable = true;
     state.editorSharedDraftLoadedSha = betaSha;
-    state.editorSharedDraftRevision = Number(result.draft?.revision || state.editorSharedDraftRevision || 0);
+    state.editorSharedDraftRevision = Number(
+      result.draft?.revision || state.editorSharedDraftRevision || 0
+    );
+    state.editorSessionSavedAt = String(result.draft?.updated_at || new Date().toISOString());
+    state.editorSessionSavedSignature = editorWorkspaceSignature();
+    if (!quiet) {
+      showToast("Draft saved. This does not publish the beta preview or live website.");
+    }
+    return true;
   } catch (error) {
     if (error.status === 409) {
       state.editorSharedDraftConflict = true;
-      showToast("Another staff member changed the shared draft. Reload before saving more changes.", "error");
+      showToast("Another staff member changed the saved draft. Reload before saving more changes.", "error");
     } else if (error.status === 503) {
       state.editorSharedDraftAvailable = false;
+      if (!quiet) showToast("Saved draft storage is not enabled.", "error");
+    } else if (!quiet) {
+      showToast(error?.message || "Unable to save the website draft.", "error");
     }
+    return false;
   } finally {
     state.editorSharedDraftSaving = false;
+    state.editorSessionSaving = false;
+    refreshEditorSessionChrome();
   }
 }
 
@@ -2092,12 +2292,16 @@ async function clearSharedEditorDraft() {
   try {
     await apiRequest("/editor-draft", { method: "DELETE", body: {} });
   } catch {
-    // Optional shared-draft storage must not block a successful publish.
+    // Optional saved-draft storage must not block a successful publish.
   }
   state.editorSharedDraftLoadedSha = state.editorStatus?.beta?.sha || "";
   state.editorSharedDraftRevision = 0;
   state.editorSharedDraftConflict = false;
+  state.editorSessionSavedAt = "";
+  state.editorSessionSavedSignature = editorWorkspaceSignature();
+  refreshEditorSessionChrome();
 }
+
 
 async function loadEditorVersionHistory({ quiet = false } = {}) {
   if (state.editorHistoryLoading || !staffCan("editor")) return;
