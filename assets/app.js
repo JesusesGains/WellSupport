@@ -3817,10 +3817,16 @@ function renderWebEditor() {
     if (!source.trim()) return;
 
     frame.contentWindow.postMessage(
-      {
-        type: "WCG_EDITOR_SOURCE_PREVIEW",
-        source
-      },
+      state.editorCodeKind === "css"
+        ? {
+            type: "WCG_EDITOR_CSS_PREVIEW",
+            path: editorCodeActivePath(),
+            source
+          }
+        : {
+            type: "WCG_EDITOR_SOURCE_PREVIEW",
+            source
+          },
       frameOrigin()
     );
     state.editorSourcePreviewPosted = true;
@@ -3839,20 +3845,39 @@ function renderWebEditor() {
   codeInput?.addEventListener("input", () => {
     state.editorCodeDraft = codeInput.value;
     state.editorCodeDirty = state.editorCodeDraft !== state.editorCodeOriginal;
+
+    if (editable) {
+      const file = editorCodeActiveFile();
+      const path = editorCodeActivePath();
+      if (file && path) {
+        state.editorSourceDrafts = {
+          ...state.editorSourceDrafts,
+          [path]: {
+            path,
+            kind: file.kind,
+            content: state.editorCodeDraft,
+            originalSha: String(file.sha || "")
+          }
+        };
+        state.editorDirty = editorPendingChangeCount() > 0;
+        markEditorWorkspaceChanged();
+      }
+    }
+
     refreshCodeHighlight();
     scheduleCodeSourcePreview();
 
-    // Only touch surrounding chrome when its state actually changes; a write
-    // per keystroke invalidates layout around the (large) textarea.
     const save = document.querySelector("#editor-code-save");
-    const canSave = editable && state.editorCodeDirty && !state.editorCodeSaving;
-    if (save && save.disabled === canSave) save.disabled = !canSave;
+    const canSave = editable && editorUnsavedSessionCount() > 0 && !state.editorCodeSaving;
+    if (save) save.disabled = !canSave;
 
     const meta = document.querySelector(".editor-code-meta small");
     if (meta && state.editorMode === "beta") {
       const status = state.editorCodeDirty
-        ? "Unsaved source changes · live preview updates after you pause typing"
-        : "beta-main source · editable";
+        ? state.editorAutosaveEnabled
+          ? "Changed · autosave will persist this draft"
+          : "Changed · use Save to keep this draft across refreshes"
+        : "Saved source draft · publish beta preview separately";
       if (meta.textContent !== status) meta.textContent = status;
     }
   });
@@ -3893,6 +3918,64 @@ function renderWebEditor() {
   });
 
   document.querySelector("#editor-code-save")?.addEventListener("click", saveEditorCodeSource);
+
+  document.querySelectorAll("[data-editor-code-kind]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const nextKind = button.dataset.editorCodeKind === "css" ? "css" : "html";
+      state.editorCodeKind = nextKind;
+      state.editorCodeCssPath =
+        nextKind === "css" ? String(button.dataset.editorCssPath || state.editorCodeCssPath || "") : "";
+      syncActiveCodeDraft();
+      renderWebEditor();
+      window.setTimeout(postCodeSourcePreview, 40);
+    });
+  });
+
+  const codeFind = document.querySelector("#editor-code-find");
+  const codeReplace = document.querySelector("#editor-code-replace");
+  const findNextInSource = () => {
+    if (!(codeInput instanceof HTMLTextAreaElement)) return false;
+    const needle = String(codeFind?.value || "");
+    if (!needle) return false;
+    const source = codeInput.value;
+    const startAt = Math.max(codeInput.selectionEnd || 0, 0);
+    let index = source.toLowerCase().indexOf(needle.toLowerCase(), startAt);
+    if (index < 0) index = source.toLowerCase().indexOf(needle.toLowerCase(), 0);
+    if (index < 0) {
+      showToast(`“${needle}” was not found.`);
+      return false;
+    }
+    codeInput.focus();
+    codeInput.setSelectionRange(index, index + needle.length);
+    const before = source.slice(0, index);
+    const line = before.split("\n").length - 1;
+    const lineHeight = Number.parseFloat(getComputedStyle(codeInput).lineHeight) || 19.4;
+    codeInput.scrollTop = Math.max(0, line * lineHeight - codeInput.clientHeight * 0.35);
+    codeInput.dispatchEvent(new Event("scroll"));
+    return true;
+  };
+
+  document.querySelector("#editor-code-find-next")?.addEventListener("click", findNextInSource);
+  codeFind?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      findNextInSource();
+    }
+  });
+  document.querySelector("#editor-code-replace-next")?.addEventListener("click", () => {
+    if (!editable || !(codeInput instanceof HTMLTextAreaElement)) return;
+    const needle = String(codeFind?.value || "");
+    if (!needle) return;
+    const selected = codeInput.value.slice(codeInput.selectionStart, codeInput.selectionEnd);
+    if (selected.toLowerCase() !== needle.toLowerCase() && !findNextInSource()) return;
+    codeInput.setRangeText(
+      String(codeReplace?.value || ""),
+      codeInput.selectionStart,
+      codeInput.selectionEnd,
+      "end"
+    );
+    codeInput.dispatchEvent(new Event("input", { bubbles: true }));
+  });
 
   if (pageSelect) pageSelect.value = state.editorPage;
 
