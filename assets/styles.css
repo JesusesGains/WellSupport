@@ -10299,3 +10299,132 @@ body.is-resizing-editor-dock iframe {
 .editor-style-grid input[type="color"] {
   padding: 3px;
 }
+
+
+.editor-inspector-field > small {
+  justify-self: end;
+  margin-top: -2px;
+  color: #a0a9a5;
+  font-size: 7px;
+}
+
+.editor-seo-preview {
+  display: grid;
+  gap: 5px;
+  padding: 10px;
+  border: 1px solid rgba(48,70,96,.09);
+  border-radius: 9px;
+  background: #fbfcfb;
+}
+
+.editor-seo-preview > small {
+  color: #9aa39f;
+  font-size: 7px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+
+.editor-seo-preview > strong {
+  overflow: hidden;
+  color: #28518a;
+  font-size: 11px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editor-seo-preview > p {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  color: #697770;
+  font-size: 8px;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.editor-a11y-summary {
+  display: flex;
+  gap: 6px;
+}
+
+.editor-a11y-summary span {
+  padding: 5px 7px;
+  border-radius: 999px;
+  font-size: 8px;
+  font-weight: 850;
+}
+
+.editor-a11y-summary .is-error {
+  color: #8e4039;
+  background: rgba(154,81,73,.08);
+}
+
+.editor-a11y-summary .is-warning {
+  color: #8a632d;
+  background: #fff7e8;
+}
+
+.editor-a11y-note {
+  color: #8d9892;
+  font-size: 8px;
+  line-height: 1.45;
+}
+
+.editor-a11y-list {
+  display: grid;
+  gap: 6px;
+}
+
+.editor-a11y-issue {
+  display: grid;
+  grid-template-columns: 24px minmax(0,1fr);
+  align-items: start;
+  gap: 7px;
+  width: 100%;
+  padding: 8px;
+  border: 1px solid rgba(48,70,96,.09);
+  border-radius: 9px;
+  text-align: left;
+  background: #fff;
+  cursor: pointer;
+}
+
+.editor-a11y-issue > span {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border-radius: 50%;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.editor-a11y-issue.is-error > span {
+  color: #8e4039;
+  background: rgba(154,81,73,.09);
+}
+
+.editor-a11y-issue.is-warning > span {
+  color: #8a632d;
+  background: #fff7e8;
+}
+
+.editor-a11y-issue strong {
+  display: block;
+  color: #53655c;
+  font-size: 8px;
+  line-height: 1.4;
+}
+
+.editor-a11y-issue small {
+  display: block;
+  margin-top: 3px;
+  overflow: hidden;
+  color: #9aa39f;
+  font: 7px/1.35 ui-monospace,SFMono-Regular,Menlo,monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
