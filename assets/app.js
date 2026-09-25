@@ -1071,9 +1071,16 @@ function cloneEditorOrderDrafts(value) {
 
 function cloneEditorElementDrafts(value) {
   if (!Array.isArray(value)) return [];
+  const allowed = new Set(["text", "image", "button", "section"]);
   return value
-    .filter((item) => item && typeof item === "object" && item.type === "text")
-    .slice(0, 40)
+    .filter(
+      (item) =>
+        item &&
+        typeof item === "object" &&
+        !Array.isArray(item) &&
+        allowed.has(String(item.type || ""))
+    )
+    .slice(0, 60)
     .map((item) => ({ ...item }));
 }
 
