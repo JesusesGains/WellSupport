@@ -1218,6 +1218,7 @@ function editorPendingChangeCount() {
   if (state.editorLayoutDirty) count += 1;
   if (state.editorBannerDirty) count += 1;
   count += state.editorAssetDrafts.length;
+  count += Object.keys(state.editorSourceDrafts || {}).length;
   return count;
 }
 
@@ -1500,6 +1501,10 @@ async function publishWebEditorDraft(payload) {
     state.editorBannerDirty = false;
     state.editorAssetDrafts = [];
     state.editorAssetsLoaded = false;
+    state.editorSourceDrafts = {};
+    state.editorCodeDirty = false;
+    state.editorCodeDraft = "";
+    state.editorCodeOriginal = "";
     state.editorDirty = false;
     state.editorDraftKey = "";
     await clearSharedEditorDraft();
@@ -3523,21 +3528,12 @@ function renderWebEditor() {
           ><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.34 5.66"></path><path d="M20 4v7h-7"></path></svg></button>
           <a id="web-editor-open-page" class="editor-topbar-icon-button" target="_blank" rel="noopener noreferrer"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"></path></svg></a>
 
-          ${state.editorPreviewMode === "code" ? `
-            <button
-              id="editor-code-save"
-              class="editor-topbar-button is-primary"
-              type="button"
-              ${editable && state.editorCodeDirty && !state.editorCodeSaving ? "" : "disabled"}
-            >${state.editorCodeSaving ? "Saving draft…" : "Save draft"}</button>
-          ` : `
-            <button
-              id="web-editor-preview-submit"
-              class="editor-topbar-button is-primary"
-              type="button"
-              ${editable && state.editorDirty ? "" : "disabled"}
-            >Publish beta preview</button>
-          `}
+          <button
+            id="web-editor-preview-submit"
+            class="editor-topbar-button is-primary"
+            type="button"
+            ${editable && state.editorDirty ? "" : "disabled"}
+          >Publish beta preview</button>
         </div>
       </header>
 
@@ -5383,7 +5379,18 @@ function renderWebEditor() {
         path: asset.path,
         contentBase64: asset.contentBase64,
         size: asset.size
-      }))
+      })),
+      sourceDrafts: Object.fromEntries(
+        Object.entries(state.editorSourceDrafts || {}).map(([path, draft]) => [
+          path,
+          {
+            path,
+            kind: draft.kind === "css" ? "css" : "html",
+            content: String(draft.content || ""),
+            originalSha: String(draft.originalSha || "")
+          }
+        ])
+      )
     });
   });
 
