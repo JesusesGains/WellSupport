@@ -25,7 +25,26 @@ const ALLOWED_STYLES = new Set([
   "paddingRight",
   "paddingBottom",
   "paddingLeft",
+  "marginTop",
+  "marginRight",
+  "marginBottom",
+  "marginLeft",
+  "gap",
   "borderRadius",
+  "borderWidth",
+  "borderColor",
+  "borderStyle",
+  "boxShadow",
+  "opacity",
+  "fontSize",
+  "fontWeight",
+  "lineHeight",
+  "letterSpacing",
+  "textAlign",
+  "display",
+  "justifyContent",
+  "alignItems",
+  "flexDirection",
   "objectFit"
 ]);
 const HEADER_KEYS = ["qualifications", "short-courses", "about", "testimonials", "more"];
@@ -137,7 +156,7 @@ function cleanStyleValue(name, value) {
   const raw = String(value || "").trim();
   if (!raw) return "";
 
-  if (name === "backgroundColor" || name === "color") {
+  if (["backgroundColor", "color", "borderColor"].includes(name)) {
     return /^#[0-9a-f]{6}$/i.test(raw) ? raw.toUpperCase() : "";
   }
 
@@ -150,7 +169,14 @@ function cleanStyleValue(name, value) {
       "paddingRight",
       "paddingBottom",
       "paddingLeft",
-      "borderRadius"
+      "marginTop",
+      "marginRight",
+      "marginBottom",
+      "marginLeft",
+      "gap",
+      "borderRadius",
+      "borderWidth",
+      "fontSize"
     ].includes(name)
   ) {
     const match = raw.match(/^(\d{1,4})px$/i);
@@ -158,9 +184,13 @@ function cleanStyleValue(name, value) {
     const maximum =
       name === "width" || name === "height"
         ? 5000
-        : name.startsWith("padding")
+        : name.startsWith("padding") || name.startsWith("margin") || name === "gap"
           ? 800
-          : 1600;
+          : name === "fontSize"
+            ? 240
+            : name === "borderWidth"
+              ? 40
+              : 1600;
     const number = Math.max(0, Math.min(maximum, Number(match[1])));
     return `${number}px`;
   }
@@ -169,6 +199,55 @@ function cleanStyleValue(name, value) {
     return ["cover", "contain", "fill", "scale-down", "none"].includes(raw)
       ? raw
       : "";
+  }
+
+  if (name === "letterSpacing") {
+    const match = raw.match(/^(-?\d{1,3}(?:\.\d+)?)px$/i);
+    if (!match) return "";
+    const number = Math.max(-20, Math.min(80, Number(match[1])));
+    return `${number}px`;
+  }
+
+  if (name === "opacity") {
+    const number = Number(raw);
+    return Number.isFinite(number) ? String(Math.max(0, Math.min(1, number))) : "";
+  }
+
+  if (name === "fontWeight") {
+    const number = Math.round(Number(raw) / 100) * 100;
+    return Number.isFinite(number) ? String(Math.max(100, Math.min(900, number))) : "";
+  }
+
+  if (name === "lineHeight") {
+    const number = Number(raw);
+    return Number.isFinite(number) ? String(Math.max(.7, Math.min(4, number))) : "";
+  }
+
+  if (name === "textAlign") {
+    return ["left", "center", "right", "justify"].includes(raw) ? raw : "";
+  }
+
+  if (name === "display") {
+    return ["block", "inline", "inline-block", "flex", "grid", "none"].includes(raw) ? raw : "";
+  }
+
+  if (name === "justifyContent" || name === "alignItems") {
+    return ["flex-start", "center", "flex-end", "space-between", "space-around", "stretch"].includes(raw)
+      ? raw
+      : "";
+  }
+
+  if (name === "flexDirection") {
+    return ["row", "column", "row-reverse", "column-reverse"].includes(raw) ? raw : "";
+  }
+
+  if (name === "borderStyle") {
+    return ["none", "solid", "dashed", "dotted"].includes(raw) ? raw : "";
+  }
+
+  if (name === "boxShadow") {
+    if (raw.length > 140 || /[;{}<>]|url\s*\(/i.test(raw)) return "";
+    return raw;
   }
 
   return "";
