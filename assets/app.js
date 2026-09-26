@@ -71,6 +71,7 @@ const state = {
   editorTextDrafts: {},
   editorAttributeDrafts: {},
   editorStyleDrafts: {},
+  editorResponsiveStyleDrafts: { tablet: {}, mobile: {} },
   editorOrderDrafts: {},
   editorElementDrafts: [],
   editorTool: "select",
@@ -79,6 +80,16 @@ const state = {
   editorFontDraft: "",
   editorHeadingDraft: "",
   editorCopyDraft: "",
+  editorSeoDraft: {
+    title: "",
+    description: "",
+    ogTitle: "",
+    ogDescription: "",
+    ogImage: "",
+    canonical: "",
+    robots: ""
+  },
+  editorSeoHydratedKey: "",
   editorColours: [],
   editorSelectedText: null,
   editorSelectedObject: null,
@@ -114,6 +125,8 @@ const state = {
   editorAssetDrafts: [],
   editorAssetUploadBusy: false,
   editorAssetUploadTargetSelector: "",
+  editorAssetSavedSignature: "[]",
+  editorAssetMutations: [],
   editorPreviewMode: "visual",
   editorCodeSource: null,
   editorCodeSourceKey: "",
@@ -135,8 +148,23 @@ const state = {
   editorSharedDraftConflict: false,
   editorSharedDraftTimer: null,
   editorSharedDraftSaving: false,
+  editorAutosaveEnabled: localStorage.getItem("well-editor-autosave") === "1",
+  editorAutosaveConfirmed: localStorage.getItem("well-editor-autosave-confirmed") === "1",
+  editorSessionSaving: false,
+  editorSessionSavedAt: "",
+  editorSessionSavedSignature: "",
+  editorInspectorTab: sessionStorage.getItem("well-editor-inspector-tab") || "inspector",
+  editorPageSearch: "",
+  editorSourceDrafts: {},
+  editorCodeKind: "html",
+  editorCodeCssPath: "",
+  editorRemoteDraftTimer: null,
   editorDevtoolsTab: "elements",
   editorDevtoolsData: null,
+  editorA11yIssues: [],
+  editorA11yLoading: false,
+  editorA11yCheckedAt: "",
+
   editorDockRatio: (() => {
     const value = Number(sessionStorage.getItem("well-editor-dock-ratio") || 0.58);
     return Number.isFinite(value) ? Math.min(0.72, Math.max(0.28, value)) : 0.58;
@@ -1046,6 +1074,30 @@ function cloneEditorStyleDrafts(value) {
   );
 }
 
+function cloneEditorResponsiveStyleDrafts(value) {
+  const source =
+    value && typeof value === "object" && !Array.isArray(value)
+      ? value
+      : {};
+  return {
+    tablet: cloneEditorStyleDrafts(source.tablet),
+    mobile: cloneEditorStyleDrafts(source.mobile)
+  };
+}
+
+function resolvedEditorStyleDraftsForDevice(device = state.editorDevice) {
+  const base = cloneEditorStyleDrafts(state.editorStyleDrafts);
+  const responsive = cloneEditorResponsiveStyleDrafts(state.editorResponsiveStyleDrafts);
+  const merge = (target, addition) => {
+    for (const [selector, styles] of Object.entries(addition || {})) {
+      target[selector] = { ...(target[selector] || {}), ...(styles || {}) };
+    }
+  };
+  if (device === "tablet" || device === "mobile") merge(base, responsive.tablet);
+  if (device === "mobile") merge(base, responsive.mobile);
+  return base;
+}
+
 
 function cloneEditorOrderDrafts(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
@@ -1060,9 +1112,16 @@ function cloneEditorOrderDrafts(value) {
 
 function cloneEditorElementDrafts(value) {
   if (!Array.isArray(value)) return [];
+  const allowed = new Set(["text", "image", "button", "section"]);
   return value
-    .filter((item) => item && typeof item === "object" && item.type === "text")
-    .slice(0, 40)
+    .filter(
+      (item) =>
+        item &&
+        typeof item === "object" &&
+        !Array.isArray(item) &&
+        allowed.has(String(item.type || ""))
+    )
+    .slice(0, 60)
     .map((item) => ({ ...item }));
 }
 
@@ -1073,12 +1132,33 @@ function editorDraftFromConfig(config = {}) {
     copy: String(config.copy || ""),
     accent: String(config.accent || ""),
     font: String(config.font || ""),
+    seo:
+      config.seo && typeof config.seo === "object" && !Array.isArray(config.seo)
+        ? {
+            title: String(config.seo.title || ""),
+            description: String(config.seo.description || ""),
+            ogTitle: String(config.seo.ogTitle || ""),
+            ogDescription: String(config.seo.ogDescription || ""),
+            ogImage: String(config.seo.ogImage || ""),
+            canonical: String(config.seo.canonical || ""),
+            robots: String(config.seo.robots || "")
+          }
+        : {
+            title: "",
+            description: "",
+            ogTitle: "",
+            ogDescription: "",
+            ogImage: "",
+            canonical: "",
+            robots: ""
+          },
     text:
       config.text && typeof config.text === "object" && !Array.isArray(config.text)
         ? { ...config.text }
         : {},
     attributes: cloneEditorAttributeDrafts(config.attributes),
     styles: cloneEditorStyleDrafts(config.styles),
+    responsiveStyles: cloneEditorResponsiveStyleDrafts(config.responsiveStyles),
     order: cloneEditorOrderDrafts(config.order),
     elements: cloneEditorElementDrafts(config.elements)
   };
@@ -1090,9 +1170,11 @@ function currentEditorDraftSnapshot() {
     copy: state.editorCopyDraft || "",
     accent: state.editorAccentDraft || "",
     font: state.editorFontDraft || "",
+    seo: { ...(state.editorSeoDraft || {}) },
     text: { ...state.editorTextDrafts },
     attributes: cloneEditorAttributeDrafts(state.editorAttributeDrafts),
     styles: cloneEditorStyleDrafts(state.editorStyleDrafts),
+    responsiveStyles: cloneEditorResponsiveStyleDrafts(state.editorResponsiveStyleDrafts),
     order: cloneEditorOrderDrafts(state.editorOrderDrafts),
     elements: cloneEditorElementDrafts(state.editorElementDrafts)
   };
@@ -1104,9 +1186,11 @@ function applyEditorDraftSnapshot(snapshot = {}) {
   state.editorCopyDraft = draft.copy;
   state.editorAccentDraft = draft.accent;
   state.editorFontDraft = draft.font;
+  state.editorSeoDraft = { ...(draft.seo || {}) };
   state.editorTextDrafts = draft.text;
   state.editorAttributeDrafts = draft.attributes;
   state.editorStyleDrafts = draft.styles;
+  state.editorResponsiveStyleDrafts = cloneEditorResponsiveStyleDrafts(draft.responsiveStyles);
   state.editorOrderDrafts = draft.order;
   state.editorElementDrafts = draft.elements;
 }
@@ -1119,7 +1203,7 @@ function storeCurrentEditorDraft() {
     [state.editorPage]: currentEditorDraftSnapshot()
   };
   state.editorDirty = Object.keys(state.editorPendingPages).length > 0;
-  scheduleSharedEditorDraft();
+  markEditorWorkspaceChanged();
 }
 
 function recordEditorHistory() {
@@ -1207,6 +1291,8 @@ function editorPendingChangeCount() {
   if (state.editorLayoutDirty) count += 1;
   if (state.editorBannerDirty) count += 1;
   count += state.editorAssetDrafts.length;
+  count += state.editorAssetMutations.length;
+  count += Object.keys(state.editorSourceDrafts || {}).length;
   return count;
 }
 
@@ -1397,6 +1483,7 @@ function newEditorBannerItem() {
 function publishEditorBanner() {
   state.editorBannerDirty = true;
   state.editorDirty = editorPendingChangeCount() > 0;
+  markEditorWorkspaceChanged();
   showToast("Banner changes are staged locally. Publish beta preview to build them.");
 }
 
@@ -1408,6 +1495,7 @@ async function deleteEditorBannerItem(index) {
   );
   state.editorBannerDirty = true;
   state.editorDirty = editorPendingChangeCount() > 0;
+  markEditorWorkspaceChanged();
   state.editorBannerPendingDeleteIndex = null;
   document.body.classList.remove("has-support-confirm-modal");
 
@@ -1486,7 +1574,12 @@ async function publishWebEditorDraft(payload) {
     state.editorLayoutDirty = false;
     state.editorBannerDirty = false;
     state.editorAssetDrafts = [];
+    state.editorAssetMutations = [];
     state.editorAssetsLoaded = false;
+    state.editorSourceDrafts = {};
+    state.editorCodeDirty = false;
+    state.editorCodeDraft = "";
+    state.editorCodeOriginal = "";
     state.editorDirty = false;
     state.editorDraftKey = "";
     await clearSharedEditorDraft();
@@ -1605,6 +1698,9 @@ async function loadEditorLayout({ quiet = false } = {}) {
     if (!quiet) showToast(error?.message || "Unable to load website layout source.", "error");
   } finally {
     state.editorLayoutLoading = false;
+    if (state.currentView === "editor" && state.editorInspectorTab === "layers") {
+      renderWebEditor();
+    }
   }
 }
 
@@ -1623,7 +1719,10 @@ async function loadEditorAssets({ quiet = false } = {}) {
     if (!quiet) showToast(error?.message || "Unable to load website assets.", "error");
   } finally {
     state.editorAssetsLoading = false;
-    if (state.currentView === "editor") postEditorAssetsToPreview();
+    if (state.currentView === "editor") {
+      postEditorAssetsToPreview();
+      if (state.editorInspectorTab === "assets") renderWebEditor();
+    }
   }
 }
 
@@ -1655,9 +1754,19 @@ function editorImageAssetOptions() {
       draft: true
     }));
 
+  const mutationByPath = new Map(
+    (state.editorAssetMutations || []).map((item) => [String(item.path || ""), item])
+  );
+
   const existingOptions = state.editorAssets
     .filter((asset) => asset.kind === "image")
-    .map((asset) => {
+    .flatMap((asset) => {
+      const mutation = mutationByPath.get(asset.path);
+      if (mutation?.action === "delete") return [];
+      const displayedPath =
+        mutation?.action === "rename" && mutation.nextPath
+          ? mutation.nextPath
+          : asset.path;
       const previews = [...new Set(
         [
           ...(Array.isArray(asset.previewUrls) ? asset.previewUrls : []),
@@ -1666,14 +1775,16 @@ function editorImageAssetOptions() {
         ].filter(Boolean)
       )];
 
-      return {
-        path: asset.path,
-        value: `/${asset.path}`,
+      return [{
+        path: displayedPath,
+        sourcePath: asset.path,
+        value: `/${displayedPath}`,
         preview: previews[0] || "",
         previews,
-        name: asset.name || asset.path.split("/").pop() || "Image",
-        draft: false
-      };
+        name: displayedPath.split("/").pop() || asset.name || "Image",
+        draft: false,
+        renamed: displayedPath !== asset.path
+      }];
     });
 
   const seen = new Set();
@@ -1698,7 +1809,9 @@ function currentEditorPreviewPayload() {
     font: state.editorFontDraft || "",
     text: { ...state.editorTextDrafts },
     attributes: cloneEditorAttributeDrafts(state.editorAttributeDrafts),
-    styles: cloneEditorStyleDrafts(state.editorStyleDrafts),
+    styles: resolvedEditorStyleDraftsForDevice(state.editorDevice),
+    responsiveStyles: cloneEditorResponsiveStyleDrafts(state.editorResponsiveStyleDrafts),
+    previewDevice: state.editorDevice,
     order: cloneEditorOrderDrafts(state.editorOrderDrafts),
     elements: cloneEditorElementDrafts(state.editorElementDrafts),
     linkDestinations: EDITOR_LINK_DESTINATIONS.map(([href, label]) => ({ href, label })),
@@ -1750,6 +1863,110 @@ function postEditorAssetsToPreview() {
     count.textContent =
       `${state.editorAssetDrafts.length ? `${state.editorAssetDrafts.length} staged · ` : ""}${state.editorAssets.length} existing`;
   }
+}
+
+const EDITOR_ASSET_DRAFT_DB = "well-support-editor-drafts";
+const EDITOR_ASSET_DRAFT_STORE = "asset-drafts";
+
+function editorAssetDraftSignature() {
+  return JSON.stringify(
+    (state.editorAssetDrafts || []).map((asset) => ({
+      path: String(asset.path || ""),
+      name: String(asset.name || ""),
+      type: String(asset.type || ""),
+      size: Number(asset.size || 0)
+    }))
+  );
+}
+
+function openEditorAssetDraftDb() {
+  if (!("indexedDB" in window)) return Promise.resolve(null);
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(EDITOR_ASSET_DRAFT_DB, 1);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(EDITOR_ASSET_DRAFT_STORE)) {
+        db.createObjectStore(EDITOR_ASSET_DRAFT_STORE, { keyPath: "workspace" });
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error("Unable to open local asset draft storage."));
+  });
+}
+
+async function persistEditorAssetDrafts(betaSha) {
+  const db = await openEditorAssetDraftDb().catch(() => null);
+  if (!db || !betaSha) return false;
+  try {
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(EDITOR_ASSET_DRAFT_STORE, "readwrite");
+      const store = tx.objectStore(EDITOR_ASSET_DRAFT_STORE);
+      store.put({
+        workspace: betaSha,
+        updatedAt: new Date().toISOString(),
+        assets: (state.editorAssetDrafts || []).map((asset) => ({
+          path: asset.path,
+          name: asset.name,
+          type: asset.type,
+          size: asset.size,
+          contentBase64: asset.contentBase64,
+          previewUrl: asset.previewUrl,
+          publicUrl: asset.publicUrl,
+          kind: asset.kind
+        }))
+      });
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error || new Error("Unable to save local asset drafts."));
+      tx.onabort = () => reject(tx.error || new Error("Unable to save local asset drafts."));
+    });
+    state.editorAssetSavedSignature = editorAssetDraftSignature();
+    return true;
+  } finally {
+    db.close();
+  }
+}
+
+async function loadPersistedEditorAssetDrafts(betaSha) {
+  const db = await openEditorAssetDraftDb().catch(() => null);
+  if (!db || !betaSha) {
+    state.editorAssetSavedSignature = editorAssetDraftSignature();
+    return;
+  }
+  try {
+    const row = await new Promise((resolve, reject) => {
+      const tx = db.transaction(EDITOR_ASSET_DRAFT_STORE, "readonly");
+      const request = tx.objectStore(EDITOR_ASSET_DRAFT_STORE).get(betaSha);
+      request.onsuccess = () => resolve(request.result || null);
+      request.onerror = () => reject(request.error || new Error("Unable to read local asset drafts."));
+    }).catch(() => null);
+
+    if (row && Array.isArray(row.assets) && !state.editorAssetDrafts.length) {
+      state.editorAssetDrafts = row.assets
+        .filter((asset) => asset && asset.path && asset.contentBase64)
+        .slice(0, 12)
+        .map((asset) => ({ ...asset }));
+      state.editorDirty = editorPendingChangeCount() > 0;
+    }
+    state.editorAssetSavedSignature = editorAssetDraftSignature();
+  } finally {
+    db.close();
+  }
+}
+
+async function clearPersistedEditorAssetDrafts(betaSha) {
+  const db = await openEditorAssetDraftDb().catch(() => null);
+  if (!db || !betaSha) return;
+  try {
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(EDITOR_ASSET_DRAFT_STORE, "readwrite");
+      tx.objectStore(EDITOR_ASSET_DRAFT_STORE).delete(betaSha);
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error || new Error("Unable to clear local asset drafts."));
+    }).catch(() => {});
+  } finally {
+    db.close();
+  }
+  state.editorAssetSavedSignature = "[]";
 }
 
 function editorAssetKind(path = "") {
@@ -1835,6 +2052,8 @@ async function stageEditorAssetFiles(fileList) {
     if (staged.length) {
       state.editorAssetDrafts = [...state.editorAssetDrafts, ...staged];
       state.editorDirty = editorPendingChangeCount() > 0;
+      markEditorWorkspaceChanged();
+      markEditorWorkspaceChanged();
       showToast(
         `${staged.length} asset${staged.length === 1 ? "" : "s"} staged locally. Publish beta preview to upload.`
       );
@@ -1875,12 +2094,16 @@ async function loadEditorNavigation({ quiet = false } = {}) {
     }
   } finally {
     state.editorNavigationLoading = false;
+    if (state.currentView === "editor" && state.editorInspectorTab === "site") {
+      renderWebEditor();
+    }
   }
 }
 
 function saveEditorNavigationOrder() {
   if (state.editorMode !== "beta" || !state.editorNavigationDirty) return;
   state.editorDirty = editorPendingChangeCount() > 0;
+  markEditorWorkspaceChanged();
   showToast("Header order is staged locally. Publish beta preview to build it.");
 }
 
@@ -1949,6 +2172,7 @@ function bindEditorNavigationSortable(list, orderKey, editable) {
     state.editorNavigationDirty = true;
 
     state.editorDirty = editorPendingChangeCount() > 0;
+  markEditorWorkspaceChanged();
 
     const save = document.querySelector("#editor-navigation-save");
     if (save) {
@@ -1968,11 +2192,16 @@ function bindEditorNavigationSortable(list, orderKey, editable) {
 
 
 
-async function loadSharedEditorDraft({ quiet = false } = {}) {
+async function loadSharedEditorDraft({ quiet = false, force = false } = {}) {
   const betaSha = state.editorStatus?.beta?.sha || "";
-  if (!betaSha || state.editorMode !== "beta" || state.editorSharedDraftLoadedSha === betaSha) return;
+  if (
+    !betaSha ||
+    state.editorMode !== "beta" ||
+    (!force && state.editorSharedDraftLoadedSha === betaSha)
+  ) return;
 
   try {
+    await loadPersistedEditorAssetDrafts(betaSha);
     const result = await apiRequest("/editor-draft");
     state.editorSharedDraftAvailable = result.available !== false;
     state.editorSharedDraftLoadedSha = betaSha;
@@ -1981,39 +2210,49 @@ async function loadSharedEditorDraft({ quiet = false } = {}) {
     if (!draft || draft.base_sha !== betaSha) {
       state.editorSharedDraftRevision = 0;
       state.editorSharedDraftConflict = false;
+      state.editorSessionSavedSignature = editorWorkspaceSignature();
+      refreshEditorSessionChrome();
       return;
     }
 
-    const pages =
-      draft.payload?.pages &&
-      typeof draft.payload.pages === "object" &&
-      !Array.isArray(draft.payload.pages)
-        ? draft.payload.pages
-        : {};
-
-    if (!Object.keys(state.editorPendingPages || {}).length) {
-      state.editorPendingPages = Object.fromEntries(
-        Object.entries(pages).map(([path, pageDraft]) => [
-          path,
-          editorDraftFromConfig(pageDraft)
-        ])
-      );
-      state.editorDirty = editorPendingChangeCount() > 0;
-      state.editorDraftKey = "";
-    } else if (JSON.stringify(sharedEditorPages()) !== JSON.stringify(pages)) {
-      state.editorSharedDraftConflict = true;
-      if (!quiet) showToast("A different shared website draft already exists. Reload before overwriting it.", "error");
+    if (force && Number(draft.revision || 0) === Number(state.editorSharedDraftRevision || 0)) {
+      return;
     }
 
+    const payload =
+      draft.payload && typeof draft.payload === "object" && !Array.isArray(draft.payload)
+        ? draft.payload
+        : {};
+
+    const remoteSignature = JSON.stringify(normaliseSharedWorkspace(payload));
+    const localSignature = editorWorkspaceSignature();
+    const hasUnsavedLocal =
+      Boolean(state.editorSessionSavedSignature) &&
+      localSignature !== state.editorSessionSavedSignature;
+
+    if (force && hasUnsavedLocal && remoteSignature !== state.editorSessionSavedSignature) {
+      state.editorSharedDraftConflict = true;
+      if (!quiet) {
+        showToast("Another staff member changed the saved draft while you have unsaved edits.", "error");
+      }
+      refreshEditorSessionChrome();
+      return;
+    }
+
+    applySharedEditorWorkspace(payload);
     state.editorSharedDraftRevision = Number(draft.revision || 0);
+    state.editorSharedDraftConflict = false;
+    state.editorSessionSavedAt = String(draft.updated_at || "");
+    state.editorSessionSavedSignature = editorWorkspaceSignature();
   } catch (error) {
     if (error.status === 503) {
       state.editorSharedDraftAvailable = false;
       state.editorSharedDraftLoadedSha = betaSha;
     } else if (!quiet) {
-      showToast(error?.message || "Unable to load the shared website draft.", "error");
+      showToast(error?.message || "Unable to load the saved website draft.", "error");
     }
   } finally {
+    refreshEditorSessionChrome();
     if (state.currentView === "editor") {
       if (!postCurrentEditorDraftToPreview()) renderWebEditor();
     }
@@ -2029,64 +2268,271 @@ function sharedEditorPages() {
   );
 }
 
-function scheduleSharedEditorDraft() {
-  if (state.editorSharedDraftTimer) window.clearTimeout(state.editorSharedDraftTimer);
-  state.editorSharedDraftTimer = window.setTimeout(saveSharedEditorDraft, 900);
+function normaliseSharedWorkspace(payload = {}) {
+  const pages =
+    payload.pages && typeof payload.pages === "object" && !Array.isArray(payload.pages)
+      ? Object.fromEntries(
+          Object.entries(payload.pages).map(([path, pageDraft]) => [
+            path,
+            editorDraftFromConfig(pageDraft)
+          ])
+        )
+      : {};
+
+  const navigation =
+    payload.navigation && typeof payload.navigation === "object" && !Array.isArray(payload.navigation)
+      ? payload.navigation
+      : {};
+  const layoutOrders =
+    payload.layoutOrders && typeof payload.layoutOrders === "object" && !Array.isArray(payload.layoutOrders)
+      ? Object.fromEntries(
+          Object.entries(payload.layoutOrders).map(([scope, order]) => [
+            scope,
+            Array.isArray(order) ? [...order] : []
+          ])
+        )
+      : {};
+  const banner =
+    payload.banner && typeof payload.banner === "object" && !Array.isArray(payload.banner)
+      ? payload.banner
+      : {};
+  const sourceDrafts =
+    payload.sourceDrafts && typeof payload.sourceDrafts === "object" && !Array.isArray(payload.sourceDrafts)
+      ? Object.fromEntries(
+          Object.entries(payload.sourceDrafts)
+            .filter(([, draft]) => draft && typeof draft === "object" && !Array.isArray(draft))
+            .map(([path, draft]) => [
+              path,
+              {
+                path,
+                kind: draft.kind === "css" ? "css" : "html",
+                content: String(draft.content || ""),
+                originalSha: String(draft.originalSha || "")
+              }
+            ])
+        )
+      : {};
+
+  return {
+    pages,
+    navigation: {
+      headerOrder: Array.isArray(navigation.headerOrder) ? [...navigation.headerOrder] : [],
+      shortCourseGroupOrder: Array.isArray(navigation.shortCourseGroupOrder)
+        ? [...navigation.shortCourseGroupOrder]
+        : []
+    },
+    layoutOrders,
+    banner: {
+      intervalMs: Number(banner.intervalMs || 5200),
+      items: Array.isArray(banner.items) ? banner.items.map((item) => ({ ...item })) : []
+    },
+    assetMutations: Array.isArray(payload.assetMutations)
+      ? payload.assetMutations
+          .filter((item) => item && ["rename","delete"].includes(item.action))
+          .map((item) => ({ ...item }))
+      : [],
+    sourceDrafts
+  };
 }
 
-async function saveSharedEditorDraft() {
+function sharedEditorWorkspace() {
+  return normaliseSharedWorkspace({
+    pages: sharedEditorPages(),
+    navigation: {
+      headerOrder: state.editorNavigationHeaderOrder,
+      shortCourseGroupOrder: state.editorNavigationGroupOrder
+    },
+    layoutOrders: state.editorLayoutOrders,
+    banner: {
+      intervalMs: Number(state.editorBannerInterval || 5200),
+      items: state.editorBannerItems
+    },
+    assetMutations: state.editorAssetMutations,
+    sourceDrafts: state.editorSourceDrafts
+  });
+}
+
+function applySharedEditorWorkspace(payload = {}) {
+  const workspace = normaliseSharedWorkspace(payload);
+  state.editorPendingPages = workspace.pages;
+  if (workspace.navigation.headerOrder.length) {
+    state.editorNavigationHeaderOrder = workspace.navigation.headerOrder;
+    state.editorNavigationDirty = true;
+  }
+  if (workspace.navigation.shortCourseGroupOrder.length) {
+    state.editorNavigationGroupOrder = workspace.navigation.shortCourseGroupOrder;
+    state.editorNavigationDirty = true;
+  }
+  if (Object.keys(workspace.layoutOrders).length) {
+    state.editorLayoutOrders = workspace.layoutOrders;
+    state.editorLayoutDirty = true;
+  }
+  if (workspace.banner.items.length || Number(workspace.banner.intervalMs) !== 5200) {
+    state.editorBannerItems = workspace.banner.items;
+    state.editorBannerInterval = workspace.banner.intervalMs;
+    state.editorBannerDirty = true;
+  }
+  state.editorAssetMutations = workspace.assetMutations;
+  state.editorSourceDrafts = workspace.sourceDrafts;
+  state.editorDirty = editorPendingChangeCount() > 0 || Object.keys(state.editorSourceDrafts).length > 0;
+  state.editorDraftKey = "";
+}
+
+function editorWorkspaceSignature() {
+  return JSON.stringify(sharedEditorWorkspace());
+}
+
+function editorUnsavedSessionCount() {
+  const pending = editorPendingChangeCount();
+  const workspaceChanged =
+    state.editorSessionSavedSignature
+      ? editorWorkspaceSignature() !== state.editorSessionSavedSignature
+      : pending > 0;
+  const assetsChanged =
+    editorAssetDraftSignature() !== (state.editorAssetSavedSignature || "[]");
+
+  if (!workspaceChanged && !assetsChanged) return 0;
+  return Math.max(1, pending);
+}
+
+function refreshEditorSessionChrome() {
+  const count = editorUnsavedSessionCount();
+  const status = document.querySelector("#editor-session-status");
+  const save = document.querySelector("#editor-session-save");
+  const autosave = document.querySelector("#editor-autosave-toggle");
+
+  if (status) {
+    if (state.editorSharedDraftConflict) {
+      status.textContent = "Draft conflict";
+      status.className = "editor-session-status is-conflict";
+    } else if (state.editorSessionSaving || state.editorSharedDraftSaving) {
+      status.textContent = "Saving…";
+      status.className = "editor-session-status is-saving";
+    } else if (count) {
+      status.textContent = `${count} unsaved change${count === 1 ? "" : "s"}`;
+      status.className = "editor-session-status is-unsaved";
+    } else if (state.editorSessionSavedAt) {
+      const savedAt = new Date(state.editorSessionSavedAt);
+      status.textContent = Number.isNaN(savedAt.getTime())
+        ? "Saved"
+        : `Saved ${savedAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
+      status.className = "editor-session-status is-saved";
+    } else {
+      status.textContent = "Saved";
+      status.className = "editor-session-status is-saved";
+    }
+  }
+
+  if (save) {
+    save.disabled =
+      state.editorMode !== "beta" ||
+      state.editorSessionSaving ||
+      state.editorSharedDraftSaving ||
+      state.editorSharedDraftConflict ||
+      count < 1;
+  }
+
+  if (autosave) {
+    autosave.classList.toggle("is-active", state.editorAutosaveEnabled);
+    autosave.setAttribute("aria-pressed", state.editorAutosaveEnabled ? "true" : "false");
+    const label = autosave.querySelector("span");
+    if (label) label.textContent = state.editorAutosaveEnabled ? "Autosave on" : "Autosave off";
+  }
+}
+
+function markEditorWorkspaceChanged() {
+  refreshEditorSessionChrome();
+  if (state.editorAutosaveEnabled) scheduleSharedEditorDraft();
+}
+
+function scheduleSharedEditorDraft() {
+  if (!state.editorAutosaveEnabled) return;
+  if (state.editorSharedDraftTimer) window.clearTimeout(state.editorSharedDraftTimer);
+  state.editorSharedDraftTimer = window.setTimeout(
+    () => saveSharedEditorDraft({ quiet: true }),
+    900
+  );
+}
+
+async function saveSharedEditorDraft({ quiet = false } = {}) {
   state.editorSharedDraftTimer = null;
   if (
     state.editorMode !== "beta" ||
     state.editorSharedDraftSaving ||
     state.editorSharedDraftAvailable === false ||
     state.editorSharedDraftConflict
-  ) return;
+  ) return false;
 
   const betaSha = state.editorStatus?.beta?.sha || "";
-  if (!betaSha) return;
+  if (!betaSha) return false;
 
   state.editorSharedDraftSaving = true;
+  state.editorSessionSaving = true;
+  refreshEditorSessionChrome();
+
   try {
+    await persistEditorAssetDrafts(betaSha);
+    const workspace = sharedEditorWorkspace();
     const result = await apiRequest("/editor-draft", {
       method: "POST",
       body: {
         baseSha: betaSha,
         revision: state.editorSharedDraftRevision || 0,
-        pages: sharedEditorPages()
+        ...workspace
       }
     });
     if (result.available === false) {
       state.editorSharedDraftAvailable = false;
-      return;
+      if (!quiet) showToast("Saved draft storage is not available.", "error");
+      return false;
     }
     state.editorSharedDraftAvailable = true;
     state.editorSharedDraftLoadedSha = betaSha;
-    state.editorSharedDraftRevision = Number(result.draft?.revision || state.editorSharedDraftRevision || 0);
+    state.editorSharedDraftRevision = Number(
+      result.draft?.revision || state.editorSharedDraftRevision || 0
+    );
+    state.editorSessionSavedAt = String(result.draft?.updated_at || new Date().toISOString());
+    state.editorSessionSavedSignature = editorWorkspaceSignature();
+    if (!quiet) {
+      showToast("Draft saved. This does not publish the beta preview or live website.");
+    }
+    return true;
   } catch (error) {
     if (error.status === 409) {
       state.editorSharedDraftConflict = true;
-      showToast("Another staff member changed the shared draft. Reload before saving more changes.", "error");
+      showToast("Another staff member changed the saved draft. Reload before saving more changes.", "error");
     } else if (error.status === 503) {
       state.editorSharedDraftAvailable = false;
+      if (!quiet) showToast("Saved draft storage is not enabled.", "error");
+    } else if (!quiet) {
+      showToast(error?.message || "Unable to save the website draft.", "error");
     }
+    return false;
   } finally {
     state.editorSharedDraftSaving = false;
+    state.editorSessionSaving = false;
+    refreshEditorSessionChrome();
   }
 }
 
 async function clearSharedEditorDraft() {
+  const betaSha = state.editorStatus?.beta?.sha || state.editorSharedDraftLoadedSha || "";
   if (state.editorSharedDraftTimer) window.clearTimeout(state.editorSharedDraftTimer);
   state.editorSharedDraftTimer = null;
   try {
     await apiRequest("/editor-draft", { method: "DELETE", body: {} });
   } catch {
-    // Optional shared-draft storage must not block a successful publish.
+    // Optional saved-draft storage must not block a successful publish.
   }
   state.editorSharedDraftLoadedSha = state.editorStatus?.beta?.sha || "";
   state.editorSharedDraftRevision = 0;
   state.editorSharedDraftConflict = false;
+  state.editorSessionSavedAt = "";
+  state.editorSessionSavedSignature = editorWorkspaceSignature();
+  await clearPersistedEditorAssetDrafts(betaSha);
+  refreshEditorSessionChrome();
 }
+
 
 async function loadEditorVersionHistory({ quiet = false } = {}) {
   if (state.editorHistoryLoading || !staffCan("editor")) return;
@@ -2142,6 +2588,32 @@ async function stageEditorProductionRestore(sourceSha) {
   }
 }
 
+function hydrateEditorSeoFromHtml(html, key) {
+  if (!key || state.editorSeoHydratedKey === key) return;
+  state.editorSeoHydratedKey = key;
+
+  const hasDraftSeo = Object.values(state.editorSeoDraft || {}).some((value) =>
+    String(value || "").trim()
+  );
+  if (hasDraftSeo) return;
+
+  try {
+    const doc = new DOMParser().parseFromString(String(html || ""), "text/html");
+    const meta = (selector) => String(doc.querySelector(selector)?.getAttribute("content") || "");
+    state.editorSeoDraft = {
+      title: String(doc.querySelector("title")?.textContent || "").trim(),
+      description: meta('meta[name="description"]'),
+      ogTitle: meta('meta[property="og:title"]'),
+      ogDescription: meta('meta[property="og:description"]'),
+      ogImage: meta('meta[property="og:image"]'),
+      canonical: String(doc.querySelector('link[rel="canonical"]')?.getAttribute("href") || ""),
+      robots: meta('meta[name="robots"]').toLowerCase()
+    };
+  } catch {
+    // Keep the SEO panel empty if the source cannot be parsed.
+  }
+}
+
 async function loadEditorCodeSource({ quiet = false, force = false } = {}) {
   if (!state.editorStatus?.connected || state.editorCodeLoading) return;
 
@@ -2150,7 +2622,10 @@ async function loadEditorCodeSource({ quiet = false, force = false } = {}) {
     ? state.editorStatus?.beta?.sha || ""
     : state.editorStatus?.main?.sha || ""}`;
 
-  if (!force && state.editorCodeSourceKey === key && state.editorCodeSource) return;
+  if (!force && state.editorCodeSourceKey === key && state.editorCodeSource) {
+    syncActiveCodeDraft();
+    return;
+  }
 
   state.editorCodeLoading = true;
   if (state.currentView === "editor" && state.editorPreviewMode === "code") {
@@ -2163,9 +2638,15 @@ async function loadEditorCodeSource({ quiet = false, force = false } = {}) {
     );
     state.editorCodeSource = result;
     state.editorCodeSourceKey = key;
-    state.editorCodeOriginal = String(result?.html?.content || "");
-    state.editorCodeDraft = state.editorCodeOriginal;
-    state.editorCodeDirty = false;
+    hydrateEditorSeoFromHtml(result?.html?.content || "", key);
+
+    const cssFiles = Array.isArray(result?.css?.files) ? result.css.files : [];
+    if (state.editorCodeKind === "css") {
+      const stillExists = cssFiles.some((file) => file.path === state.editorCodeCssPath);
+      if (!stillExists) state.editorCodeCssPath = cssFiles[0]?.path || "";
+      if (!state.editorCodeCssPath) state.editorCodeKind = "html";
+    }
+    syncActiveCodeDraft();
   } catch (error) {
     state.editorCodeSource = {
       error: error?.message || "Unable to load website source."
@@ -2183,16 +2664,63 @@ async function loadEditorCodeSource({ quiet = false, force = false } = {}) {
   }
 }
 
+function editorCodeActiveFile() {
+  if (state.editorCodeKind === "css") {
+    const files = Array.isArray(state.editorCodeSource?.css?.files)
+      ? state.editorCodeSource.css.files
+      : [];
+    const selected =
+      files.find((file) => file.path === state.editorCodeCssPath) ||
+      files[0] ||
+      null;
+    if (selected) return { ...selected, kind: "css" };
+  }
+
+  const html = state.editorCodeSource?.html;
+  return html ? { ...html, kind: "html" } : null;
+}
+
+function editorCodeActivePath() {
+  return String(editorCodeActiveFile()?.path || "");
+}
+
+function syncActiveCodeDraft() {
+  const file = editorCodeActiveFile();
+  if (!file) {
+    state.editorCodeOriginal = "";
+    state.editorCodeDraft = "";
+    state.editorCodeDirty = false;
+    return;
+  }
+
+  const path = String(file.path || "");
+  const original = String(file.content || "");
+  const savedDraft = state.editorSourceDrafts?.[path];
+
+  state.editorCodeOriginal = original;
+  state.editorCodeDraft =
+    savedDraft && typeof savedDraft.content === "string"
+      ? savedDraft.content
+      : original;
+  state.editorCodeDirty = state.editorCodeDraft !== state.editorCodeOriginal;
+}
+
 function editorCodeContent() {
-  return String(
-    state.editorCodeDraft ||
-    state.editorCodeSource?.html?.content ||
-    ""
-  );
+  return String(state.editorCodeDraft ?? "");
 }
 
 function editorCodeFileLabel() {
-  return state.editorCodeSource?.html?.path || "HTML";
+  return editorCodeActiveFile()?.path || (state.editorCodeKind === "css" ? "CSS" : "HTML");
+}
+
+function editorHighlightCode(source) {
+  if (state.editorCodeKind === "css") {
+    return escapeEditorAttribute(String(source || ""))
+      .replace(/(\/\*[\s\S]*?\*\/)/g, '<span class="html-comment">$1</span>')
+      .replace(/([.#]?[a-zA-Z][a-zA-Z0-9_:\-\[\]="']*)(\s*\{)/g, '<span class="html-tag">$1</span>$2')
+      .replace(/([a-z-]+)(\s*:)/gi, '<span class="html-attr">$1</span>$2');
+  }
+  return highlightHtmlSource(source);
 }
 
 function highlightHtmlTag(tag) {
@@ -2326,7 +2854,7 @@ function paintCodeHighlight(input, highlight, { force = false } = {}) {
     );
     const to = Math.min(starts.length, lastVisible + CODE_HIGHLIGHT_BUFFER_LINES);
     const end = to < starts.length ? starts[to] : text.length;
-    code.innerHTML = highlightHtmlSource(text.slice(starts[from], end));
+    code.innerHTML = editorHighlightCode(text.slice(starts[from], end));
     cache.from = from;
     cache.to = to;
   }
@@ -2462,7 +2990,7 @@ function sourceRangeForSelection(source, hint) {
   return { start: chosen.start, end: Math.max(chosen.start + 1, end) };
 }
 function revealCodeSelection(hint) {
-  if (state.editorPreviewMode !== "code") return;
+  if (state.editorPreviewMode !== "code" || state.editorCodeKind !== "html") return;
   const input = document.querySelector("#editor-code-input");
   const editor = document.querySelector(".editor-code-editor");
   if (!(input instanceof HTMLTextAreaElement) || !editor) return;
@@ -2487,17 +3015,11 @@ function revealCodeSelection(hint) {
 }
 
 async function saveEditorCodeSource() {
-  if (
-    state.editorMode !== "beta" ||
-    state.editorCodeSaving ||
-    !state.editorCodeDirty
-  ) {
-    return;
-  }
+  if (state.editorMode !== "beta" || state.editorCodeSaving) return;
 
-  const expectedBetaSha = state.editorStatus?.beta?.sha || "";
-  const expectedFileSha = state.editorCodeSource?.html?.sha || "";
-  if (!expectedBetaSha || !expectedFileSha) {
+  const path = editorCodeActivePath();
+  const file = editorCodeActiveFile();
+  if (!path || !file) {
     showToast("Reload the page source before saving.", "error");
     return;
   }
@@ -2506,41 +3028,28 @@ async function saveEditorCodeSource() {
   const button = document.querySelector("#editor-code-save");
   if (button) {
     button.disabled = true;
-    button.textContent = "Building preview…";
+    button.textContent = "Saving draft…";
   }
 
   try {
-    const result = await apiRequest("/editor-code-save", {
-      method: "POST",
-      body: {
-        page: state.editorPage,
-        expectedBetaSha,
-        expectedFileSha,
-        content: state.editorCodeDraft
+    state.editorSourceDrafts = {
+      ...state.editorSourceDrafts,
+      [path]: {
+        path,
+        kind: file.kind,
+        content: String(state.editorCodeDraft || ""),
+        originalSha: String(file.sha || "")
       }
-    });
-
-    state.editorCodeOriginal = state.editorCodeDraft;
-    state.editorCodeDirty = false;
-    state.editorCodeSource = null;
-    state.editorCodeSourceKey = "";
-    state.editorStatus = null;
-    state.editorDraftKey = "";
-
-    await loadWebEditorStatus({ quiet: true });
-    await loadEditorCodeSource({ quiet: true, force: true });
-
-    showToast(
-      `HTML saved to beta-main as ${String(result.commitSha || "").slice(0, 7)}. Review the Cloudflare preview before publishing live.`
-    );
-  } catch (error) {
-    showToast(error?.message || "Unable to save HTML source.", "error");
+    };
+    markEditorWorkspaceChanged();
+    const saved = await saveSharedEditorDraft({ quiet: false });
+    if (saved) state.editorCodeDirty = state.editorCodeDraft !== state.editorCodeOriginal;
   } finally {
     state.editorCodeSaving = false;
+    refreshEditorSessionChrome();
     if (state.currentView === "editor") renderWebEditor();
   }
 }
-
 
 function editorDevtoolsContentMarkup() {
   const data = state.editorDevtoolsData;
@@ -2656,6 +3165,364 @@ function editorDeviceIcon(device) {
   return `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="4" width="19" height="12.5" rx="1.5"></rect><path d="M8.5 20h7M12 16.5V20"></path></svg>`;
 }
 
+
+function editorPageOptions() {
+  const seen = new Set();
+  return EDITOR_LINK_DESTINATIONS
+    .map(([href, label]) => {
+      const path = href === "index.html" ? "/" : `/${String(href || "").replace(/^\/+/, "").split("#")[0]}`;
+      return { path, label };
+    })
+    .filter((item) => {
+      if (!item.path || seen.has(item.path)) return false;
+      seen.add(item.path);
+      return true;
+    });
+}
+
+function editorAssetsMarkup(editable) {
+  const options = editorImageAssetOptions();
+  if (!options.length) {
+    return `<div class="editor-inspector-empty">No image assets loaded yet.</div>`;
+  }
+
+  return `
+    <div class="editor-assets-toolbar">
+      <input id="editor-assets-search" type="search" placeholder="Search assets…" aria-label="Search assets">
+      <button id="editor-assets-upload" type="button" ${editable ? "" : "disabled"}>Upload</button>
+    </div>
+    <div id="editor-assets-grid" class="editor-assets-grid">
+      ${options.slice(0, 240).map((asset) => `
+        <article class="editor-asset-card" data-editor-asset-name="${escapeEditorAttribute(String(asset.name || "").toLowerCase())}">
+          <div class="editor-asset-preview">
+            ${asset.preview ? `<img src="${escapeEditorAttribute(asset.preview)}" alt="">` : "<span>IMG</span>"}
+          </div>
+          <div class="editor-asset-meta">
+            <strong title="${escapeEditorAttribute(asset.path)}">${escapeEditorAttribute(asset.name || asset.path)}</strong>
+            <small>${asset.draft ? "Staged upload" : escapeEditorAttribute(asset.path)}</small>
+          </div>
+          <div class="editor-asset-actions">
+            <button type="button" data-editor-asset-copy="${escapeEditorAttribute(asset.value)}">Copy</button>
+            <button type="button" data-editor-asset-use="${escapeEditorAttribute(asset.value)}" ${editable ? "" : "disabled"}>Use</button>
+            <button type="button" data-editor-asset-rename="${escapeEditorAttribute(asset.sourcePath || asset.path)}" ${editable && !asset.draft ? "" : "disabled"}>Rename</button>
+            <button type="button" data-editor-asset-delete="${escapeEditorAttribute(asset.sourcePath || asset.path)}" ${editable ? "" : "disabled"}>Delete</button>
+          </div>
+        </article>
+      `).join("")}
+    </div>
+  `;
+}
+
+function editorNavigationMarkup(editable) {
+  const headerOrder = state.editorNavigationHeaderOrder.length
+    ? state.editorNavigationHeaderOrder
+    : Object.keys(EDITOR_HEADER_NAV_LABELS);
+  const groupOrder = state.editorNavigationGroupOrder.length
+    ? state.editorNavigationGroupOrder
+    : EDITOR_SHORT_COURSE_GROUPS;
+
+  return `
+    <section class="editor-inspector-section">
+      <div class="editor-inspector-heading"><strong>Header navigation</strong><small>Drag to reorder</small></div>
+      <div id="editor-header-order-list" class="editor-order-list">
+        ${headerOrder.map((key) => editorNavigationItemMarkup(key, EDITOR_HEADER_NAV_LABELS[key] || key, editable)).join("")}
+      </div>
+    </section>
+    <section class="editor-inspector-section">
+      <div class="editor-inspector-heading"><strong>Short Courses groups</strong><small>Drag to reorder</small></div>
+      <div id="editor-short-course-order-list" class="editor-order-list">
+        ${groupOrder.map((key) => editorNavigationItemMarkup(key, key, editable)).join("")}
+      </div>
+      <button id="editor-navigation-save" class="editor-inspector-secondary" type="button" ${editable && state.editorNavigationDirty ? "" : "disabled"}>Save order to draft</button>
+    </section>
+  `;
+}
+
+function editorLayoutMarkup(editable) {
+  const scopes = Object.entries(state.editorLayoutOrders || {});
+  if (!scopes.length) {
+    return `<div class="editor-inspector-empty">${state.editorLayoutLoading ? "Loading page sections…" : "No source-backed section groups are registered for this page."}</div>`;
+  }
+
+  return scopes.map(([scope, order]) => `
+    <section class="editor-inspector-section">
+      <div class="editor-inspector-heading">
+        <strong>${escapeEditorAttribute(scope.replaceAll("-", " "))}</strong>
+        <small>Section order</small>
+      </div>
+      <div class="editor-layout-order-list" data-editor-layout-scope-list="${escapeEditorAttribute(scope)}">
+        ${order.map((key, index) => `
+          <div class="editor-layout-order-item">
+            <span>⋮⋮</span>
+            <strong>${escapeEditorAttribute(String(key).replaceAll("-", " "))}</strong>
+            <div>
+              <button type="button" data-editor-layout-move="${escapeEditorAttribute(scope)}" data-editor-layout-index="${index}" data-editor-layout-direction="-1" ${editable && index > 0 ? "" : "disabled"} aria-label="Move up">↑</button>
+              <button type="button" data-editor-layout-move="${escapeEditorAttribute(scope)}" data-editor-layout-index="${index}" data-editor-layout-direction="1" ${editable && index < order.length - 1 ? "" : "disabled"} aria-label="Move down">↓</button>
+            </div>
+          </div>
+        `).join("")}
+      </div>
+    </section>
+  `).join("");
+}
+
+function editorBannerMarkup(editable) {
+  const items = state.editorBannerItems || [];
+  return `
+    <section class="editor-inspector-section">
+      <div class="editor-inspector-heading">
+        <strong>Rolling banners</strong>
+        <button id="editor-banner-add" type="button" ${editable ? "" : "disabled"}>+ Add</button>
+      </div>
+      <label class="editor-inspector-field">
+        <span>Rotation interval</span>
+        <select id="editor-banner-interval" ${editable ? "" : "disabled"}>
+          ${[[3200,"3.2 sec"],[4200,"4.2 sec"],[5200,"5.2 sec"],[6500,"6.5 sec"],[8000,"8 sec"],[10000,"10 sec"]].map(([value,label]) => `<option value="${value}" ${Number(state.editorBannerInterval) === value ? "selected" : ""}>${label}</option>`).join("")}
+        </select>
+      </label>
+      <div id="editor-banner-list" class="editor-banner-list">
+        ${items.length ? items.map((item, index) => {
+          const open = state.editorBannerOpenId === item.id;
+          return `
+            <article class="editor-banner-card ${open ? "is-open" : ""}" data-banner-index="${index}">
+              <button type="button" class="editor-banner-summary" data-banner-toggle="${index}" aria-expanded="${open}">
+                <strong>${escapeEditorAttribute(item.message || "Announcement")}</strong>
+                <span>${item.enabled === false ? "Off" : "On"}</span>
+              </button>
+              <div class="editor-banner-fields">
+                <label><span>Message</span><input data-banner-field="message" value="${escapeEditorAttribute(item.message || "")}" ${editable ? "" : "disabled"}></label>
+                <label><span>CTA</span><input data-banner-field="cta" value="${escapeEditorAttribute(item.cta || "")}" ${editable ? "" : "disabled"}></label>
+                <label><span>Link</span><input data-banner-field="href" value="${escapeEditorAttribute(item.href || "")}" ${editable ? "" : "disabled"}></label>
+                <div class="editor-banner-colours">
+                  <label class="editor-banner-colour-input"><span>Background</span><input type="color" data-banner-field="background" value="${escapeEditorAttribute(item.background || "#304660")}" ${editable ? "" : "disabled"}><code>${escapeEditorAttribute(item.background || "#304660")}</code></label>
+                  <label class="editor-banner-colour-input"><span>Text</span><input type="color" data-banner-field="foreground" value="${escapeEditorAttribute(item.foreground || "#FFFEFA")}" ${editable ? "" : "disabled"}><code>${escapeEditorAttribute(item.foreground || "#FFFEFA")}</code></label>
+                </div>
+                <label><span>Starts</span><input type="datetime-local" data-banner-field="startsAt" value="${escapeEditorAttribute(editorDateTimeLocal(item.startsAt))}" ${editable ? "" : "disabled"}></label>
+                <label><span>Ends</span><input type="datetime-local" data-banner-field="endsAt" value="${escapeEditorAttribute(editorDateTimeLocal(item.endsAt))}" ${editable ? "" : "disabled"}></label>
+                <label class="editor-banner-toggle-row"><input type="checkbox" data-banner-field="enabled" ${item.enabled === false ? "" : "checked"} ${editable ? "" : "disabled"}><span>Enabled</span></label>
+                <button type="button" class="editor-banner-remove" data-banner-remove="${index}" ${editable ? "" : "disabled"}>Delete banner</button>
+              </div>
+            </article>
+          `;
+        }).join("") : `<div class="editor-inspector-empty">No rolling banners.</div>`}
+      </div>
+      <button id="editor-banner-save" class="editor-inspector-secondary" type="button" ${editable ? "" : "disabled"}>Save banner draft</button>
+    </section>
+  `;
+}
+
+function editorHistoryMarkup() {
+  const commits = state.editorVersionHistory || [];
+  const audit = state.editorAuditHistory || [];
+  return `
+    <section class="editor-inspector-section">
+      <div class="editor-inspector-heading">
+        <strong>Production history</strong>
+        <button id="editor-history-toggle" type="button">${state.editorHistoryLoading ? "Loading…" : "Refresh"}</button>
+      </div>
+      <div class="editor-version-list">
+        ${commits.length ? commits.map((commit) => `
+          <article class="editor-version-row">
+            <div><strong>${escapeEditorAttribute(commit.message || "Website update")}</strong><small>${escapeEditorAttribute(commit.author || "Unknown")} · ${escapeEditorAttribute(formatDay(commit.authoredAt))}</small></div>
+            ${staffCan("publish") ? `<button type="button" data-editor-restore-sha="${escapeEditorAttribute(commit.sha || "")}">Stage restore</button>` : ""}
+          </article>
+        `).join("") : `<div class="editor-inspector-empty">${state.editorHistoryLoading ? "Loading history…" : "Open History to load recent versions."}</div>`}
+      </div>
+    </section>
+    <section class="editor-inspector-section">
+      <div class="editor-inspector-heading"><strong>Editor audit</strong><small>Recent actions</small></div>
+      <div class="editor-audit-list">
+        ${audit.length ? audit.slice(0,30).map((entry) => `
+          <div class="editor-audit-row">
+            <strong>${escapeEditorAttribute(entry.actor_display_name || "Staff")}</strong>
+            <span>${escapeEditorAttribute(String(entry.action || "").replaceAll("_", " "))}</span>
+            <small>${escapeEditorAttribute(formatTime(entry.created_at))}</small>
+          </div>
+        `).join("") : `<div class="editor-inspector-empty">No audit events loaded.</div>`}
+      </div>
+    </section>
+  `;
+}
+
+function editorPagesMarkup() {
+  const query = String(state.editorPageSearch || "").trim().toLowerCase();
+  const pages = editorPageOptions().filter((item) =>
+    !query ||
+    item.label.toLowerCase().includes(query) ||
+    item.path.toLowerCase().includes(query)
+  );
+
+  return `
+    <div class="editor-pages-search">
+      <input id="editor-page-search" type="search" value="${escapeEditorAttribute(state.editorPageSearch || "")}" placeholder="Search pages…" aria-label="Search website pages">
+    </div>
+    <div class="editor-page-list">
+      ${pages.slice(0,120).map((item) => `
+        <button type="button" class="${state.editorPage === item.path ? "is-active" : ""}" data-editor-page-jump="${escapeEditorAttribute(item.path)}">
+          <strong>${escapeEditorAttribute(item.label)}</strong>
+          <small>${escapeEditorAttribute(item.path)}</small>
+        </button>
+      `).join("")}
+    </div>
+  `;
+}
+
+function editorSeoMarkup(editable) {
+  const seo = state.editorSeoDraft || {};
+  const field = (key, label, max, placeholder = "") => `
+    <label class="editor-inspector-field">
+      <span>${escapeEditorAttribute(label)}</span>
+      <input
+        type="text"
+        data-editor-seo-field="${escapeEditorAttribute(key)}"
+        maxlength="${max}"
+        value="${escapeEditorAttribute(seo[key] || "")}"
+        placeholder="${escapeEditorAttribute(placeholder)}"
+        ${editable ? "" : "disabled"}
+      >
+      <small>${String(seo[key] || "").length}/${max}</small>
+    </label>
+  `;
+
+  return `
+    <section class="editor-inspector-section">
+      <div class="editor-inspector-heading">
+        <strong>Search appearance</strong>
+        <small>Source-backed metadata</small>
+      </div>
+      ${field("title", "Page title", 180, "Title shown in search results")}
+      ${field("description", "Meta description", 320, "Describe this page")}
+      ${field("canonical", "Canonical URL", 2000, "https://www.wellcollegeglobal.com/...")}
+      <label class="editor-inspector-field">
+        <span>Robots</span>
+        <select data-editor-seo-field="robots" ${editable ? "" : "disabled"}>
+          ${[
+            ["", "Use site default"],
+            ["index,follow", "Index, follow"],
+            ["index,nofollow", "Index, nofollow"],
+            ["noindex,follow", "Noindex, follow"],
+            ["noindex,nofollow", "Noindex, nofollow"]
+          ].map(([value,label]) => `<option value="${value}" ${String(seo.robots || "") === value ? "selected" : ""}>${label}</option>`).join("")}
+        </select>
+      </label>
+    </section>
+    <section class="editor-inspector-section">
+      <div class="editor-inspector-heading">
+        <strong>Social sharing</strong>
+        <small>Open Graph</small>
+      </div>
+      ${field("ogTitle", "Social title", 180, "Defaults to page title")}
+      ${field("ogDescription", "Social description", 320, "Defaults to meta description")}
+      ${field("ogImage", "Social image URL", 2000, "/assets/... or https://...")}
+      <div class="editor-seo-preview">
+        <small>Preview</small>
+        <strong>${escapeEditorAttribute(seo.ogTitle || seo.title || "Page title")}</strong>
+        <p>${escapeEditorAttribute(seo.ogDescription || seo.description || "Page description will appear here.")}</p>
+      </div>
+    </section>
+  `;
+}
+
+function editorAuditMarkup() {
+  const issues = Array.isArray(state.editorA11yIssues) ? state.editorA11yIssues : [];
+  const errors = issues.filter((issue) => issue.severity === "error").length;
+  const warnings = issues.filter((issue) => issue.severity !== "error").length;
+  return `
+    <section class="editor-inspector-section">
+      <div class="editor-inspector-heading">
+        <strong>Accessibility audit</strong>
+        <button id="editor-a11y-run" type="button" ${state.editorA11yLoading ? "disabled" : ""}>
+          ${state.editorA11yLoading ? "Checking…" : "Run audit"}
+        </button>
+      </div>
+      <div class="editor-a11y-summary">
+        <span class="is-error">${errors} errors</span>
+        <span class="is-warning">${warnings} warnings</span>
+      </div>
+      <small class="editor-a11y-note">Checks visible headings, image alt text, labels, accessible names, duplicate IDs and keyboard basics in the current preview.</small>
+    </section>
+    <div class="editor-a11y-list">
+      ${issues.length ? issues.map((issue, index) => `
+        <button type="button" class="editor-a11y-issue is-${escapeEditorAttribute(issue.severity || "warning")}" data-editor-a11y-selector="${escapeEditorAttribute(issue.selector || "")}">
+          <span>${issue.severity === "error" ? "!" : "△"}</span>
+          <div>
+            <strong>${escapeEditorAttribute(issue.message || "Accessibility issue")}</strong>
+            <small>${escapeEditorAttribute(issue.selector || issue.kind || "Page")}</small>
+          </div>
+        </button>
+      `).join("") : `
+        <div class="editor-inspector-empty">${state.editorA11yLoading ? "Inspecting the current page…" : state.editorA11yCheckedAt ? "No issues found by these automated checks." : "Run the audit to inspect this page."}</div>
+      `}
+    </div>
+  `;
+}
+
+function editorInspectorMarkup(editable) {
+  const tab = state.editorInspectorTab;
+  const tabs = [
+    ["inspector", "Inspect"],
+    ["pages", "Pages"],
+    ["layers", "Layers"],
+    ["assets", "Assets"],
+    ["seo", "SEO"],
+    ["audit", "Audit"],
+    ["site", "Site"],
+    ["history", "History"]
+  ];
+
+  let body = "";
+  if (tab === "pages") body = editorPagesMarkup();
+  else if (tab === "layers") body = editorLayoutMarkup(editable);
+  else if (tab === "assets") body = editorAssetsMarkup(editable);
+  else if (tab === "seo") body = editorSeoMarkup(editable);
+  else if (tab === "audit") body = editorAuditMarkup();
+  else if (tab === "site") {
+    body = `
+      <section class="editor-inspector-section">
+        <div class="editor-inspector-heading"><strong>Selected colours</strong><small id="editor-colour-count">No colours found</small></div>
+        <div id="editor-colour-swatches" class="editor-colour-swatches"></div>
+        <div class="editor-colour-actions">
+          <button id="editor-eyedropper" type="button">Eyedropper</button>
+          <button id="editor-copy-colour" type="button">Copy selected</button>
+        </div>
+        <div class="editor-picked-colour">
+          <span id="editor-picked-colour-swatch"></span>
+          <code id="editor-picked-colour-value">${escapeEditorAttribute(state.editorPickedColour || "No colour selected")}</code>
+          <button id="editor-apply-picked-accent" type="button" ${editable && state.editorPickedColour ? "" : "disabled"}>Use as site accent</button>
+        </div>
+      </section>
+      ${editorNavigationMarkup(editable)}
+      ${editorBannerMarkup(editable)}
+    `;
+  } else if (tab === "history") body = editorHistoryMarkup();
+  else {
+    body = `
+      <section class="editor-inspector-section">
+        <div class="editor-inspector-heading"><strong>Selection</strong><small>Click anything in the preview</small></div>
+        <div id="editor-selected-item" class="editor-selected-item"></div>
+      </section>
+      <section class="editor-inspector-section">
+        <div class="editor-inspector-heading"><strong>Quick actions</strong><small>Source-backed</small></div>
+        <div class="editor-inspector-quick-grid">
+          <button type="button" data-editor-inspector-jump="assets">Assets</button>
+          <button type="button" data-editor-inspector-jump="layers">Layers</button>
+          <button type="button" data-editor-inspector-jump="site">Navigation & banners</button>
+          <button type="button" data-editor-preview-mode="devtools">DevTools</button>
+        </div>
+      </section>
+    `;
+  }
+
+  return `
+    <aside class="editor-inspector">
+      <div class="editor-inspector-tabs" role="tablist" aria-label="Website editor panels">
+        ${tabs.map(([key,label]) => `<button type="button" data-editor-inspector-tab="${key}" class="${tab === key ? "is-active" : ""}">${label}</button>`).join("")}
+      </div>
+      <div class="editor-inspector-content">${body}</div>
+    </aside>
+  `;
+}
+
 function syncElementAttributes(target, source, keep = []) {
   for (const { name } of [...target.attributes]) {
     if (!keep.includes(name) && !source.hasAttribute(name)) target.removeAttribute(name);
@@ -2735,7 +3602,6 @@ function patchEditorPanel(panel, markup, reuseFrame) {
 }
 
 function renderWebEditor() {
-  if (state.editorPreviewMode === "devtools") state.editorPreviewMode = "visual";
   const panel = document.querySelector("#chat-panel");
   if (!panel) return;
 
@@ -2830,6 +3696,7 @@ function renderWebEditor() {
   }
 
   const pendingCount = editorPendingChangeCount();
+  const sessionUnsavedCount = editorUnsavedSessionCount();
   const canUndo = editable && editorCanUndo();
   const canRedo = editable && editorCanRedo();
 
@@ -2850,7 +3717,7 @@ function renderWebEditor() {
             <strong>Well Website Editor</strong>
           </div>
 
-          <select id="web-editor-page" class="editor-header-select" aria-label="Website page" hidden>
+          <select id="web-editor-page" class="editor-header-select" aria-label="Website page">
             <option value="/">Home</option>
             <option value="/qualifications.html">Qualifications</option>
             <option value="/short-courses.html">Short Courses</option>
@@ -2868,6 +3735,7 @@ function renderWebEditor() {
           <div class="editor-view-toolbar" role="group" aria-label="Editor surface">
             <button class="${state.editorPreviewMode === "visual" ? "is-active" : ""}" type="button" data-editor-preview-mode="visual">Visual</button>
             <button class="${state.editorPreviewMode === "code" ? "is-active" : ""}" type="button" data-editor-preview-mode="code">&lt;/&gt; Code</button>
+            <button class="${state.editorPreviewMode === "devtools" ? "is-active" : ""}" type="button" data-editor-preview-mode="devtools">DevTools</button>
           </div>
 
           ${state.editorPreviewMode === "visual" ? `
@@ -2902,6 +3770,30 @@ function renderWebEditor() {
                 aria-label="Draw a new text area"
                 ${editable ? "" : "disabled"}
               >✎ <span>Text</span></button>
+              <button
+                class="${state.editorTool === "image-box" ? "is-active" : ""}"
+                type="button"
+                data-editor-tool="image-box"
+                title="Add an image"
+                aria-label="Add an image"
+                ${editable ? "" : "disabled"}
+              >▧ <span>Image</span></button>
+              <button
+                class="${state.editorTool === "button-box" ? "is-active" : ""}"
+                type="button"
+                data-editor-tool="button-box"
+                title="Add a button"
+                aria-label="Add a button"
+                ${editable ? "" : "disabled"}
+              >▣ <span>Button</span></button>
+              <button
+                class="${state.editorTool === "section-box" ? "is-active" : ""}"
+                type="button"
+                data-editor-tool="section-box"
+                title="Add a section"
+                aria-label="Add a section"
+                ${editable ? "" : "disabled"}
+              >▤ <span>Section</span></button>
             </div>
 
             <div class="editor-notes-mode-slot" aria-label="Page notes"></div>
@@ -2922,6 +3814,30 @@ function renderWebEditor() {
         </div>
 
         <div class="editor-fullscreen-topbar-right">
+          ${state.editorMode === "beta" ? `
+            <div class="editor-session-controls">
+              <span id="editor-session-status" class="editor-session-status ${state.editorSharedDraftConflict ? "is-conflict" : sessionUnsavedCount ? "is-unsaved" : "is-saved"}">
+                ${state.editorSharedDraftConflict
+                  ? "Draft conflict"
+                  : sessionUnsavedCount
+                    ? `${sessionUnsavedCount} unsaved change${sessionUnsavedCount === 1 ? "" : "s"}`
+                    : "Saved"}
+              </span>
+              <button
+                id="editor-session-save"
+                class="editor-topbar-button is-save"
+                type="button"
+                ${sessionUnsavedCount && !state.editorSharedDraftConflict && !state.editorSessionSaving ? "" : "disabled"}
+              >${state.editorSessionSaving ? "Saving…" : "Save"}</button>
+              <button
+                id="editor-autosave-toggle"
+                class="editor-autosave-toggle ${state.editorAutosaveEnabled ? "is-active" : ""}"
+                type="button"
+                aria-pressed="${state.editorAutosaveEnabled ? "true" : "false"}"
+                title="Persist editor drafts automatically without publishing the beta preview"
+              ><i aria-hidden="true"></i><span>${state.editorAutosaveEnabled ? "Autosave on" : "Autosave off"}</span></button>
+            </div>
+          ` : ""}
           <div class="editor-history-actions" role="group" aria-label="Undo and redo">
             <button id="web-editor-undo" class="editor-topbar-icon-button" type="button" aria-label="Undo last change" title="Undo" ${canUndo ? "" : "disabled"}>↶</button>
             <button id="web-editor-redo" class="editor-topbar-icon-button" type="button" aria-label="Redo change" title="Redo" ${canRedo ? "" : "disabled"}>↷</button>
@@ -2952,27 +3868,18 @@ function renderWebEditor() {
           ><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.34 5.66"></path><path d="M20 4v7h-7"></path></svg></button>
           <a id="web-editor-open-page" class="editor-topbar-icon-button" target="_blank" rel="noopener noreferrer"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"></path></svg></a>
 
-          ${state.editorPreviewMode === "code" ? `
-            <button
-              id="editor-code-save"
-              class="editor-topbar-button is-primary"
-              type="button"
-              ${editable && state.editorCodeDirty && !state.editorCodeSaving ? "" : "disabled"}
-            >${state.editorCodeSaving ? "Building preview…" : "Save code to beta preview"}</button>
-          ` : `
-            <button
-              id="web-editor-preview-submit"
-              class="editor-topbar-button is-primary"
-              type="button"
-              ${editable && state.editorDirty ? "" : "disabled"}
-            >Publish beta preview</button>
-          `}
+          <button
+            id="web-editor-preview-submit"
+            class="editor-topbar-button is-primary"
+            type="button"
+            ${editable && state.editorDirty ? "" : "disabled"}
+          >Publish beta preview</button>
         </div>
       </header>
 
       <div class="editor-fullscreen-body">
         <main class="editor-live-workspace">
-          <div class="editor-preview-placeholder is-fullscreen ${state.editorPreviewMode === "code" ? "has-code-dock" : ""}">
+          <div class="editor-preview-placeholder is-fullscreen ${state.editorPreviewMode === "code" ? "has-code-dock" : state.editorPreviewMode === "devtools" ? "has-devtools-dock" : ""}">
             <div id="web-editor-browser" class="editor-preview-browser is-fullscreen" data-device="${state.editorDevice}">
               <div class="editor-preview-browser-bar">
                 <i></i><i></i><i></i>
@@ -3001,13 +3908,31 @@ function renderWebEditor() {
                   <span>${escapeEditorAttribute(editorCodeFileLabel())}</span>
                   <b class="${state.editorMode === "beta" ? "is-beta" : ""}">${state.editorMode === "beta" ? "BETA HTML" : "LIVE HTML"}</b>
                 </div>
-                <div class="editor-code-meta">
-                  <span>HTML</span>
+                <div class="editor-code-meta is-source-tabs">
+                  <div class="editor-code-source-tabs" role="tablist" aria-label="Source files">
+                    <button type="button" data-editor-code-kind="html" class="${state.editorCodeKind === "html" ? "is-active" : ""}">HTML</button>
+                    ${(Array.isArray(state.editorCodeSource?.css?.files) ? state.editorCodeSource.css.files : []).map((file) => `
+                      <button
+                        type="button"
+                        data-editor-code-kind="css"
+                        data-editor-css-path="${escapeEditorAttribute(file.path || "")}"
+                        class="${state.editorCodeKind === "css" && state.editorCodeCssPath === file.path ? "is-active" : ""}"
+                      >${escapeEditorAttribute((file.path || "CSS").split("/").pop())}</button>
+                    `).join("")}
+                  </div>
                   <small>${state.editorMode === "beta"
                     ? state.editorCodeDirty
-                      ? "Unsaved source changes · save to build a new beta preview"
-                      : "beta-main source · editable"
+                      ? state.editorAutosaveEnabled
+                        ? "Changed · autosave will persist this draft"
+                        : "Changed · use Save to keep this draft across refreshes"
+                      : "Saved source draft · publish beta preview separately"
                     : "main source · read only"}</small>
+                </div>
+                <div class="editor-code-searchbar">
+                  <input id="editor-code-find" type="search" placeholder="Find…" aria-label="Find in source">
+                  <button id="editor-code-find-next" type="button">Find next</button>
+                  <input id="editor-code-replace" type="text" placeholder="Replace…" aria-label="Replace in source" ${editable ? "" : "disabled"}>
+                  <button id="editor-code-replace-next" type="button" ${editable ? "" : "disabled"}>Replace</button>
                 </div>
                 <div class="editor-code-editor">
                   <pre id="editor-code-highlight" class="editor-code-highlight" aria-hidden="true"><code>${state.editorCodeLoading
@@ -3056,6 +3981,7 @@ function renderWebEditor() {
             ` : ""}
           </div>
         </main>
+        ${state.editorPreviewMode === "visual" ? editorInspectorMarkup(editable) : ""}
       </div>
     </div>
 
@@ -3073,6 +3999,20 @@ function renderWebEditor() {
         <div class="confirm-actions">
           <button id="cancel-editor-banner-delete" class="confirm-secondary" type="button">Cancel</button>
           <button id="confirm-editor-banner-delete" class="confirm-danger" type="button">Delete banner</button>
+        </div>
+      </section>
+    </div>
+
+    <div id="editor-autosave-modal" class="confirm-modal" hidden>
+      <button id="editor-autosave-backdrop" class="confirm-modal-backdrop" type="button" aria-label="Cancel autosave"></button>
+      <section class="confirm-card" role="dialog" aria-modal="true" aria-labelledby="editor-autosave-title">
+        <div class="confirm-icon">${editorIcon()}</div>
+        <h2 id="editor-autosave-title">Turn on autosave?</h2>
+        <p>Autosave makes every editor change persistent in the saved draft. Refreshing, closing the tab, or returning later will not undo those saved changes.</p>
+        <p><strong>Autosave does not publish the beta preview and does not change the live website.</strong> Publishing remains a separate action.</p>
+        <div class="confirm-actions">
+          <button id="cancel-editor-autosave" class="confirm-secondary" type="button">Keep autosave off</button>
+          <button id="confirm-editor-autosave" class="editor-topbar-button is-primary" type="button">Turn on autosave</button>
         </div>
       </section>
     </div>
@@ -3213,10 +4153,16 @@ function renderWebEditor() {
     if (!source.trim()) return;
 
     frame.contentWindow.postMessage(
-      {
-        type: "WCG_EDITOR_SOURCE_PREVIEW",
-        source
-      },
+      state.editorCodeKind === "css"
+        ? {
+            type: "WCG_EDITOR_CSS_PREVIEW",
+            path: editorCodeActivePath(),
+            source
+          }
+        : {
+            type: "WCG_EDITOR_SOURCE_PREVIEW",
+            source
+          },
       frameOrigin()
     );
     state.editorSourcePreviewPosted = true;
@@ -3235,20 +4181,45 @@ function renderWebEditor() {
   codeInput?.addEventListener("input", () => {
     state.editorCodeDraft = codeInput.value;
     state.editorCodeDirty = state.editorCodeDraft !== state.editorCodeOriginal;
+
+    if (editable) {
+      const file = editorCodeActiveFile();
+      const path = editorCodeActivePath();
+      if (file && path) {
+        if (state.editorCodeDirty) {
+          state.editorSourceDrafts = {
+            ...state.editorSourceDrafts,
+            [path]: {
+              path,
+              kind: file.kind,
+              content: state.editorCodeDraft,
+              originalSha: String(file.sha || "")
+            }
+          };
+        } else {
+          const nextSourceDrafts = { ...state.editorSourceDrafts };
+          delete nextSourceDrafts[path];
+          state.editorSourceDrafts = nextSourceDrafts;
+        }
+        state.editorDirty = editorPendingChangeCount() > 0;
+        markEditorWorkspaceChanged();
+      }
+    }
+
     refreshCodeHighlight();
     scheduleCodeSourcePreview();
 
-    // Only touch surrounding chrome when its state actually changes; a write
-    // per keystroke invalidates layout around the (large) textarea.
     const save = document.querySelector("#editor-code-save");
-    const canSave = editable && state.editorCodeDirty && !state.editorCodeSaving;
-    if (save && save.disabled === canSave) save.disabled = !canSave;
+    const canSave = editable && editorUnsavedSessionCount() > 0 && !state.editorCodeSaving;
+    if (save) save.disabled = !canSave;
 
     const meta = document.querySelector(".editor-code-meta small");
     if (meta && state.editorMode === "beta") {
       const status = state.editorCodeDirty
-        ? "Unsaved source changes · live preview updates after you pause typing"
-        : "beta-main source · editable";
+        ? state.editorAutosaveEnabled
+          ? "Changed · autosave will persist this draft"
+          : "Changed · use Save to keep this draft across refreshes"
+        : "Saved source draft · publish beta preview separately";
       if (meta.textContent !== status) meta.textContent = status;
     }
   });
@@ -3289,6 +4260,64 @@ function renderWebEditor() {
   });
 
   document.querySelector("#editor-code-save")?.addEventListener("click", saveEditorCodeSource);
+
+  document.querySelectorAll("[data-editor-code-kind]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const nextKind = button.dataset.editorCodeKind === "css" ? "css" : "html";
+      state.editorCodeKind = nextKind;
+      state.editorCodeCssPath =
+        nextKind === "css" ? String(button.dataset.editorCssPath || state.editorCodeCssPath || "") : "";
+      syncActiveCodeDraft();
+      renderWebEditor();
+      window.setTimeout(postCodeSourcePreview, 40);
+    });
+  });
+
+  const codeFind = document.querySelector("#editor-code-find");
+  const codeReplace = document.querySelector("#editor-code-replace");
+  const findNextInSource = () => {
+    if (!(codeInput instanceof HTMLTextAreaElement)) return false;
+    const needle = String(codeFind?.value || "");
+    if (!needle) return false;
+    const source = codeInput.value;
+    const startAt = Math.max(codeInput.selectionEnd || 0, 0);
+    let index = source.toLowerCase().indexOf(needle.toLowerCase(), startAt);
+    if (index < 0) index = source.toLowerCase().indexOf(needle.toLowerCase(), 0);
+    if (index < 0) {
+      showToast(`“${needle}” was not found.`);
+      return false;
+    }
+    codeInput.focus();
+    codeInput.setSelectionRange(index, index + needle.length);
+    const before = source.slice(0, index);
+    const line = before.split("\n").length - 1;
+    const lineHeight = Number.parseFloat(getComputedStyle(codeInput).lineHeight) || 19.4;
+    codeInput.scrollTop = Math.max(0, line * lineHeight - codeInput.clientHeight * 0.35);
+    codeInput.dispatchEvent(new Event("scroll"));
+    return true;
+  };
+
+  document.querySelector("#editor-code-find-next")?.addEventListener("click", findNextInSource);
+  codeFind?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      findNextInSource();
+    }
+  });
+  document.querySelector("#editor-code-replace-next")?.addEventListener("click", () => {
+    if (!editable || !(codeInput instanceof HTMLTextAreaElement)) return;
+    const needle = String(codeFind?.value || "");
+    if (!needle) return;
+    const selected = codeInput.value.slice(codeInput.selectionStart, codeInput.selectionEnd);
+    if (selected.toLowerCase() !== needle.toLowerCase() && !findNextInSource()) return;
+    codeInput.setRangeText(
+      String(codeReplace?.value || ""),
+      codeInput.selectionStart,
+      codeInput.selectionEnd,
+      "end"
+    );
+    codeInput.dispatchEvent(new Event("input", { bubbles: true }));
+  });
 
   if (pageSelect) pageSelect.value = state.editorPage;
 
@@ -3499,7 +4528,7 @@ function renderWebEditor() {
           >
         </label>
       `;
-    } else {
+    } else if (tag === "a") {
       selectedItem.innerHTML = `
         <div class="editor-selection-summary">
           <span class="editor-selection-type">Link</span>
@@ -3517,6 +4546,112 @@ function renderWebEditor() {
           <small class="editor-selection-field-hint">Choose a Well College page. The link updates instantly in the live draft.</small>
         </label>
       `;
+    } else {
+      selectedItem.innerHTML = `
+        <div class="editor-selection-summary">
+          <span class="editor-selection-type">Container</span>
+          <strong>${escapeEditorAttribute(tag || "Element")} selected</strong>
+          <small>Use the layout and style controls below. Shift-click in the preview selects a parent container.</small>
+        </div>
+      `;
+    }
+
+    const activeSelector = String(selectedText?.selector || selectedObject?.selector || "");
+    if (activeSelector) {
+      const styles = resolvedEditorStyleDraftsForDevice(state.editorDevice)?.[activeSelector] || {};
+      const pxValue = (name) => {
+        const match = String(styles[name] || "").match(/^(-?\d+(?:\.\d+)?)px$/i);
+        return match ? match[1] : "";
+      };
+      const value = (name) => escapeEditorAttribute(String(styles[name] || ""));
+      selectedItem.insertAdjacentHTML("beforeend", `
+        <div class="editor-selection-style-panel">
+          <div class="editor-selection-style-title"><strong>Style · ${escapeEditorAttribute(state.editorDevice === "mobile" ? "Phone" : state.editorDevice === "tablet" ? "Tablet" : "Desktop")}</strong><small>${state.editorDevice === "desktop" ? "Base style" : "Breakpoint override"}</small></div>
+          <div class="editor-style-grid">
+            <label><span>Text</span><input type="color" data-editor-style-field="color" value="${/^#[0-9a-f]{6}$/i.test(styles.color || "") ? value("color") : "#304660"}" ${editable ? "" : "disabled"}></label>
+            <label><span>Background</span><input type="color" data-editor-style-field="backgroundColor" value="${/^#[0-9a-f]{6}$/i.test(styles.backgroundColor || "") ? value("backgroundColor") : "#FFFFFF"}" ${editable ? "" : "disabled"}></label>
+            <label><span>Font px</span><input type="number" min="8" max="240" data-editor-style-field="fontSize" data-editor-style-unit="px" value="${pxValue("fontSize")}" placeholder="site" ${editable ? "" : "disabled"}></label>
+            <label><span>Weight</span><select data-editor-style-field="fontWeight" ${editable ? "" : "disabled"}>
+              <option value="">Site</option>
+              ${[300,400,500,600,700,800,900].map((weight) => `<option value="${weight}" ${String(styles.fontWeight || "") === String(weight) ? "selected" : ""}>${weight}</option>`).join("")}
+            </select></label>
+            <label><span>Line height</span><input type="number" min=".7" max="4" step=".1" data-editor-style-field="lineHeight" value="${value("lineHeight")}" placeholder="site" ${editable ? "" : "disabled"}></label>
+            <label><span>Letter px</span><input type="number" min="-20" max="80" step=".5" data-editor-style-field="letterSpacing" data-editor-style-unit="px" value="${pxValue("letterSpacing")}" placeholder="site" ${editable ? "" : "disabled"}></label>
+            <label><span>Align</span><select data-editor-style-field="textAlign" ${editable ? "" : "disabled"}>
+              ${[["","Site"],["left","Left"],["center","Center"],["right","Right"],["justify","Justify"]].map(([option,label]) => `<option value="${option}" ${String(styles.textAlign || "") === option ? "selected" : ""}>${label}</option>`).join("")}
+            </select></label>
+            <label><span>Opacity</span><input type="number" min="0" max="1" step=".05" data-editor-style-field="opacity" value="${value("opacity")}" placeholder="1" ${editable ? "" : "disabled"}></label>
+          </div>
+          <div class="editor-selection-style-title"><strong>Size & spacing</strong><small>px</small></div>
+          <div class="editor-style-grid">
+            ${["width","height","minHeight","paddingTop","paddingRight","paddingBottom","paddingLeft","marginTop","marginRight","marginBottom","marginLeft","gap","borderRadius","borderWidth"].map((name) => `
+              <label><span>${escapeEditorAttribute(name.replace(/([A-Z])/g, " $1"))}</span><input type="number" min="0" max="5000" data-editor-style-field="${name}" data-editor-style-unit="px" value="${pxValue(name)}" placeholder="site" ${editable ? "" : "disabled"}></label>
+            `).join("")}
+          </div>
+          <div class="editor-selection-style-title"><strong>Layout</strong><small>advanced</small></div>
+          <div class="editor-style-grid">
+            <label><span>Display</span><select data-editor-style-field="display" ${editable ? "" : "disabled"}>
+              ${[["","Site"],["block","Block"],["inline","Inline"],["inline-block","Inline block"],["flex","Flex"],["grid","Grid"],["none","Hidden"]].map(([option,label]) => `<option value="${option}" ${String(styles.display || "") === option ? "selected" : ""}>${label}</option>`).join("")}
+            </select></label>
+            <label><span>Direction</span><select data-editor-style-field="flexDirection" ${editable ? "" : "disabled"}>
+              ${[["","Site"],["row","Row"],["column","Column"],["row-reverse","Row reverse"],["column-reverse","Column reverse"]].map(([option,label]) => `<option value="${option}" ${String(styles.flexDirection || "") === option ? "selected" : ""}>${label}</option>`).join("")}
+            </select></label>
+            <label><span>Justify</span><select data-editor-style-field="justifyContent" ${editable ? "" : "disabled"}>
+              ${[["","Site"],["flex-start","Start"],["center","Center"],["flex-end","End"],["space-between","Space between"],["space-around","Space around"]].map(([option,label]) => `<option value="${option}" ${String(styles.justifyContent || "") === option ? "selected" : ""}>${label}</option>`).join("")}
+            </select></label>
+            <label><span>Align items</span><select data-editor-style-field="alignItems" ${editable ? "" : "disabled"}>
+              ${[["","Site"],["flex-start","Start"],["center","Center"],["flex-end","End"],["stretch","Stretch"]].map(([option,label]) => `<option value="${option}" ${String(styles.alignItems || "") === option ? "selected" : ""}>${label}</option>`).join("")}
+            </select></label>
+            <label><span>Border</span><select data-editor-style-field="borderStyle" ${editable ? "" : "disabled"}>
+              ${[["","Site"],["none","None"],["solid","Solid"],["dashed","Dashed"],["dotted","Dotted"]].map(([option,label]) => `<option value="${option}" ${String(styles.borderStyle || "") === option ? "selected" : ""}>${label}</option>`).join("")}
+            </select></label>
+            <label><span>Border colour</span><input type="color" data-editor-style-field="borderColor" value="${/^#[0-9a-f]{6}$/i.test(styles.borderColor || "") ? value("borderColor") : "#304660"}" ${editable ? "" : "disabled"}></label>
+          </div>
+          <label class="editor-selection-field"><span>Box shadow</span><input type="text" data-editor-style-field="boxShadow" value="${value("boxShadow")}" placeholder="e.g. 0 8px 24px rgba(0,0,0,.12)" ${editable ? "" : "disabled"}></label>
+        </div>
+      `);
+
+      selectedItem.querySelectorAll("[data-editor-style-field]").forEach((input) => {
+        input.addEventListener("focus", () => {
+          if (!input.dataset.historyCaptured) {
+            recordEditorHistory();
+            input.dataset.historyCaptured = "1";
+          }
+        });
+
+        const applyStyleField = () => {
+          if (!editable || !activeSelector) return;
+          const name = String(input.dataset.editorStyleField || "");
+          const unit = String(input.dataset.editorStyleUnit || "");
+          const raw = String(input.value || "").trim();
+          const nextValue = raw && unit ? `${raw}${unit}` : raw;
+          if (state.editorDevice === "desktop") {
+            state.editorStyleDrafts = {
+              ...state.editorStyleDrafts,
+              [activeSelector]: {
+                ...(state.editorStyleDrafts[activeSelector] || {}),
+                [name]: nextValue
+              }
+            };
+          } else {
+            const breakpoint = state.editorDevice === "mobile" ? "mobile" : "tablet";
+            const responsive = cloneEditorResponsiveStyleDrafts(state.editorResponsiveStyleDrafts);
+            responsive[breakpoint] = {
+              ...responsive[breakpoint],
+              [activeSelector]: {
+                ...(responsive[breakpoint]?.[activeSelector] || {}),
+                [name]: nextValue
+              }
+            };
+            state.editorResponsiveStyleDrafts = responsive;
+          }
+          setDirty();
+          postDraft();
+        };
+
+        input.addEventListener("input", applyStyleField);
+        if (input.tagName === "SELECT") input.addEventListener("change", applyStyleField);
+      });
     }
 
     selectedItem.querySelectorAll("[data-editor-object-field]").forEach((input) => {
@@ -3677,6 +4812,14 @@ function renderWebEditor() {
       return;
     }
 
+    if (event.data.type === "WCG_EDITOR_A11Y_DATA") {
+      state.editorA11yIssues = Array.isArray(event.data.issues) ? event.data.issues : [];
+      state.editorA11yCheckedAt = String(event.data.checkedAt || new Date().toISOString());
+      state.editorA11yLoading = false;
+      if (state.editorInspectorTab === "audit") renderWebEditor();
+      return;
+    }
+
     if (event.data.type === "WCG_EDITOR_COLOURS") {
       state.editorColours = Array.isArray(event.data.colours)
         ? event.data.colours
@@ -3707,6 +4850,7 @@ function renderWebEditor() {
 
       state.editorNavigationDirty = true;
       state.editorDirty = editorPendingChangeCount() > 0;
+      markEditorWorkspaceChanged();
 
       const list =
         kind === "header"
@@ -3752,6 +4896,7 @@ function renderWebEditor() {
       };
       state.editorLayoutDirty = true;
       state.editorDirty = editorPendingChangeCount() > 0;
+      markEditorWorkspaceChanged();
 
       const publish = document.querySelector("#web-editor-preview-submit");
       if (publish) publish.disabled = false;
@@ -3764,13 +4909,14 @@ function renderWebEditor() {
       state.editorElementDrafts = cloneEditorElementDrafts(event.data.elements);
       storeCurrentEditorDraft();
       state.editorDirty = editorPendingChangeCount() > 0;
+      markEditorWorkspaceChanged();
       const publish = document.querySelector("#web-editor-preview-submit");
       if (publish) publish.disabled = false;
       return;
     }
 
     if (event.data.type === "WCG_EDITOR_TOOL_CHANGED") {
-      state.editorTool = ["text-box", "view"].includes(event.data.tool)
+      state.editorTool = ["text-box", "image-box", "button-box", "section-box", "view"].includes(event.data.tool)
         ? event.data.tool
         : "select";
 
@@ -3866,6 +5012,7 @@ function renderWebEditor() {
       };
       storeCurrentEditorDraft();
       state.editorDirty = editorPendingChangeCount() > 0;
+      markEditorWorkspaceChanged();
 
       const publish = document.querySelector("#web-editor-preview-submit");
       if (publish) publish.disabled = false;
@@ -3892,7 +5039,26 @@ function renderWebEditor() {
         "paddingRight",
         "paddingBottom",
         "paddingLeft",
+        "marginTop",
+        "marginRight",
+        "marginBottom",
+        "marginLeft",
+        "gap",
         "borderRadius",
+        "borderWidth",
+        "borderColor",
+        "borderStyle",
+        "boxShadow",
+        "opacity",
+        "fontSize",
+        "fontWeight",
+        "lineHeight",
+        "letterSpacing",
+        "textAlign",
+        "display",
+        "justifyContent",
+        "alignItems",
+        "flexDirection",
         "objectFit"
       ]);
       const nextStyles = {};
@@ -3903,13 +5069,26 @@ function renderWebEditor() {
       if (!Object.keys(nextStyles).length) return;
 
       recordEditorHistory();
-      state.editorStyleDrafts = {
-        ...state.editorStyleDrafts,
-        [selector]: {
-          ...(state.editorStyleDrafts[selector] || {}),
-          ...nextStyles
-        }
-      };
+      if (state.editorDevice === "desktop") {
+        state.editorStyleDrafts = {
+          ...state.editorStyleDrafts,
+          [selector]: {
+            ...(state.editorStyleDrafts[selector] || {}),
+            ...nextStyles
+          }
+        };
+      } else {
+        const breakpoint = state.editorDevice === "mobile" ? "mobile" : "tablet";
+        const responsive = cloneEditorResponsiveStyleDrafts(state.editorResponsiveStyleDrafts);
+        responsive[breakpoint] = {
+          ...responsive[breakpoint],
+          [selector]: {
+            ...(responsive[breakpoint]?.[selector] || {}),
+            ...nextStyles
+          }
+        };
+        state.editorResponsiveStyleDrafts = responsive;
+      }
       storeCurrentEditorDraft();
       state.editorDirty = editorPendingChangeCount() > 0;
 
@@ -4019,12 +5198,208 @@ function renderWebEditor() {
     state.editorColours = [];
     state.editorSelectedText = null;
     state.editorSelectedObject = null;
+    state.editorA11yIssues = [];
+    state.editorA11yCheckedAt = "";
+    state.editorA11yLoading = false;
+    state.editorSeoHydratedKey = "";
     state.editorCodeSource = null;
     state.editorCodeSourceKey = "";
     state.editorCodeDraft = "";
     state.editorCodeOriginal = "";
     state.editorCodeDirty = false;
     renderWebEditor();
+  });
+
+  document.querySelectorAll("[data-editor-inspector-tab]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.editorInspectorTab = String(button.dataset.editorInspectorTab || "inspector");
+      sessionStorage.setItem("well-editor-inspector-tab", state.editorInspectorTab);
+      if (state.editorInspectorTab === "history") {
+        state.editorHistoryOpen = true;
+        if (!state.editorVersionHistory.length && !state.editorHistoryLoading) {
+          window.setTimeout(() => loadEditorVersionHistory({ quiet: true }), 0);
+        }
+      }
+      if (
+        state.editorInspectorTab === "seo" &&
+        !state.editorCodeLoading &&
+        !state.editorCodeSource
+      ) {
+        window.setTimeout(() => loadEditorCodeSource({ quiet: true }), 0);
+      }
+      renderWebEditor();
+      if (state.editorInspectorTab === "audit" && !state.editorA11yCheckedAt) {
+        window.setTimeout(() => document.querySelector("#editor-a11y-run")?.click(), 40);
+      }
+    });
+  });
+
+  document.querySelectorAll("[data-editor-inspector-jump]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.editorInspectorTab = String(button.dataset.editorInspectorJump || "inspector");
+      sessionStorage.setItem("well-editor-inspector-tab", state.editorInspectorTab);
+      renderWebEditor();
+    });
+  });
+
+  document.querySelectorAll("[data-editor-seo-field]").forEach((input) => {
+    const applySeoField = () => {
+      if (!editable) return;
+      const key = String(input.dataset.editorSeoField || "");
+      if (!["title","description","ogTitle","ogDescription","ogImage","canonical","robots"].includes(key)) return;
+      recordEditorHistory();
+      state.editorSeoDraft = {
+        ...(state.editorSeoDraft || {}),
+        [key]: String(input.value || "")
+      };
+      storeCurrentEditorDraft();
+      state.editorDirty = editorPendingChangeCount() > 0;
+      markEditorWorkspaceChanged();
+
+      const small = input.parentElement?.querySelector("small");
+      if (small && input.maxLength > 0) {
+        small.textContent = `${String(input.value || "").length}/${input.maxLength}`;
+      }
+      const publish = document.querySelector("#web-editor-preview-submit");
+      if (publish) publish.disabled = false;
+    };
+    input.addEventListener("input", applySeoField);
+    if (input.tagName === "SELECT") input.addEventListener("change", applySeoField);
+  });
+
+  document.querySelector("#editor-a11y-run")?.addEventListener("click", () => {
+    if (!frame?.contentWindow) return;
+    state.editorA11yLoading = true;
+    renderWebEditor();
+    window.setTimeout(() => {
+      const nextFrame = document.querySelector("#web-editor-frame");
+      nextFrame?.contentWindow?.postMessage(
+        { type: "WCG_EDITOR_A11Y_REQUEST" },
+        frameOrigin()
+      );
+    }, 30);
+  });
+
+  document.querySelectorAll("[data-editor-a11y-selector]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const selector = String(button.dataset.editorA11ySelector || "");
+      if (!selector || !frame?.contentWindow) return;
+      frame.contentWindow.postMessage(
+        { type: "WCG_EDITOR_DEVTOOLS_FOCUS", selector },
+        frameOrigin()
+      );
+    });
+  });
+
+  document.querySelector("#editor-page-search")?.addEventListener("input", (event) => {
+    state.editorPageSearch = String(event.target?.value || "");
+    const query = state.editorPageSearch.trim().toLowerCase();
+    document.querySelectorAll("[data-editor-page-jump]").forEach((button) => {
+      const text = button.textContent?.toLowerCase() || "";
+      button.hidden = Boolean(query && !text.includes(query));
+    });
+  });
+
+  document.querySelectorAll("[data-editor-page-jump]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const path = String(button.dataset.editorPageJump || "/");
+      if (!pageSelect) return;
+      if (![...pageSelect.options].some((option) => option.value === path)) {
+        const option = document.createElement("option");
+        option.value = path;
+        option.textContent = button.querySelector("strong")?.textContent || path;
+        pageSelect.appendChild(option);
+      }
+      pageSelect.value = path;
+      pageSelect.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+  });
+
+  document.querySelectorAll("[data-editor-layout-move]").forEach((button) => {
+    button.addEventListener("click", () => {
+      if (!editable) return;
+      const scope = String(button.dataset.editorLayoutMove || "");
+      const index = Number(button.dataset.editorLayoutIndex);
+      const direction = Number(button.dataset.editorLayoutDirection);
+      const order = Array.isArray(state.editorLayoutOrders?.[scope])
+        ? [...state.editorLayoutOrders[scope]]
+        : [];
+      const nextIndex = index + direction;
+      if (!scope || !Number.isInteger(index) || nextIndex < 0 || nextIndex >= order.length) return;
+      [order[index], order[nextIndex]] = [order[nextIndex], order[index]];
+      state.editorLayoutOrders = { ...state.editorLayoutOrders, [scope]: order };
+      state.editorLayoutDirty = true;
+      state.editorDirty = editorPendingChangeCount() > 0;
+      markEditorWorkspaceChanged();
+      postDraft();
+      renderWebEditor();
+    });
+  });
+
+  document.querySelector("#editor-assets-search")?.addEventListener("input", (event) => {
+    const query = String(event.target?.value || "").trim().toLowerCase();
+    document.querySelectorAll(".editor-asset-card").forEach((card) => {
+      const haystack =
+        String(card.dataset.editorAssetName || "") +
+        " " +
+        String(card.textContent || "").toLowerCase();
+      card.hidden = Boolean(query && !haystack.includes(query));
+    });
+  });
+
+  document.querySelector("#editor-assets-upload")?.addEventListener("click", () => {
+    if (!editable) return;
+    state.editorAssetUploadTargetSelector =
+      state.editorSelectedObject?.tag === "img"
+        ? String(state.editorSelectedObject.selector || "")
+        : "";
+    const input = document.querySelector("#editor-assets-input");
+    if (input instanceof HTMLInputElement) {
+      input.value = "";
+      input.click();
+    }
+  });
+
+  document.querySelector("#editor-session-save")?.addEventListener("click", async () => {
+    await saveSharedEditorDraft({ quiet: false });
+  });
+
+  const closeAutosaveConfirm = () => {
+    const modal = document.querySelector("#editor-autosave-modal");
+    if (modal) modal.hidden = true;
+    document.body.classList.remove("has-support-confirm-modal");
+  };
+
+  document.querySelector("#editor-autosave-toggle")?.addEventListener("click", () => {
+    if (state.editorAutosaveEnabled) {
+      state.editorAutosaveEnabled = false;
+      localStorage.setItem("well-editor-autosave", "0");
+      if (state.editorSharedDraftTimer) window.clearTimeout(state.editorSharedDraftTimer);
+      state.editorSharedDraftTimer = null;
+      refreshEditorSessionChrome();
+      showToast("Autosave is off. Use Save to keep draft changes across refreshes.");
+      return;
+    }
+
+    const modal = document.querySelector("#editor-autosave-modal");
+    if (modal) modal.hidden = false;
+    document.body.classList.add("has-support-confirm-modal");
+    window.setTimeout(() => document.querySelector("#confirm-editor-autosave")?.focus(), 0);
+  });
+
+  document.querySelector("#editor-autosave-backdrop")?.addEventListener("click", closeAutosaveConfirm);
+  document.querySelector("#cancel-editor-autosave")?.addEventListener("click", closeAutosaveConfirm);
+  document.querySelector("#confirm-editor-autosave")?.addEventListener("click", async () => {
+    state.editorAutosaveEnabled = true;
+    state.editorAutosaveConfirmed = true;
+    localStorage.setItem("well-editor-autosave", "1");
+    localStorage.setItem("well-editor-autosave-confirmed", "1");
+    closeAutosaveConfirm();
+    refreshEditorSessionChrome();
+    if (editorUnsavedSessionCount()) {
+      await saveSharedEditorDraft({ quiet: true });
+    }
+    showToast("Autosave is on. Draft changes persist across refreshes but are not published.");
   });
 
   bindEditorNavigationSortable(
@@ -4044,6 +5419,7 @@ function renderWebEditor() {
     state.editorBannerInterval = Number(bannerInterval.value || 5200);
     state.editorBannerDirty = true;
     state.editorDirty = editorPendingChangeCount() > 0;
+  markEditorWorkspaceChanged();
     postDraft();
     const publish = document.querySelector("#web-editor-preview-submit");
     if (publish) publish.disabled = false;
@@ -4076,6 +5452,7 @@ function renderWebEditor() {
 
     state.editorBannerDirty = true;
     state.editorDirty = editorPendingChangeCount() > 0;
+  markEditorWorkspaceChanged();
     postDraft();
     const publish = document.querySelector("#web-editor-preview-submit");
     if (publish) publish.disabled = false;
@@ -4141,6 +5518,7 @@ function renderWebEditor() {
     state.editorBannerOpenId = item.id;
     state.editorBannerDirty = true;
     state.editorDirty = editorPendingChangeCount() > 0;
+  markEditorWorkspaceChanged();
     renderWebEditor();
     window.setTimeout(postDraft, 30);
   });
@@ -4211,6 +5589,7 @@ function renderWebEditor() {
       }
 
       state.editorDirty = editorPendingChangeCount() > 0;
+      markEditorWorkspaceChanged();
       document.querySelector("#web-editor-preview-submit")?.removeAttribute("disabled");
 
       frame?.contentWindow?.postMessage(
@@ -4237,6 +5616,70 @@ function renderWebEditor() {
       } catch {
         showToast(link);
       }
+      return;
+    }
+
+    const renameButton = event.target?.closest?.("[data-editor-asset-rename]");
+    if (renameButton) {
+      const path = String(renameButton.dataset.editorAssetRename || "");
+      const asset = state.editorAssets.find((item) => item.path === path);
+      if (!asset) return;
+      const dot = path.lastIndexOf(".");
+      const extension = dot >= 0 ? path.slice(dot) : "";
+      const folder = path.includes("/") ? path.slice(0, path.lastIndexOf("/") + 1) : "";
+      const currentBase = dot >= 0 ? path.slice(folder.length, dot) : path.slice(folder.length);
+      const requested = window.prompt("Rename asset", currentBase);
+      if (requested == null) return;
+      const clean = cleanEditorAssetName(requested + extension);
+      const nextPath = `${folder}${clean.base}${clean.extension ? `.${clean.extension}` : extension}`;
+      if (!nextPath || nextPath === path) return;
+      if (
+        state.editorAssets.some((item) => item.path === nextPath) ||
+        state.editorAssetDrafts.some((item) => item.path === nextPath)
+      ) {
+        showToast("An asset with that name already exists.", "error");
+        return;
+      }
+      state.editorAssetMutations = [
+        ...state.editorAssetMutations.filter((item) => item.path !== path),
+        { action: "rename", path, nextPath }
+      ];
+      for (const [selector, attrs] of Object.entries(state.editorAttributeDrafts || {})) {
+        if (String(attrs?.src || "").replace(/^\/+/, "") === path) {
+          state.editorAttributeDrafts = {
+            ...state.editorAttributeDrafts,
+            [selector]: { ...attrs, src: `/${nextPath}` }
+          };
+        }
+      }
+      state.editorDirty = editorPendingChangeCount() > 0;
+      markEditorWorkspaceChanged();
+      renderWebEditor();
+      showToast("Asset rename staged. Save keeps the draft; Publish beta preview applies it.");
+      return;
+    }
+
+    const deleteButton = event.target?.closest?.("[data-editor-asset-delete]");
+    if (deleteButton) {
+      const path = String(deleteButton.dataset.editorAssetDelete || "");
+      const stagedIndex = state.editorAssetDrafts.findIndex((item) => item.path === path);
+      if (stagedIndex >= 0) {
+        state.editorAssetDrafts = state.editorAssetDrafts.filter((_, index) => index !== stagedIndex);
+        state.editorDirty = editorPendingChangeCount() > 0;
+        markEditorWorkspaceChanged();
+        postEditorAssetsToPreview();
+        renderWebEditor();
+        return;
+      }
+      if (!window.confirm(`Delete ${path.split("/").pop()} from the beta website when you publish?`)) return;
+      state.editorAssetMutations = [
+        ...state.editorAssetMutations.filter((item) => item.path !== path),
+        { action: "delete", path, nextPath: "" }
+      ];
+      state.editorDirty = editorPendingChangeCount() > 0;
+      markEditorWorkspaceChanged();
+      renderWebEditor();
+      showToast("Asset deletion staged. It will not affect the beta website until Publish beta preview.");
       return;
     }
 
@@ -4271,7 +5714,7 @@ function renderWebEditor() {
   document.querySelectorAll("[data-editor-preview-mode]").forEach((button) => {
     button.addEventListener("click", () => {
       const requested = button.dataset.editorPreviewMode;
-      const mode = ["visual", "code"].includes(requested)
+      const mode = ["visual", "code", "devtools"].includes(requested)
         ? requested
         : "visual";
       if (mode === state.editorPreviewMode) return;
@@ -4317,6 +5760,8 @@ function renderWebEditor() {
         item.setAttribute("aria-pressed", String(active));
       });
       syncPreviewViewport();
+      postDraft();
+      renderSelectedItem();
     });
   });
 
@@ -4373,7 +5818,9 @@ function renderWebEditor() {
   document.querySelectorAll("[data-editor-tool]").forEach((button) => {
     button.addEventListener("click", () => {
       if (!editable) return;
-      state.editorTool = button.dataset.editorTool === "text-box" ? "text-box" : "select";
+      state.editorTool = ["text-box", "image-box", "button-box", "section-box"].includes(button.dataset.editorTool)
+        ? button.dataset.editorTool
+        : "select";
       document.querySelectorAll("[data-editor-interaction]").forEach((item) => {
         item.classList.toggle("is-active", item.dataset.editorInteraction === "edit");
       });
@@ -4488,7 +5935,7 @@ function renderWebEditor() {
     );
 
     state.editorDirty = editorPendingChangeCount() > 0;
-    scheduleSharedEditorDraft();
+    markEditorWorkspaceChanged();
     state.editorSelectedText = null;
     state.editorSelectedObject = null;
 
@@ -4553,7 +6000,19 @@ function renderWebEditor() {
         path: asset.path,
         contentBase64: asset.contentBase64,
         size: asset.size
-      }))
+      })),
+      assetMutations: state.editorAssetMutations.map((item) => ({ ...item })),
+      sourceDrafts: Object.fromEntries(
+        Object.entries(state.editorSourceDrafts || {}).map(([path, draft]) => [
+          path,
+          {
+            path,
+            kind: draft.kind === "css" ? "css" : "html",
+            content: String(draft.content || ""),
+            originalSha: String(draft.originalSha || "")
+          }
+        ])
+      )
     });
   });
 
@@ -4652,6 +6111,18 @@ function renderWebEditor() {
     if (state.editorPreviewMode === "code" && state.editorCodeDirty) {
       scheduleCodeSourcePreview();
     }
+  }
+
+  refreshEditorSessionChrome();
+
+  if (state.editorRemoteDraftTimer) window.clearTimeout(state.editorRemoteDraftTimer);
+  state.editorRemoteDraftTimer = null;
+  if (state.editorMode === "beta" && state.editorSharedDraftAvailable !== false) {
+    state.editorRemoteDraftTimer = window.setTimeout(async () => {
+      state.editorRemoteDraftTimer = null;
+      if (state.currentView !== "editor" || state.editorMode !== "beta") return;
+      await loadSharedEditorDraft({ quiet: true, force: true });
+    }, 2500);
   }
 
   document.dispatchEvent(

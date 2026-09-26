@@ -9,6 +9,7 @@ import {
   BETA_BRANCH,
   compareBranches,
   commitFiles,
+  readBase64File,
   readOverrides,
   readTextFile
 } from "./_github.js";
@@ -25,7 +26,26 @@ const ALLOWED_STYLES = new Set([
   "paddingRight",
   "paddingBottom",
   "paddingLeft",
+  "marginTop",
+  "marginRight",
+  "marginBottom",
+  "marginLeft",
+  "gap",
   "borderRadius",
+  "borderWidth",
+  "borderColor",
+  "borderStyle",
+  "boxShadow",
+  "opacity",
+  "fontSize",
+  "fontWeight",
+  "lineHeight",
+  "letterSpacing",
+  "textAlign",
+  "display",
+  "justifyContent",
+  "alignItems",
+  "flexDirection",
   "objectFit"
 ]);
 const HEADER_KEYS = ["qualifications", "short-courses", "about", "testimonials", "more"];
@@ -39,6 +59,8 @@ const NAVIGATION_PATH = "src/data/navigation.js";
 const LAYOUT_PATH = "src/data/editorLayout.json";
 const MAX_ASSET_BYTES = 6 * 1024 * 1024;
 const MAX_ASSET_TOTAL_BYTES = 20 * 1024 * 1024;
+const MAX_HTML_CHARS = 350000;
+const MAX_CSS_CHARS = 650000;
 
 function cleanText(value, max) {
   return String(value || "").trim().slice(0, max);
@@ -135,7 +157,7 @@ function cleanStyleValue(name, value) {
   const raw = String(value || "").trim();
   if (!raw) return "";
 
-  if (name === "backgroundColor" || name === "color") {
+  if (["backgroundColor", "color", "borderColor"].includes(name)) {
     return /^#[0-9a-f]{6}$/i.test(raw) ? raw.toUpperCase() : "";
   }
 
@@ -148,7 +170,14 @@ function cleanStyleValue(name, value) {
       "paddingRight",
       "paddingBottom",
       "paddingLeft",
-      "borderRadius"
+      "marginTop",
+      "marginRight",
+      "marginBottom",
+      "marginLeft",
+      "gap",
+      "borderRadius",
+      "borderWidth",
+      "fontSize"
     ].includes(name)
   ) {
     const match = raw.match(/^(\d{1,4})px$/i);
@@ -156,9 +185,13 @@ function cleanStyleValue(name, value) {
     const maximum =
       name === "width" || name === "height"
         ? 5000
-        : name.startsWith("padding")
+        : name.startsWith("padding") || name.startsWith("margin") || name === "gap"
           ? 800
-          : 1600;
+          : name === "fontSize"
+            ? 240
+            : name === "borderWidth"
+              ? 40
+              : 1600;
     const number = Math.max(0, Math.min(maximum, Number(match[1])));
     return `${number}px`;
   }
@@ -167,6 +200,55 @@ function cleanStyleValue(name, value) {
     return ["cover", "contain", "fill", "scale-down", "none"].includes(raw)
       ? raw
       : "";
+  }
+
+  if (name === "letterSpacing") {
+    const match = raw.match(/^(-?\d{1,3}(?:\.\d+)?)px$/i);
+    if (!match) return "";
+    const number = Math.max(-20, Math.min(80, Number(match[1])));
+    return `${number}px`;
+  }
+
+  if (name === "opacity") {
+    const number = Number(raw);
+    return Number.isFinite(number) ? String(Math.max(0, Math.min(1, number))) : "";
+  }
+
+  if (name === "fontWeight") {
+    const number = Math.round(Number(raw) / 100) * 100;
+    return Number.isFinite(number) ? String(Math.max(100, Math.min(900, number))) : "";
+  }
+
+  if (name === "lineHeight") {
+    const number = Number(raw);
+    return Number.isFinite(number) ? String(Math.max(.7, Math.min(4, number))) : "";
+  }
+
+  if (name === "textAlign") {
+    return ["left", "center", "right", "justify"].includes(raw) ? raw : "";
+  }
+
+  if (name === "display") {
+    return ["block", "inline", "inline-block", "flex", "grid", "none"].includes(raw) ? raw : "";
+  }
+
+  if (name === "justifyContent" || name === "alignItems") {
+    return ["flex-start", "center", "flex-end", "space-between", "space-around", "stretch"].includes(raw)
+      ? raw
+      : "";
+  }
+
+  if (name === "flexDirection") {
+    return ["row", "column", "row-reverse", "column-reverse"].includes(raw) ? raw : "";
+  }
+
+  if (name === "borderStyle") {
+    return ["none", "solid", "dashed", "dotted"].includes(raw) ? raw : "";
+  }
+
+  if (name === "boxShadow") {
+    if (raw.length > 140 || /[;{}<>]|url\s*\(/i.test(raw)) return "";
+    return raw;
   }
 
   return "";
@@ -202,6 +284,17 @@ function cleanStyleOverrides(value) {
   return output;
 }
 
+function cleanResponsiveStyleOverrides(value) {
+  const input =
+    value && typeof value === "object" && !Array.isArray(value)
+      ? value
+      : {};
+  return {
+    tablet: cleanStyleOverrides(input.tablet),
+    mobile: cleanStyleOverrides(input.mobile)
+  };
+}
+
 function cleanOrderOverrides(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
 
@@ -226,34 +319,194 @@ function cleanOrderOverrides(value) {
 function cleanElementOverrides(value) {
   if (!Array.isArray(value)) return [];
 
+  const cleanColour = (value, fallback) => {
+    const colour = cleanText(value, 16);
+    return /^#[0-9a-f]{6}$/i.test(colour) ? colour.toUpperCase() : fallback;
+  };
+  const cleanFont = (value) => {
+    const font = cleanText(value, 80);
+    return ["DM Sans", "DM Serif Display", "System Sans"].includes(font)
+      ? font
+      : "DM Sans";
+  };
+
   return value
-    .slice(0, 40)
-    .filter((item) => item && typeof item === "object" && item.type === "text")
+    .slice(0, 60)
+    .filter((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+      return ["text", "image", "button", "section"].includes(String(item.type || ""));
+    })
     .map((item, index) => {
-      const colour = cleanText(item.color, 16);
-      const fontFamily = cleanText(item.fontFamily, 80);
-      const textAlign = cleanText(item.textAlign, 12);
-      return {
-        id: cleanText(item.id, 80) || `text-${index + 1}`,
-        type: "text",
-        text: cleanText(item.text, 4000) || "Text",
+      const type = String(item.type || "text");
+      const base = {
+        id: cleanText(item.id, 80) || `${type}-${index + 1}`,
+        type,
         x: Math.max(0, Math.min(10000, Number(item.x || 0))),
         y: Math.max(0, Math.min(50000, Number(item.y || 0))),
-        width: Math.max(80, Math.min(3000, Number(item.width || 240))),
-        minHeight: Math.max(34, Math.min(2000, Number(item.minHeight || 60))),
-        fontFamily: ["DM Sans", "DM Serif Display", "System Sans"].includes(fontFamily)
-          ? fontFamily
-          : "DM Sans",
+        width: Math.max(40, Math.min(5000, Number(item.width || (type === "section" ? 960 : 240)))),
+        minHeight: Math.max(24, Math.min(4000, Number(item.minHeight || (type === "section" ? 240 : 60))))
+      };
+
+      if (type === "image") {
+        return {
+          ...base,
+          src: cleanResourceValue(item.src, "src"),
+          alt: cleanResourceValue(item.alt, "alt"),
+          objectFit: ["cover", "contain", "fill", "scale-down", "none"].includes(String(item.objectFit || ""))
+            ? String(item.objectFit)
+            : "cover",
+          borderRadius: Math.max(0, Math.min(400, Number(item.borderRadius || 0)))
+        };
+      }
+
+      if (type === "button") {
+        return {
+          ...base,
+          text: cleanText(item.text, 240) || "Button",
+          href: cleanResourceValue(item.href, "href") || "#",
+          fontFamily: cleanFont(item.fontFamily),
+          fontSize: Math.max(8, Math.min(120, Number(item.fontSize || 16))),
+          fontWeight: Math.max(300, Math.min(900, Number(item.fontWeight || 700))),
+          color: cleanColour(item.color, "#FFFFFF"),
+          backgroundColor: cleanColour(item.backgroundColor, "#304660"),
+          borderRadius: Math.max(0, Math.min(240, Number(item.borderRadius || 10))),
+          paddingX: Math.max(0, Math.min(160, Number(item.paddingX || 20))),
+          paddingY: Math.max(0, Math.min(120, Number(item.paddingY || 12)))
+        };
+      }
+
+      if (type === "section") {
+        return {
+          ...base,
+          backgroundColor: cleanColour(item.backgroundColor, "#FFFEFA"),
+          borderRadius: Math.max(0, Math.min(400, Number(item.borderRadius || 0)))
+        };
+      }
+
+      const colour = cleanText(item.color, 16);
+      return {
+        ...base,
+        type: "text",
+        text: cleanText(item.text, 4000) || "Text",
+        fontFamily: cleanFont(item.fontFamily),
         fontSize: Math.max(8, Math.min(120, Number(item.fontSize || 24))),
         fontWeight: Math.max(300, Math.min(900, Number(item.fontWeight || 500))),
         lineHeight: Math.max(.8, Math.min(2.5, Number(item.lineHeight || 1.2))),
         letterSpacing: Math.max(-4, Math.min(20, Number(item.letterSpacing || 0))),
         color: /^#[0-9a-f]{6}$/i.test(colour) ? colour.toUpperCase() : "#304660",
-        textAlign: ["left", "center", "right"].includes(textAlign) ? textAlign : "left"
+        textAlign: ["left", "center", "right"].includes(String(item.textAlign || ""))
+          ? String(item.textAlign)
+          : "left"
       };
     });
 }
 
+function cleanSeo(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const robotsAllowed = new Set(["", "index,follow", "index,nofollow", "noindex,follow", "noindex,nofollow"]);
+  const robots = cleanText(value.robots, 40).toLowerCase();
+  return {
+    title: cleanText(value.title, 180),
+    description: cleanText(value.description, 320),
+    ogTitle: cleanText(value.ogTitle, 180),
+    ogDescription: cleanText(value.ogDescription, 320),
+    ogImage: cleanResourceValue(value.ogImage, "src"),
+    canonical: cleanResourceValue(value.canonical, "href"),
+    robots: robotsAllowed.has(robots) ? robots : ""
+  };
+}
+
+function escapeHtmlText(value) {
+  return String(value || "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+}
+
+function escapeHtmlAttribute(value) {
+  return escapeHtmlText(value).replaceAll('"', "&quot;").replaceAll("'", "&#39;");
+}
+
+function replaceOrInsertHeadTag(html, expression, tag) {
+  const source = String(html || "");
+  if (expression.test(source)) return source.replace(expression, tag);
+  return /<\/head\s*>/i.test(source) ? source.replace(/<\/head\s*>/i, `  ${tag}\n</head>`) : source;
+}
+
+function applySeoToHtml(html, seo) {
+  let next = String(html || "");
+  if (!next || !/<head\b/i.test(next)) return next;
+  const title = escapeHtmlText(seo.title);
+  if (title) {
+    next = replaceOrInsertHeadTag(next, /<title\b[^>]*>[\s\S]*?<\/title\s*>/i, `<title>${title}</title>`);
+  }
+  const upsertMeta = (attribute, name, content) => {
+    if (!content) return;
+    const safe = escapeHtmlAttribute(content);
+    const safeName = String(name || "").replace(/[^a-z0-9:._-]/gi, "");
+    const expression = new RegExp(`<meta\\b(?=[^>]*\\b${attribute}=["\']${safeName}["\'])[^>]*>`, "i");
+    next = replaceOrInsertHeadTag(next, expression, `<meta ${attribute}="${escapeHtmlAttribute(name)}" content="${safe}">`);
+  };
+  upsertMeta("name", "description", seo.description);
+  upsertMeta("property", "og:title", seo.ogTitle || seo.title);
+  upsertMeta("property", "og:description", seo.ogDescription || seo.description);
+  upsertMeta("property", "og:image", seo.ogImage);
+  upsertMeta("name", "robots", seo.robots);
+  if (seo.canonical) {
+    next = replaceOrInsertHeadTag(
+      next,
+      /<link\b(?=[^>]*\brel=["']canonical["'])[^>]*>/i,
+      `<link rel="canonical" href="${escapeHtmlAttribute(seo.canonical)}">`
+    );
+  }
+  return next;
+}
+
+function validateSourceFile(path, content) {
+  const source = String(content || "");
+  if (path.toLowerCase().endsWith(".html")) {
+    const lower = source.toLowerCase();
+    const required = ["<html", "<head", "<body", "</body", "</html"];
+    if (required.some((token) => !lower.includes(token))) {
+      const error = new Error(`HTML source for ${path} is missing a required document element.`);
+      error.status = 400;
+      throw error;
+    }
+    const openScript = (source.match(/<script\b/gi) || []).length;
+    const closeScript = (source.match(/<\/script\s*>/gi) || []).length;
+    if (openScript !== closeScript) {
+      const error = new Error(`HTML source for ${path} has an unclosed script element.`);
+      error.status = 400;
+      throw error;
+    }
+    return;
+  }
+  if (path.toLowerCase().endsWith(".css")) {
+    let depth = 0;
+    let quote = "";
+    let comment = false;
+    for (let index = 0; index < source.length; index += 1) {
+      const char = source[index];
+      const next = source[index + 1];
+      if (comment) {
+        if (char === "*" && next === "/") { comment = false; index += 1; }
+        continue;
+      }
+      if (!quote && char === "/" && next === "*") { comment = true; index += 1; continue; }
+      if (quote) {
+        if (char === "\\") { index += 1; continue; }
+        if (char === quote) quote = "";
+        continue;
+      }
+      if (char === '"' || char === "'") { quote = char; continue; }
+      if (char === "{") depth += 1;
+      if (char === "}") depth -= 1;
+      if (depth < 0) break;
+    }
+    if (depth !== 0 || quote || comment) {
+      const error = new Error(`CSS source for ${path} has unbalanced braces, quotes, or comments.`);
+      error.status = 400;
+      throw error;
+    }
+  }
+}
 function normalisePagePatch(raw) {
   const input = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
   const heading = cleanText(input.heading, 300);
@@ -263,6 +516,8 @@ function normalisePagePatch(raw) {
   const text = cleanTextOverrides(input.text);
   const attributes = cleanAttributeOverrides(input.attributes);
   const styles = cleanStyleOverrides(input.styles);
+  const responsiveStyles = cleanResponsiveStyleOverrides(input.responsiveStyles);
+  const seo = cleanSeo(input.seo);
   const order = cleanOrderOverrides(input.order);
   const elements = cleanElementOverrides(input.elements);
 
@@ -278,7 +533,7 @@ function normalisePagePatch(raw) {
   }
 
   return {
-    heading, copy, accent, font, text, attributes, styles, order, elements,
+    heading, copy, accent, font, text, attributes, styles, responsiveStyles, seo, order, elements,
     supplied: {
       heading: Object.prototype.hasOwnProperty.call(input, "heading"),
       copy: Object.prototype.hasOwnProperty.call(input, "copy"),
@@ -287,6 +542,8 @@ function normalisePagePatch(raw) {
       text: Object.prototype.hasOwnProperty.call(input, "text"),
       attributes: Object.prototype.hasOwnProperty.call(input, "attributes"),
       styles: Object.prototype.hasOwnProperty.call(input, "styles"),
+      responsiveStyles: Object.prototype.hasOwnProperty.call(input, "responsiveStyles"),
+      seo: Object.prototype.hasOwnProperty.call(input, "seo"),
       order: Object.prototype.hasOwnProperty.call(input, "order"),
       elements: Object.prototype.hasOwnProperty.call(input, "elements")
     }
@@ -316,6 +573,17 @@ function applyPagePatch(existing, patch) {
   if (patch.supplied.styles) {
     if (Object.keys(patch.styles).length) config.styles = patch.styles;
     else delete config.styles;
+  }
+  if (patch.supplied.responsiveStyles) {
+    const hasResponsive =
+      Object.keys(patch.responsiveStyles.tablet || {}).length ||
+      Object.keys(patch.responsiveStyles.mobile || {}).length;
+    if (hasResponsive) config.responsiveStyles = patch.responsiveStyles;
+    else delete config.responsiveStyles;
+  }
+  if (patch.supplied.seo) {
+    if (Object.values(patch.seo).some(Boolean)) config.seo = patch.seo;
+    else delete config.seo;
   }
   if (patch.supplied.order) {
     if (Object.keys(patch.order).length) config.order = patch.order;
@@ -494,6 +762,80 @@ function cleanAssets(value) {
   return output;
 }
 
+
+function cleanSourceFiles(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+  const output = [];
+  let total = 0;
+
+  for (const [rawPath, rawDraft] of Object.entries(value).slice(0, 24)) {
+    const path = String(rawPath || "").trim().replace(/^\/+/, "");
+    if (
+      !path ||
+      path.length > 240 ||
+      path.includes("..") ||
+      !/^[a-z0-9][a-z0-9._/-]*\.(?:html|css)$/i.test(path) ||
+      !rawDraft ||
+      typeof rawDraft !== "object" ||
+      Array.isArray(rawDraft)
+    ) {
+      continue;
+    }
+
+    const kind = path.toLowerCase().endsWith(".css") ? "css" : "html";
+    const content = String(rawDraft.content ?? "");
+    const max = kind === "css" ? MAX_CSS_CHARS : MAX_HTML_CHARS;
+    if (!content.trim() || content.length > max || content.includes("\0")) {
+      const error = new Error(`${kind.toUpperCase()} source for ${path} is empty, invalid, or too large.`);
+      error.status = 400;
+      throw error;
+    }
+
+    total += content.length;
+    if (total > 1_050_000) {
+      const error = new Error("Saved source drafts exceed the publish limit.");
+      error.status = 413;
+      throw error;
+    }
+
+    validateSourceFile(path, content);
+    output.push({
+      path,
+      kind,
+      content,
+      originalSha: /^[0-9a-f]{40}$/i.test(String(rawDraft.originalSha || ""))
+        ? String(rawDraft.originalSha)
+        : ""
+    });
+  }
+
+  return output;
+}
+
+function cleanAssetMutations(value) {
+  if (!Array.isArray(value)) return [];
+  const safePath = (value) => {
+    const path = String(value || "").trim();
+    if (
+      !path.startsWith("assets/") ||
+      path.includes("..") ||
+      path.length > 240 ||
+      !/^[a-z0-9][a-z0-9._/-]*\.(?:png|jpe?g|webp|gif|svg|avif|mp4|webm|mov|pdf)$/i.test(path)
+    ) return "";
+    return path;
+  };
+
+  const output = [];
+  for (const raw of value.slice(0, 30)) {
+    const action = raw?.action === "rename" ? "rename" : raw?.action === "delete" ? "delete" : "";
+    const path = safePath(raw?.path);
+    const nextPath = action === "rename" ? safePath(raw?.nextPath) : "";
+    if (!action || !path || (action === "rename" && (!nextPath || nextPath === path))) continue;
+    output.push({ action, path, nextPath });
+  }
+  return output;
+}
+
 export async function onRequestPost({ request, env }) {
   const blocked = assertSameOrigin(request);
   if (blocked) return blocked;
@@ -597,16 +939,50 @@ export async function onRequestPost({ request, env }) {
     }
 
     const assets = cleanAssets(input.assets);
+    const assetMutations = cleanAssetMutations(input.assetMutations);
+    const sourceFiles = cleanSourceFiles(input.sourceDrafts);
     const hasPageChanges = pagePatches.length > 0;
     const hasNavigationChange = Boolean(navigationResult);
     const hasLayoutChange = Boolean(rawLayoutOrders && Object.keys(rawLayoutOrders).length);
     const hasAssets = assets.length > 0;
+    const hasAssetMutations = assetMutations.length > 0;
+    const hasSourceFiles = sourceFiles.length > 0;
 
-    if (!hasPageChanges && !hasBannerChange && !hasNavigationChange && !hasLayoutChange && !hasAssets) {
+    if (!hasPageChanges && !hasBannerChange && !hasNavigationChange && !hasLayoutChange && !hasAssets && !hasAssetMutations && !hasSourceFiles) {
       return sessionResponse({ error: "No website changes supplied." }, session, 400);
     }
 
     const files = [];
+
+    for (const sourceFile of sourceFiles) {
+      const currentSource = await readTextFile(env, BETA_BRANCH, sourceFile.path);
+      if (sourceFile.originalSha && currentSource.sha !== sourceFile.originalSha) {
+        const error = new Error(`${sourceFile.path} changed on beta-main while you were editing. Reload before publishing.`);
+        error.status = 409;
+        throw error;
+      }
+      if (String(currentSource.content || "") !== sourceFile.content) {
+        files.push({ path: sourceFile.path, content: sourceFile.content });
+      }
+    }
+
+    for (const [pagePath, patch] of pagePatches) {
+      if (!patch.supplied.seo || !Object.values(patch.seo).some(Boolean)) continue;
+      const htmlPath = pagePath === "/" ? "index.html" : pagePath.replace(/^\/+/, "");
+      if (!/\.html$/i.test(htmlPath)) continue;
+      const staged = files.find((file) => file.path === htmlPath);
+      let source = staged?.content;
+      if (typeof source !== "string") {
+        const currentHtml = await readTextFile(env, BETA_BRANCH, htmlPath);
+        source = String(currentHtml.content || "");
+      }
+      const withSeo = applySeoToHtml(source, patch.seo);
+      validateSourceFile(htmlPath, withSeo);
+      if (withSeo !== source) {
+        if (staged) staged.content = withSeo;
+        else files.push({ path: htmlPath, content: withSeo });
+      }
+    }
 
     if (hasPageChanges || hasBannerChange) {
       files.push({
@@ -627,6 +1003,26 @@ export async function onRequestPost({ request, env }) {
         path: LAYOUT_PATH,
         content: `${JSON.stringify(nextLayout, null, 2)}\n`
       });
+    }
+
+    for (const mutation of assetMutations) {
+      if (mutation.action === "delete") {
+        files.push({ path: mutation.path, delete: true });
+        continue;
+      }
+
+      const source = await readBase64File(env, BETA_BRANCH, mutation.path);
+      if (!source?.contentBase64) {
+        const error = new Error(`Unable to read ${mutation.path} for rename.`);
+        error.status = 409;
+        throw error;
+      }
+      files.push({
+        path: mutation.nextPath,
+        content: source.contentBase64,
+        encoding: "base64"
+      });
+      files.push({ path: mutation.path, delete: true });
     }
 
     for (const asset of assets) {
@@ -650,7 +1046,9 @@ export async function onRequestPost({ request, env }) {
       navigation_changed: hasNavigationChange,
       layout_changed: hasLayoutChange,
       banner_changed: hasBannerChange,
-      asset_paths: assets.map((asset) => asset.path)
+      asset_paths: assets.map((asset) => asset.path),
+      asset_mutations: assetMutations,
+      source_paths: sourceFiles.map((file) => file.path)
     });
 
     return sessionResponse({
@@ -661,7 +1059,9 @@ export async function onRequestPost({ request, env }) {
       overrides: nextOverrides,
       navigation: navigationResult,
       layoutOrders: nextLayout,
-      assets: assets.map((asset) => ({ path: asset.path, url: `/${asset.path}` }))
+      assets: assets.map((asset) => ({ path: asset.path, url: `/${asset.path}` })),
+      assetMutations,
+      sourceFiles: sourceFiles.map(({ path, kind }) => ({ path, kind }))
     }, session);
   } catch (error) {
     return sessionResponse(

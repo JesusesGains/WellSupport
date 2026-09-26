@@ -126,6 +126,19 @@ export async function readTextFile(env, branch, path) {
   };
 }
 
+export async function readBase64File(env, branch, path) {
+  const file = await githubRequest(
+    env,
+    `/repos/${REPOSITORY}/contents/${path}?ref=${encodeURIComponent(branch)}`
+  );
+
+  return {
+    sha: file.sha,
+    contentBase64: String(file.content || "").replace(/\s+/g, ""),
+    size: Number(file.size || 0)
+  };
+}
+
 export async function writeTextFile(env, branch, path, content, sha, message) {
   return githubRequest(
     env,
@@ -267,7 +280,11 @@ export async function restoreBranchTree(env, branch, sourceCommitSha, message) {
 
 export async function commitFiles(env, branch, files, message) {
   const cleanFiles = Array.isArray(files)
-    ? files.filter((file) => file?.path && typeof file.content === "string")
+    ? files.filter(
+        (file) =>
+          file?.path &&
+          (file.delete === true || typeof file.content === "string")
+      )
     : [];
 
   if (!cleanFiles.length) {
@@ -292,6 +309,16 @@ export async function commitFiles(env, branch, files, message) {
 
   const tree = [];
   for (const file of cleanFiles) {
+    if (file.delete === true) {
+      tree.push({
+        path: file.path,
+        mode: "100644",
+        type: "blob",
+        sha: null
+      });
+      continue;
+    }
+
     const blob = await githubRequest(env, `/repos/${REPOSITORY}/git/blobs`, {
       method: "POST",
       body: {

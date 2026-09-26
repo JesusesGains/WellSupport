@@ -8,7 +8,7 @@ import {
 import { editorStatus } from "./_github.js";
 
 const WORKSPACE = "wellwebsite-beta";
-const MAX_DRAFT_CHARS = 180000;
+const MAX_DRAFT_CHARS = 1_250_000;
 
 function cleanPages(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
@@ -26,6 +26,84 @@ function cleanPages(value) {
       )
       .slice(0, 30)
   );
+}
+
+function cleanPlainObject(value, maxEntries = 80) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([key, item]) =>
+        typeof key === "string" &&
+        key.length <= 500 &&
+        item !== undefined
+      )
+      .slice(0, maxEntries)
+  );
+}
+
+function cleanSourceDrafts(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const output = {};
+  let total = 0;
+
+  for (const [rawPath, rawDraft] of Object.entries(value).slice(0, 24)) {
+    const path = String(rawPath || "").trim().replace(/^\/+/, "");
+    if (
+      !path ||
+      path.length > 240 ||
+      path.includes("..") ||
+      !/^[a-z0-9][a-z0-9._/-]*\.(?:html|css)$/i.test(path) ||
+      !rawDraft ||
+      typeof rawDraft !== "object" ||
+      Array.isArray(rawDraft)
+    ) {
+      continue;
+    }
+
+    const content = String(rawDraft.content ?? "");
+    const max = path.toLowerCase().endsWith(".css") ? 650000 : 350000;
+    if (!content || content.length > max || content.includes("\0")) continue;
+
+    total += content.length;
+    if (total > 1_050_000) break;
+
+    output[path] = {
+      path,
+      kind: path.toLowerCase().endsWith(".css") ? "css" : "html",
+      content,
+      originalSha: /^[0-9a-f]{40}$/i.test(String(rawDraft.originalSha || ""))
+        ? String(rawDraft.originalSha)
+        : ""
+    };
+  }
+
+  return output;
+}
+
+function cleanAssetMutations(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .slice(0, 30)
+    .map((item) => ({
+      action: item?.action === "rename" ? "rename" : item?.action === "delete" ? "delete" : "",
+      path: String(item?.path || "").trim().slice(0, 240),
+      nextPath: String(item?.nextPath || "").trim().slice(0, 240)
+    }))
+    .filter((item) => item.action && item.path.startsWith("assets/"));
+}
+
+function cleanWorkspaceState(input) {
+  return {
+    pages: cleanPages(input.pages),
+    navigation: cleanPlainObject(input.navigation, 12),
+    layoutOrders: cleanPlainObject(input.layoutOrders, 80),
+    banner:
+      input.banner && typeof input.banner === "object" && !Array.isArray(input.banner)
+        ? input.banner
+        : {},
+    assetMutations: cleanAssetMutations(input.assetMutations),
+    sourceDrafts: cleanSourceDrafts(input.sourceDrafts)
+  };
 }
 
 async function currentDraft(session) {
@@ -74,8 +152,7 @@ export async function onRequestPost({ request, env }) {
   const input = await request.json().catch(() => ({}));
   const baseSha = String(input.baseSha || "").trim();
   const expectedRevision = Math.max(0, Number(input.revision || 0));
-  const pages = cleanPages(input.pages);
-  const payload = { pages };
+  const payload = cleanWorkspaceState(input);
   const serialised = JSON.stringify(payload);
 
   if (!/^[0-9a-f]{40}$/i.test(baseSha)) {
